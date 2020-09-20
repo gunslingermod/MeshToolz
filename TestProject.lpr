@@ -1,0 +1,4 @@
+program TestProject;
+begin
+end.
+

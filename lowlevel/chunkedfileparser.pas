@@ -20,6 +20,7 @@ type
     constructor Create();
     destructor Destroy(); override;
     function LoadFromFile(path:string; non_chunked_header_size:cardinal):boolean;
+    function LoadFromString(data:string):boolean;
     function SaveToFile(path:string):boolean;
     function FindSubChunk(id:TChunkId):TChunkedOffset;
     function EnterSubChunk(offset:TChunkedOffset):boolean;
@@ -39,11 +40,62 @@ type
   end;
   pTChunkHeader = ^TChunkHeader;
 
+  function SerializeChunkHeader(id:word; sz:cardinal; flags:word=0):string; overload;
+  function SerializeChunkHeader(hdr:TChunkHeader):string; overload;
+  function SerializeCardinal(data:cardinal):string;
+  function SerializeWord(data:word):string;
+
 const
   INVALID_CHUNK:TChunkedOffset=$FFFFFFFF;
 
 implementation
 uses SysUtils;
+
+function SerializeChunkHeader(id: word; sz: cardinal; flags: word): string;
+var
+  hdr:TChunkHeader;
+begin
+  hdr.id:=id;
+  hdr.flags:=flags;
+  hdr.sz:=sz;
+  result:=SerializeChunkHeader(hdr);
+end;
+
+function SerializeChunkHeader(hdr: TChunkHeader): string;
+var
+  i:integer;
+  tmpchr:PAnsiChar;
+begin
+  result:='';
+  tmpchr:=PAnsiChar(@hdr);
+  for i:=0 to sizeof(hdr)-1 do begin
+    result:=result+tmpchr[i];
+  end;
+end;
+
+function SerializeCardinal(data: cardinal): string;
+var
+  p:PAnsiChar;
+  i:cardinal;
+begin
+  result:='';
+  p:=PAnsiChar(@data);
+  for i:=0 to sizeof(data)-1 do begin
+    result:=result+p[i];
+  end;
+end;
+
+function SerializeWord(data: word): string;
+var
+  p:PAnsiChar;
+  i:cardinal;
+begin
+  result:='';
+  p:=PAnsiChar(@data);
+  for i:=0 to sizeof(data)-1 do begin
+    result:=result+p[i];
+  end;
+end;
 
 { TChunkedMemory }
 
@@ -119,6 +171,20 @@ begin
   finally
     FileClose(f);
   end;
+end;
+
+function TChunkedMemory.LoadFromString(data: string): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  _Reset();
+  setlength(_data, length(data));
+  for i:=1 to length(data) do begin
+    _data[i-1]:=byte(data[i]);
+  end;
+  _loaded:=true;
+  result:=true;
 end;
 
 function TChunkedMemory.SaveToFile(path: string): boolean;
