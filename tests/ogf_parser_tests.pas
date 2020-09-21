@@ -4,6 +4,8 @@ unit ogf_parser_tests;
 
 interface
 
+
+function BonesLinksContainerTest():boolean;
 function VertexContainerTest():boolean;
 function TextureContainerTest():boolean;
 function OgfChildRebuildTest():boolean;
@@ -24,6 +26,104 @@ var
 begin
   if result then res_str:='passed' else res_str:='FAILED';
   writeln('[RESULT] Test "'+test_name+'" is '+res_str);
+end;
+
+function BonesLinksContainerTest(): boolean;
+var
+  bones:TVertexBones;
+  bone:TVertexBone;
+  i, tmpi:integer;
+const
+  EPS = 0.00001;
+begin
+  result:=false;
+  bones:=TVertexBones.Create();
+  try
+    // Add 3 3 different bone with the same weight without normalization
+    tmpi:=3;
+    for i:=1 to tmpi do begin
+      bone.bone_id:=i;
+      bone.weight:=1;
+      bones.AddBone(bone, false);
+    end;
+    if (bones.TotalLinkedBonesCount()<>tmpi) or (bones.SimplifiedLinkedBonesCount()<>tmpi) then exit;
+    for i:=0 to bones.TotalLinkedBonesCount()-1 do begin
+      bone:=bones.GetBoneParams(i);
+      if bone.weight<>1 then exit;
+    end;
+
+    //Check normalization - all bones must have the same values
+    bones.NormalizeWeights();
+    for i:=0 to bones.TotalLinkedBonesCount()-1 do begin
+      bone:=bones.GetBoneParams(i);
+      if abs(bone.weight - (1/tmpi)) > EPS then exit;
+    end;
+
+    // Add bone with normalization of other bones
+    bone.bone_id:=tmpi+1;
+    bone.weight:=0.5;
+    bones.AddBone(bone, true);
+    for i:=0 to bones.TotalLinkedBonesCount()-1 do begin
+      bone:=bones.GetBoneParams(i);
+      if bone.bone_id = tmpi+1 then begin
+        if bone.weight<>0.5 then exit;
+      end else begin
+        if abs(bone.weight - (1/(tmpi*2))) > EPS then exit;
+      end;
+    end;
+
+    // Add bone with the same ID without normalization
+    bone.bone_id:=1;
+    bone.weight:=0.2;
+    bones.AddBone(bone, false);
+    if (bones.TotalLinkedBonesCount()<>tmpi+2) then exit;
+    for i:=0 to bones.TotalLinkedBonesCount()-1 do begin
+      bone:=bones.GetBoneParams(i);
+      if i = tmpi then begin
+        if bone.weight<>0.5 then exit;
+      end else if i = tmpi+1 then begin
+        if abs(bone.weight-0.2) > EPS then exit;
+      end else begin
+        if abs(bone.weight - (1/(tmpi*2))) > EPS then exit;
+      end;
+    end;
+
+    // Check simplification
+    if (bones.SimplifiedLinkedBonesCount()<>tmpi+1) then exit;
+    bones.SimplifyLinks();
+    if (bones.TotalLinkedBonesCount()<>tmpi+1) or (bones.SimplifiedLinkedBonesCount()<>tmpi+1) then exit;
+    if abs(bones.GetWeightForBoneId(1) - (0.2+1/(tmpi*2))) > EPS then exit;
+
+    //Normalize
+    bones.NormalizeWeights();
+    if abs(bones.GetWeightForBoneId(1) - (0.2+1/(tmpi*2))/1.2) > EPS then exit;
+
+    // Add bone with "rigid" link - must replace all weights after normalization
+    bone.bone_id:=tmpi+2;
+    bone.weight:=1;
+    bones.AddBone(bone, true);
+    if bones.SimplifiedLinkedBonesCount() <> 1 then exit;
+    bones.SimplifyLinks();
+    if bones.SimplifiedLinkedBonesCount() <> bones.TotalLinkedBonesCount() then exit;
+
+    //Check change link type
+    bone.bone_id:=0;
+    bone.weight:=0.5;
+    bones.AddBone(bone, true);
+    bone.bone_id:=1;
+    bone.weight:=0.5;
+    bones.AddBone(bone, true);
+    if bones.TotalLinkedBonesCount()<>3 then exit;
+    bones.ChangeLinkType(2);
+    if bones.TotalLinkedBonesCount()<>2 then exit;
+    if (bones.GetBoneParams(0).bone_id<>1) or (abs(bones.GetBoneParams(0).weight-2/3)>EPS) then exit;
+    if (bones.GetBoneParams(1).bone_id<>0) or (abs(bones.GetBoneParams(1).weight-1/3)>EPS) then exit;
+
+    result:=true;
+  finally
+    bones.Free;
+    PrintTestResult('BonesLinksContainerTest', result);
+  end;
 end;
 
 function VertexContainerTest():boolean;
@@ -140,6 +240,7 @@ end;
 function RunAllTests():boolean;
 begin
   result:=true;
+  if not BonesLinksContainerTest() then result:=false;
   if not VertexContainerTest() then result:=false;
   if not TextureContainerTest() then result:=false;
   if not OgfChildRebuildTest() then result:=false;
