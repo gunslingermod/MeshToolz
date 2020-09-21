@@ -108,6 +108,7 @@ type
     _verts_count:cardinal;
     _raw_data:array of byte;
     function _GetVertexDataPtr(id:cardinal):pTOgfVertexCommonData;
+    function _GetVertexUvDataPtr(id:cardinal):pFVector2;
     function _GetVertexBindings(id:cardinal; bindings_out:TVertexBones):boolean;
     function _SetVertexBindings(id:cardinal; bindings_in:TVertexBones):boolean;
   public
@@ -121,6 +122,11 @@ type
     // Specific
     function MoveVertices(offset:FVector3):boolean;
     function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
+
+    function GetCurrentLinkType():cardinal;
+    function GetVerticesCount():cardinal;
+    function CalculateOptimalLinkType():cardinal;
+    function ChangeLinkType(new_link_type:cardinal):boolean;
   end;
 
   TOgfSlideWindowItem = packed record
@@ -232,6 +238,14 @@ type
     // Specific
     function GetTextureData():TOgfTextureData;
     function SetTextureData(data:TOgfTextureData):boolean;
+
+    function GetCurrentLinkType():cardinal;
+    function GetVerticesCount():cardinal;
+    function GetTrisCountTotal():cardinal;
+    function GetTrisCountInCurrentLod():cardinal;
+
+    function CalculateOptimalLinkType():cardinal;
+    function ChangeLinkType(new_link_type:cardinal):boolean;
   end;
 
  { TOgfParser }
@@ -707,7 +721,7 @@ begin
     while new_links_count <> length(_bones) do begin
       AddBone(b, false);
     end;
-  end else begin
+  end else if new_links_count < length(_bones) then begin
     SetLength(_bones, new_links_count);
     NormalizeWeights();
   end;
@@ -922,6 +936,60 @@ begin
   result:=_texture.SetTextureData(data);
 end;
 
+function TOgfChild.GetCurrentLinkType(): cardinal;
+begin
+  if not Loaded() then begin
+    result:=OGF_LINK_TYPE_INVALID;
+  end else begin
+    result:=_verts.GetCurrentLinkType();
+  end;
+end;
+
+function TOgfChild.GetVerticesCount(): cardinal;
+begin
+  if not Loaded() then begin
+    result:=0;
+  end else begin
+    result:=_verts.GetVerticesCount();
+  end;
+end;
+
+function TOgfChild.GetTrisCountInCurrentLod(): cardinal;
+begin
+  if not Loaded() then begin
+    result:=0;
+  end else begin
+    result:=_tris.TrisCountInCurrentLod();
+  end;
+end;
+
+function TOgfChild.GetTrisCountTotal(): cardinal;
+begin
+  if not Loaded() then begin
+    result:=0;
+  end else begin
+    result:=_tris.TrisCountTotal();
+  end;
+end;
+
+function TOgfChild.CalculateOptimalLinkType(): cardinal;
+begin
+  if not Loaded() then begin
+    result:=OGF_LINK_TYPE_INVALID;
+  end else begin
+    result:=_verts.CalculateOptimalLinkType();
+  end;
+end;
+
+function TOgfChild.ChangeLinkType(new_link_type: cardinal): boolean;
+begin
+  if not Loaded() then begin
+    result:=false;
+  end else begin
+    result:=_verts.ChangeLinkType(new_link_type);
+  end;
+end;
+
 { TOgfVertsContainer }
 type
 TOgfVertsHeader = packed record
@@ -958,6 +1026,37 @@ begin
     pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex4link);
     pvert4link:=@_raw_data[pos];
     result:=@pvert4link^.spatial;
+  end;
+end;
+
+function TOgfVertsContainer._GetVertexUvDataPtr(id: cardinal): pFVector2;
+var
+  pos:cardinal;
+  pvert1link:pTOgfVertex1link;
+  pvert2link:pTOgfVertex2link;
+  pvert3link:pTOgfVertex3link;
+  pvert4link:pTOgfVertex4link;
+begin
+  result:=nil;
+  if not Loaded() then exit;
+  if id >= _verts_count then exit;
+
+  if _link_type = OGF_LINK_TYPE_1 then begin
+    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex1link);
+    pvert1link:=@_raw_data[pos];
+    result:=@pvert1link^.uv;
+  end else if _link_type = OGF_LINK_TYPE_2 then begin
+    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex2link);
+    pvert2link:=@_raw_data[pos];
+    result:=@pvert2link^.uv;
+  end else if _link_type = OGF_LINK_TYPE_3 then begin
+    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex3link);
+    pvert3link:=@_raw_data[pos];
+    result:=@pvert3link^.uv;
+  end else if _link_type = OGF_LINK_TYPE_4 then begin
+    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex4link);
+    pvert4link:=@_raw_data[pos];
+    result:=@pvert4link^.uv;
   end;
 end;
 
@@ -1174,6 +1273,102 @@ begin
     end;
     result:=true;
   finally
+    FreeAndNil(b);
+  end;
+end;
+
+function TOgfVertsContainer.GetCurrentLinkType(): cardinal;
+begin
+  result:=_link_type;
+end;
+
+function TOgfVertsContainer.GetVerticesCount(): cardinal;
+begin
+  if Loaded() then begin
+    result:=_verts_count;
+  end else begin
+    result:=0;
+  end;
+end;
+
+function TOgfVertsContainer.CalculateOptimalLinkType(): cardinal;
+var
+  i:cardinal;
+  links:integer;
+  b:TVertexBones;
+begin
+  result:=OGF_LINK_TYPE_INVALID;
+  if not Loaded() then exit;
+  if _verts_count = 0 then exit;
+
+  result:=OGF_LINK_TYPE_1;
+  b:=TVertexBones.Create();
+  try
+    for i:=0 to _verts_count-1 do begin
+      if _GetVertexBindings(i, b) then begin
+        links:=b.SimplifiedLinkedBonesCount();
+        if cardinal(links) > result then result:=links;
+      end;
+    end;
+  finally
+    FreeAndNil(b);
+  end;
+end;
+
+function TOgfVertsContainer.ChangeLinkType(new_link_type: cardinal): boolean;
+var
+  b:TVertexBones;
+  new_data:array of byte;
+  phdr:pTOgfVertsHeader;
+  bone:TVertexBone;
+  pvert1link:pTOgfVertex1link;
+  pvert2link:pTOgfVertex2link;
+  pvert3link:pTOgfVertex3link;
+  pvert4link:pTOgfVertex4link;
+  i:integer;
+  v_common:pTOgfVertexCommonData;
+  v_uv:pFVector2;
+begin
+  result:=false;
+
+  if not Loaded() then exit;
+  if _verts_count = 0 then exit;
+  if new_link_type = _link_type then exit;
+
+  b:=TVertexBones.Create();
+  setlength(new_data{%H-}, 0);
+  try
+    if new_link_type = OGF_LINK_TYPE_1 then begin
+      setlength(new_data, sizeof(TOgfVertsHeader)+sizeof(TOgfVertex1link)*_verts_count);
+      pvert1link:=@new_data[sizeof(TOgfVertsHeader)];
+      for i:=0 to _verts_count-1 do begin
+        v_common:=_GetVertexDataPtr(i);
+        v_uv:=_GetVertexUvDataPtr(i);
+        if (v_common = nil) or (v_uv = nil) then exit;
+        if not _GetVertexBindings(i, b) then exit;
+        if not b.ChangeLinkType(new_link_type) then exit;
+        pvert1link[i].spatial:=v_common^;
+        pvert1link[i].bone_id:=b.GetBoneParams(0).bone_id;
+        pvert1link[i].uv:=v_uv^;
+      end;
+    end else if new_link_type = OGF_LINK_TYPE_2 then begin
+    end else if new_link_type = OGF_LINK_TYPE_3 then begin
+    end else if new_link_type = OGF_LINK_TYPE_4 then begin
+    end;
+
+    if length(new_data) > 0 then begin
+      // Update header
+      phdr:=@new_data[0];
+      phdr^.count:=_verts_count;
+      phdr^.link_type:=new_link_type;
+      // replace with new data
+      setlength(_raw_data, length(new_data));
+      Move(new_data[0], _raw_data[0], length(new_data));
+      _link_type:=new_link_type;
+      result:=true;
+    end;
+  finally
+    setlength(new_data, 0);
     FreeAndNil(b);
   end;
 end;

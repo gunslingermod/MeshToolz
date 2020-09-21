@@ -237,6 +237,46 @@ begin
   end;
 end;
 
+function OgfChildSimplifyLinksTest():boolean;
+var
+  f:TChunkedMemory;
+  child:TOgfChild;
+  data_new, data:string;
+  newlink:cardinal;
+
+const
+  CHUNK_PATH:string='9:0';
+begin
+  result:=false;
+  f:=TChunkedMemory.Create();
+  child:=TOgfChild.Create();
+  try
+    if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
+    if not f.NavigateToChunk(CHUNK_PATH) then exit;
+    data:=f.GetCurrentChunkRawDataAsString();
+    if not child.Deserialize(data) then exit;
+
+    newlink:=child.CalculateOptimalLinkType();
+    if (newlink=OGF_LINK_TYPE_INVALID) or (newlink = child.GetCurrentLinkType()) then exit;
+    if not child.ChangeLinkType(newlink) then exit;
+    if newlink<>child.GetCurrentLinkType() then exit;
+
+    data_new:=child.Serialize();
+    if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
+    if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+
+    if not child.Deserialize(data_new) then exit;
+    if newlink<>child.GetCurrentLinkType() then exit;
+
+    result:=true;
+  finally
+    child.Free;
+    f.Free;
+    DeleteFile(TEST_OGF_OUT_NAME);
+    PrintTestResult('OgfChildSimplifyLinksTest', result);
+  end;
+end;
+
 function RunAllTests():boolean;
 begin
   result:=true;
@@ -244,6 +284,7 @@ begin
   if not VertexContainerTest() then result:=false;
   if not TextureContainerTest() then result:=false;
   if not OgfChildRebuildTest() then result:=false;
+  if not OgfChildSimplifyLinksTest() then result:=false;
 end;
 
 end.
