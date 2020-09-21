@@ -25,6 +25,7 @@ type
     function FindSubChunk(id:TChunkId):TChunkedOffset;
     function EnterSubChunk(offset:TChunkedOffset):boolean;
     function LeaveSubChunk():boolean;
+    procedure ResetSelectedSubChunk();
     function GetCurrentChunkRawDataAsString():string;
     function ReplaceCurrentRawDataWithString(new_data:string):boolean;
 
@@ -254,6 +255,11 @@ begin
     setlength(_parent_chunks, length(_parent_chunks)-1);
     result:=true;
   end;
+end;
+
+procedure TChunkedMemory.ResetSelectedSubChunk();
+begin
+  setlength(_parent_chunks, 0);
 end;
 
 function TChunkedMemory.GetCurrentChunkRawDataAsString(): string;
