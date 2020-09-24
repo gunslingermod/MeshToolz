@@ -3,6 +3,7 @@ del *.bak
 del *.dcu
 del *.lps
 del *.exe
+del *.log
 
 del lowlevel\*.~pas
 del lowlevel\*.bak

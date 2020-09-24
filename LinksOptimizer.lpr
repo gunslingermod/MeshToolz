@@ -52,7 +52,6 @@ begin
       SimplifyVertexLinks(ParamStr(1), ParamStr(1));
     end;
     writeln('Done!');
-    readln();
   end;
 end.
 
