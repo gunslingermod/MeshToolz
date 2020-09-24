@@ -26,9 +26,10 @@ type
   pTOgfVertex1link = ^TOgfVertex1link;
 
   TOgfVertex2link = packed record
-    bones:array [0..1] of TBoneID;
+    bone0:TBoneID;
+    bone1:TBoneID; // weight of THIS bone is stored in weight1
     spatial:TOgfVertexCommonData;
-    weights:array [0..0] of single;
+    weight1: single;
     uv:FVector2;
   end;
   pTOgfVertex2link = ^TOgfVertex2link;
@@ -708,10 +709,14 @@ var
   b:TVertexBone;
 begin
   result:=false;
+  if new_links_count = length(_bones) then begin
+    exit;
+  end;
 
   SimplifyLinks();
   _SortByWeights();
   if new_links_count > length(_bones) then begin
+    b.weight:=0;
     if length(_bones) > 0 then begin
       b.bone_id:=_bones[0].bone_id;
     end else begin
@@ -1078,27 +1083,26 @@ begin
   if _link_type = OGF_LINK_TYPE_1 then begin
     pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex1link);
     pvert1link:=@_raw_data[pos];
+    bindings_out.Reset();
+
     bone.bone_id:=pvert1link^.bone_id;
     bone.weight:=1.0;
-    bindings_out.Reset();
     bindings_out.AddBone(bone, false);
+
     result:=true;
   end else if _link_type = OGF_LINK_TYPE_2 then begin
     pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex2link);
     pvert2link:=@_raw_data[pos];
-    w_total:=0;
     bindings_out.Reset();
-    for i:=0 to length(pvert2link^.bones)-1 do begin
-      bone.bone_id:=pvert2link^.bones[i];
-      if i<length(pvert2link^.weights) then begin
-        bone.weight:=pvert2link^.weights[i];
-        w_total:=w_total+bone.weight;
-      end else begin
-        bone.weight:=1-w_total;
-        if bone.weight < 0 then bone.weight:=0;
-      end;
-      bindings_out.AddBone(bone, false);
-    end;
+
+    bone.bone_id:=pvert2link^.bone0;
+    bone.weight:=1 - pvert2link^.bone1;
+    bindings_out.AddBone(bone, false);
+
+    bone.bone_id:=pvert2link^.bone1;
+    bone.weight:=pvert2link^.bone1;
+    bindings_out.AddBone(bone, false);
+
     result:=true;
   end else if _link_type = OGF_LINK_TYPE_3 then begin
     pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex3link);
@@ -1160,13 +1164,11 @@ begin
   end else if _link_type = OGF_LINK_TYPE_2 then begin
     pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex2link);
     pvert2link:=@_raw_data[pos];
-    for i:=0 to bindings_in.TotalLinkedBonesCount()-1 do begin
-      bone:=bindings_in.GetBoneParams(i);
-      pvert2link^.bones[i]:=bone.bone_id;
-      if i<length(pvert2link^.weights) then begin
-        pvert2link^.weights[i]:=bone.weight;
-      end;
-    end;
+    bone:=bindings_in.GetBoneParams(0);
+    pvert2link^.bone0:=bone.bone_id;
+    bone:=bindings_in.GetBoneParams(1);
+    pvert2link^.bone1:=bone.bone_id;
+    pvert2link^.weight1:=bone.weight;
     result:=true;
   end else if _link_type = OGF_LINK_TYPE_3 then begin
     pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex3link);
@@ -1325,7 +1327,7 @@ var
   pvert2link:pTOgfVertex2link;
   pvert3link:pTOgfVertex3link;
   pvert4link:pTOgfVertex4link;
-  i:integer;
+  i,j:integer;
   v_common:pTOgfVertexCommonData;
   v_uv:pFVector2;
 begin
@@ -1348,12 +1350,64 @@ begin
         if not _GetVertexBindings(i, b) then exit;
         if not b.ChangeLinkType(new_link_type) then exit;
         pvert1link[i].spatial:=v_common^;
-        pvert1link[i].bone_id:=b.GetBoneParams(0).bone_id;
         pvert1link[i].uv:=v_uv^;
+
+        pvert1link[i].bone_id:=b.GetBoneParams(0).bone_id;
       end;
     end else if new_link_type = OGF_LINK_TYPE_2 then begin
+      setlength(new_data, sizeof(TOgfVertsHeader)+sizeof(TOgfVertex2link)*_verts_count);
+      pvert2link:=@new_data[sizeof(TOgfVertsHeader)];
+      for i:=0 to _verts_count-1 do begin
+        v_common:=_GetVertexDataPtr(i);
+        v_uv:=_GetVertexUvDataPtr(i);
+        if (v_common = nil) or (v_uv = nil) then exit;
+        if not _GetVertexBindings(i, b) then exit;
+        if not b.ChangeLinkType(new_link_type) then exit;
+        pvert2link[i].spatial:=v_common^;
+        pvert2link[i].uv:=v_uv^;
+
+        pvert2link[i].bone0:=b.GetBoneParams(0).bone_id;
+        pvert2link[i].bone1:=b.GetBoneParams(1).bone_id;
+        pvert2link[i].weight1:=b.GetBoneParams(1).weight;
+      end;
     end else if new_link_type = OGF_LINK_TYPE_3 then begin
+      setlength(new_data, sizeof(TOgfVertsHeader)+sizeof(TOgfVertex3link)*_verts_count);
+      pvert3link:=@new_data[sizeof(TOgfVertsHeader)];
+      for i:=0 to _verts_count-1 do begin
+        v_common:=_GetVertexDataPtr(i);
+        v_uv:=_GetVertexUvDataPtr(i);
+        if (v_common = nil) or (v_uv = nil) then exit;
+        if not _GetVertexBindings(i, b) then exit;
+        if not b.ChangeLinkType(new_link_type) then exit;
+        pvert3link[i].spatial:=v_common^;
+        pvert3link[i].uv:=v_uv^;
+
+        for j:=0 to new_link_type-1 do begin
+          pvert3link[i].bones[j]:=b.GetBoneParams(j).bone_id;
+          if j<new_link_type-1 then begin
+            pvert3link[i].weights[j]:=b.GetBoneParams(j).weight;
+          end;
+        end;
+      end;
     end else if new_link_type = OGF_LINK_TYPE_4 then begin
+      setlength(new_data, sizeof(TOgfVertsHeader)+sizeof(TOgfVertex4link)*_verts_count);
+      pvert4link:=@new_data[sizeof(TOgfVertsHeader)];
+      for i:=0 to _verts_count-1 do begin
+        v_common:=_GetVertexDataPtr(i);
+        v_uv:=_GetVertexUvDataPtr(i);
+        if (v_common = nil) or (v_uv = nil) then exit;
+        if not _GetVertexBindings(i, b) then exit;
+        if not b.ChangeLinkType(new_link_type) then exit;
+        pvert4link[i].spatial:=v_common^;
+        pvert4link[i].uv:=v_uv^;
+
+        for j:=0 to new_link_type-1 do begin
+          pvert4link[i].bones[j]:=b.GetBoneParams(j).bone_id;
+          if j<new_link_type-1 then begin
+            pvert4link[i].weights[j]:=b.GetBoneParams(j).weight;
+          end;
+        end;
+      end;
     end;
 
     if length(new_data) > 0 then begin
