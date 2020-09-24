@@ -23,7 +23,7 @@ begin
       need_update_data:=false;
       if not child.Deserialize(data) then exit;
       newlink:=child.CalculateOptimalLinkType();
-      writeln(inttostr(newlink)+' <-- '+inttostr(child.GetCurrentLinkType()));
+      writeln(child.GetTextureData().texture+' ('+child.GetTextureData().shader+') : '+inttostr(child.GetCurrentLinkType())+' -> ' + inttostr(newlink));
       if (newlink=OGF_LINK_TYPE_INVALID) or  (newlink<>child.GetCurrentLinkType()) then begin
         need_update_data:=child.ChangeLinkType(newlink)
       end;
