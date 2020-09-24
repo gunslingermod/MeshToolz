@@ -30,7 +30,6 @@
       <Unit0>
         <Filename Value="LinksOptimizer.lpr"/>
         <IsPartOfProject Value="True"/>
-        <UnitName Value="TestProject"/>
       </Unit0>
       <Unit1>
         <Filename Value="lowlevel\chunkedfileparser.pas"/>

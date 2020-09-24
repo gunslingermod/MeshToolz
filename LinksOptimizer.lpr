@@ -24,8 +24,8 @@ begin
       if not child.Deserialize(data) then exit;
       newlink:=child.CalculateOptimalLinkType();
       writeln(child.GetTextureData().texture+' ('+child.GetTextureData().shader+') : '+inttostr(child.GetCurrentLinkType())+' -> ' + inttostr(newlink));
-      if (newlink=OGF_LINK_TYPE_INVALID) or  (newlink<>child.GetCurrentLinkType()) then begin
-        need_update_data:=child.ChangeLinkType(newlink)
+      if (newlink<>OGF_LINK_TYPE_INVALID) and  (newlink<>child.GetCurrentLinkType()) then begin
+        need_update_data:=child.ChangeLinkType(newlink);
       end;
 
       if need_update_data then begin
@@ -46,7 +46,11 @@ end;
 
 begin
   if ParamCount>0 then begin;
-    SimplifyVertexLinks(ParamStr(1), ParamStr(1));
+    if ParamCount>1 then begin
+      SimplifyVertexLinks(ParamStr(1), ParamStr(2));
+    end else begin
+      SimplifyVertexLinks(ParamStr(1), ParamStr(1));
+    end;
     writeln('Done!');
     readln();
   end;
