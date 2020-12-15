@@ -122,6 +122,7 @@ type
     function Serialize():string;
     // Specific
     function MoveVertices(offset:FVector3):boolean;
+    function ScaleVertices(factors:FVector3):boolean;
     function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
 
     function GetCurrentLinkType():cardinal;
@@ -1248,6 +1249,27 @@ begin
     v^.pos.x:=v^.pos.x+offset.x;
     v^.pos.y:=v^.pos.y+offset.y;
     v^.pos.z:=v^.pos.z+offset.z;
+  end;
+end;
+
+function TOgfVertsContainer.ScaleVertices(factors:FVector3): boolean;
+var
+  i:integer;
+  v:pTOgfVertexCommonData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  result:=true;
+  for i:=0 to _verts_count-1 do begin
+    v:=_GetVertexDataPtr(i);
+    if v = nil then begin
+      result:=false;
+      break;
+    end;
+    v^.pos.x:=v^.pos.x*factors.x;
+    v^.pos.y:=v^.pos.y*factors.y;
+    v^.pos.z:=v^.pos.z*factors.z;
   end;
 end;
 
