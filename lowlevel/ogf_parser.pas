@@ -250,6 +250,38 @@ type
     function ChangeLinkType(new_link_type:cardinal):boolean;
   end;
 
+
+  { TOgfBone }
+
+  TOgfBone = class
+    _name:string;
+    _parent_name:string;
+    _obb:FObb;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):integer;
+    function Serialize():string;
+  end;
+
+  { TOgfBonesContainer }
+
+  TOgfBonesContainer = class
+    _loaded:boolean;
+    _bones:array of TOgfBone;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
  { TOgfParser }
 
  TOgfParser = class
@@ -292,9 +324,145 @@ const
   CHUNK_OGF_VERTICES:word=3;
   CHUNK_OGF_INDICES:word=4;
   CHUNK_OGF_SWIDATA:word=6;
+  CHUNK_OGF_S_BONE_NAMES:word=13;
 
 implementation
 uses sysutils;
+
+{ TOgfBone }
+
+constructor TOgfBone.Create;
+begin
+  Reset;
+end;
+
+destructor TOgfBone.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfBone.Reset;
+begin
+  _name:='';
+  _parent_name:='';
+  set_zero(_obb);
+end;
+
+function TOgfBone.Loaded(): boolean;
+begin
+  result:=length(_name)>0;
+end;
+
+function TOgfBone.Deserialize(rawdata: string): integer;
+var
+  name, parent:string;
+begin
+  result:=-1;
+
+  Reset;
+  if not DeserializeZStringAndSplit(rawdata, name) then exit;
+  if not DeserializeZStringAndSplit(rawdata, parent) then exit;
+  if length(rawdata) < sizeof(_obb) then exit;
+  _name:=name;
+  _parent_name:=parent;
+  _obb:=pFObb(@rawdata[1])^;
+
+  result:=length(name)+length(parent)+2+sizeof(_obb);
+end;
+
+function TOgfBone.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  result:=result+_name+chr(0);
+  result:=result+_parent_name+chr(0);
+
+  for i:=0 to sizeof(_obb)-1 do begin
+    result:=result+PAnsiChar(@_obb)[i];
+  end;
+end;
+
+{ TOgfBonesContainer }
+
+constructor TOgfBonesContainer.Create;
+begin
+  setlength(_bones, 0);
+  _loaded:=false;
+end;
+
+destructor TOgfBonesContainer.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfBonesContainer.Reset;
+var
+  i:integer;
+begin
+  for i:=0 to length(_bones)-1 do begin
+    _bones[i].Free;
+  end;
+  setlength(_bones, 0);
+  _loaded:=false;
+end;
+
+function TOgfBonesContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfBonesContainer.Deserialize(rawdata: string): boolean;
+var
+  cnt, i, sz:integer;
+  err:boolean;
+begin
+  result:=false;
+  Reset;
+
+  if length(rawdata) < sizeof(cnt) then exit;
+
+  cnt:=pcardinal(@rawdata[1])^;
+  setlength(_bones, cnt);
+  if not AdvanceString(rawdata, sizeof(cnt)) then exit;
+
+  err:=false;
+  for i:=0 to cnt-1 do begin
+    _bones[i]:=TOgfBone.Create();
+    sz:=_bones[i].Deserialize(rawdata);
+    if (sz<0) or not AdvanceString(rawdata, sz) then begin
+       err:=true;
+      break;
+    end;
+  end;
+  if not err then begin
+    _loaded:=true;
+    result:=true;
+  end;
+end;
+
+function TOgfBonesContainer.Serialize(): string;
+var
+  i:integer;
+  bone_str:string;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  result:=result+SerializeCardinal(length(_bones));
+  for i:=0 to length(_bones)-1 do begin
+    bone_str:=_bones[i].Serialize();
+    if length(bone_str) = 0 then begin
+      result:='';
+      exit;
+    end;
+    result:=result+bone_str;
+  end;
+end;
 
 { TOgfFacesContainer }
 
@@ -767,12 +935,8 @@ var
 begin
   result:=false;
   Reset();
-  i:=Pos(chr(0), rawdata);
-  if i<=0 then exit;
-  tex_name:=leftstr(rawdata, i-1);
-  rawdata:=rightstr(rawdata, length(rawdata)-i);
-  i:=Pos(chr(0), rawdata);
-  shader_name:=leftstr(rawdata, i-1);
+  if not DeserializeZStringAndSplit(rawdata, tex_name) then exit;
+  if not DeserializeZStringAndSplit(rawdata, shader_name) then exit;
   _data.texture:=tex_name;
   _data.shader:=shader_name;
   _loaded:=true;

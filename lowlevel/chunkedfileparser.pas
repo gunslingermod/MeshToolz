@@ -46,6 +46,9 @@ type
   function SerializeCardinal(data:cardinal):string;
   function SerializeWord(data:word):string;
 
+  function DeserializeZStringAndSplit(var instr:string; var outstr:string):boolean;
+  function AdvanceString(var str:string; cnt:integer):boolean;
+
 const
   INVALID_CHUNK:TChunkedOffset=$FFFFFFFF;
 
@@ -96,6 +99,30 @@ begin
   for i:=0 to sizeof(data)-1 do begin
     result:=result+p[i];
   end;
+end;
+
+function DeserializeZStringAndSplit(var instr: string; var outstr: string): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  i:=Pos(chr(0), instr);
+  if i<=0 then exit;
+  outstr:=leftstr(instr, i-1);
+  instr:=rightstr(instr, length(instr)-i);
+  result:=true;
+end;
+
+function AdvanceString(var str: string; cnt: integer): boolean;
+var
+  l:integer;
+begin
+  result:=false;
+  l:=length(str);
+  if l<cnt then exit;
+
+  str:=rightstr(str, l-cnt);
+  result:=true;
 end;
 
 { TChunkedMemory }

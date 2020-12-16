@@ -277,6 +277,36 @@ begin
   end;
 end;
 
+function OgfBoneTest():boolean;
+var
+  f:TChunkedMemory;
+  bones:TOgfBonesContainer;
+  data_new:string;
+const
+  CHUNK_PATH:string='13';
+begin
+  result:=false;
+  f:=TChunkedMemory.Create();
+  bones:=TOgfBonesContainer.Create();
+  try
+    if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
+    if not f.NavigateToChunk(CHUNK_PATH) then exit;
+    if not bones.Deserialize(f.GetCurrentChunkRawDataAsString()) then exit;
+
+    data_new:=bones.Serialize();
+    if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
+    if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+    if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
+
+    result:=true;
+  finally
+    bones.Free;
+    f.Free;
+    DeleteFile(TEST_OGF_OUT_NAME);
+    PrintTestResult('OgfBoneContainerTest', result);
+  end;
+end;
+
 function RunAllTests():boolean;
 begin
   result:=true;
@@ -285,6 +315,7 @@ begin
   if not TextureContainerTest() then result:=false;
   if not OgfChildRebuildTest() then result:=false;
   if not OgfChildSimplifyLinksTest() then result:=false;
+  if not OgfBoneTest() then result:=false;
 end;
 
 end.
