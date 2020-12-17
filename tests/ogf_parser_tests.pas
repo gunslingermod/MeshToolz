@@ -307,6 +307,36 @@ begin
   end;
 end;
 
+function OgfIKDataTest():boolean;
+var
+  f:TChunkedMemory;
+  ik:TOgfBonesIKDataContainer;
+  data_new:string;
+const
+  CHUNK_PATH:string='16';
+begin
+  result:=false;
+  f:=TChunkedMemory.Create();
+  ik:=TOgfBonesIKDataContainer.Create();
+  try
+    if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
+    if not f.NavigateToChunk(CHUNK_PATH) then exit;
+    if not ik.Deserialize(f.GetCurrentChunkRawDataAsString()) then exit;
+
+    data_new:=ik.Serialize();
+    if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
+    if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+    if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
+
+    result:=true;
+  finally
+    ik.Free;
+    f.Free;
+    DeleteFile(TEST_OGF_OUT_NAME);
+    PrintTestResult('OgfIKDataTest', result);
+  end;
+end;
+
 function RunAllTests():boolean;
 begin
   result:=true;
@@ -316,6 +346,7 @@ begin
   if not OgfChildRebuildTest() then result:=false;
   if not OgfChildSimplifyLinksTest() then result:=false;
   if not OgfBoneTest() then result:=false;
+  if not OgfIKDataTest() then result:=false;
 end;
 
 end.

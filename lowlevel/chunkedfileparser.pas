@@ -44,7 +44,9 @@ type
   function SerializeChunkHeader(id:word; sz:cardinal; flags:word=0):string; overload;
   function SerializeChunkHeader(hdr:TChunkHeader):string; overload;
   function SerializeCardinal(data:cardinal):string;
+  function SerializeFloat(data:single):string;
   function SerializeWord(data:word):string;
+  function SerializeBlock(data:pointer; sz:cardinal):string;
 
   function DeserializeZStringAndSplit(var instr:string; var outstr:string):boolean;
   function AdvanceString(var str:string; cnt:integer):boolean;
@@ -89,6 +91,18 @@ begin
   end;
 end;
 
+function SerializeFloat(data: single): string;
+var
+  p:PAnsiChar;
+  i:cardinal;
+begin
+  result:='';
+  p:=PAnsiChar(@data);
+  for i:=0 to sizeof(data)-1 do begin
+    result:=result+p[i];
+  end;
+end;
+
 function SerializeWord(data: word): string;
 var
   p:PAnsiChar;
@@ -97,6 +111,19 @@ begin
   result:='';
   p:=PAnsiChar(@data);
   for i:=0 to sizeof(data)-1 do begin
+    result:=result+p[i];
+  end;
+end;
+
+function SerializeBlock(data: pointer; sz: cardinal): string;
+var
+  p:PAnsiChar;
+  i:cardinal;
+begin
+  result:='';
+  if sz <= 0 then exit;
+  p:=PAnsiChar(data);
+  for i:=0 to sz-1 do begin
     result:=result+p[i];
   end;
 end;

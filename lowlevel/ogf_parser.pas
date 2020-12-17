@@ -267,11 +267,118 @@ type
     function Serialize():string;
   end;
 
+  { TOgfBoneShape }
+
+  TOgfBoneShape = packed record
+    shape_type:word;
+    flags:word;
+    box:FObb;
+    sphere:FSphere;
+    cylinder:FCylinder;
+  end;
+  pTOgfBoneShape = ^TOgfBoneShape;
+
+  { TOgfJointLimit }
+
+  TOgfJointLimit = packed record
+    limit:FVector2;
+    spring_factor:single;
+    damping_factor:single;
+  end;
+  pTOgfJointLimit = ^TOgfJointLimit;
+
+  { TOgfJointIKData }
+
+  TOgfJointIKData = class
+    _type:cardinal;
+    _limits:array [0..2] of TOgfJointLimit;
+    _spring_factor:single;
+    _damping_factor:single;
+    _ik_flags:cardinal;
+    _break_force:single;
+    _break_torque:single;
+    _friction:single;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset; virtual;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string; version:cardinal):integer;
+    function Serialize(version:cardinal):string;
+  end;
+
+  { TOgfBoneIKData }
+
+  TOgfBoneIKData = class
+    _version:cardinal;
+    _material:string;
+    _shape:TOgfBoneShape;
+    _ikdata:TOgfJointIKData;
+    _rest_rotate:FVector3;
+    _rest_offset:FVector3;
+    _mass:single;
+    _center_of_mass:FVector3;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):integer;
+    function Serialize():string;
+  end;
+
+  { TOgfBonesIKDataContainer }
+
+  TOgfBonesIKDataContainer = class
+    _loaded:boolean;
+    _ik_data:array of TOgfBoneIKData;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
   { TOgfBonesContainer }
 
   TOgfBonesContainer = class
     _loaded:boolean;
     _bones:array of TOgfBone;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
+  { TOgfUserdataContainer }
+
+  TOgfUserdataContainer = class
+    _loaded:boolean;
+    _script:string;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
+  { TOgfLodRefsContainer }
+
+  TOgfLodRefsContainer = class
+    _loaded:boolean;
+    _lodref:string;
   public
     // Common
     constructor Create;
@@ -326,8 +433,396 @@ const
   CHUNK_OGF_SWIDATA:word=6;
   CHUNK_OGF_S_BONE_NAMES:word=13;
 
+  OGF_JOINT_TYPE_RIGID:cardinal = 0;
+  OGF_JOINT_TYPE_CLOTH:cardinal = 1;
+  OGF_JOINT_TYPE_JOINT:cardinal = 2;
+  OGF_JOINT_TYPE_WHEEL:cardinal = 3;
+  OGF_JOINT_TYPE_NONE:cardinal = 4;
+  OGF_JOINT_TYPE_SLIDER:cardinal = 5;
+  OGF_JOINT_TYPE_INVALID:cardinal = $FFFFFFFF;
+
+  OGF_SHAPE_TYPE_NONE:word=0;
+  OGF_SHAPE_TYPE_BOX:word=1;
+  OGF_SHAPE_TYPE_SPHERE:word=2;
+  OGF_SHAPE_TYPE_CYLINDER:word=3;
+  OGF_SHAPE_TYPE_INVALID:word=$FFFF;
+
+  OGF_JOINT_IK_VERSION_0:cardinal = 0;
+  OGF_JOINT_IK_VERSION_1:cardinal = 1;
+
 implementation
 uses sysutils;
+
+function SerializeVector3(v:FVector3):string;
+begin
+  result:=SerializeFloat(v.x)+SerializeFloat(v.y)+SerializeFloat(v.z);
+end;
+
+function SerializeVector2(v:FVector2):string;
+begin
+  result:=SerializeFloat(v.x)+SerializeFloat(v.y);
+end;
+
+{ TOgfLodRefsContainer }
+
+constructor TOgfLodRefsContainer.Create;
+begin
+  Reset();
+end;
+
+destructor TOgfLodRefsContainer.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfLodRefsContainer.Reset;
+begin
+  _loaded:=false;
+  _lodref:='';
+end;
+
+function TOgfLodRefsContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfLodRefsContainer.Deserialize(rawdata: string): boolean;
+begin
+  result:=false;
+  Reset;
+  if not DeserializeZStringAndSplit(rawdata, _lodref) then exit;
+  result:=true;
+end;
+
+function TOgfLodRefsContainer.Serialize(): string;
+begin
+  result:='';
+  if not Loaded() then exit;
+  result:=result+_lodref+chr(0);
+end;
+
+{ TOgfUserdataContainer }
+
+constructor TOgfUserdataContainer.Create;
+begin
+  Reset();
+end;
+
+destructor TOgfUserdataContainer.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfUserdataContainer.Reset;
+begin
+  _loaded:=false;
+  _script:='';
+end;
+
+function TOgfUserdataContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfUserdataContainer.Deserialize(rawdata: string): boolean;
+begin
+  result:=false;
+  Reset;
+  if not DeserializeZStringAndSplit(rawdata, _script) then exit;
+  result:=true;
+end;
+
+function TOgfUserdataContainer.Serialize(): string;
+begin
+  result:='';
+  if not Loaded() then exit;
+  result:=result+_script+chr(0);
+end;
+
+{ TOgfBonesIKDataContainer }
+
+constructor TOgfBonesIKDataContainer.Create;
+begin
+  _loaded:=false;
+  setlength(_ik_data, 0);
+end;
+
+destructor TOgfBonesIKDataContainer.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfBonesIKDataContainer.Reset;
+var
+  i:integer;
+begin
+  for i:=0 to length(_ik_data)-1 do begin
+    _ik_data[i].Free;
+  end;
+  setlength(_ik_data, 0);
+  _loaded:=false;
+end;
+
+function TOgfBonesIKDataContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfBonesIKDataContainer.Deserialize(rawdata: string): boolean;
+var
+  i, cnt:integer;
+begin
+  result:=false;
+  Reset();
+
+  repeat
+    i:=length(_ik_data);
+    setlength(_ik_data, i+1);
+    _ik_data[i]:=TOgfBoneIKData.Create();
+    cnt:=_ik_data[i].Deserialize(rawdata);
+    if (cnt<0) or not AdvanceString(rawdata, cnt) then begin
+      Reset();
+      break;
+    end;
+    if length(rawdata) = 0 then begin
+      result:=true;
+    end;
+  until result;
+
+  _loaded:=result;
+end;
+
+function TOgfBonesIKDataContainer.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  for i:=0 to length(_ik_data)-1 do begin
+    result:=result+_ik_data[i].Serialize();
+  end;
+end;
+
+{ TOgfJointIKData }
+
+constructor TOgfJointIKData.Create;
+begin
+  Reset();
+end;
+
+destructor TOgfJointIKData.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfJointIKData.Reset;
+var
+  i:integer;
+begin
+  _type:=OGF_JOINT_TYPE_INVALID;
+  _ik_flags:=0;
+
+  _spring_factor:=0;
+  _damping_factor:=0;
+  _break_force:=0;
+  _break_torque:=0;
+  _friction:=0;
+
+  for i:=0 to length(_limits)-1 do begin
+    _limits[i].damping_factor:=0;
+    _limits[i].spring_factor:=0;
+    set_zero(_limits[i].limit);
+  end;
+end;
+
+function TOgfJointIKData.Loaded(): boolean;
+begin
+  result:=(_type<>OGF_JOINT_TYPE_INVALID);
+end;
+
+function TOgfJointIKData.Deserialize(rawdata: string; version: cardinal): integer;
+var
+  sz:integer;
+  i,j:integer;
+  ptr:PAnsiChar;
+begin
+  result:=-1;
+  Reset();
+
+  sz:=sizeof(_type) +sizeof(_limits)+sizeof(_spring_factor)+sizeof(_damping_factor)+sizeof(_ik_flags)+sizeof(_break_force)+sizeof(_break_torque);
+  if version > OGF_JOINT_IK_VERSION_0 then begin
+    sz:=sz+sizeof(_friction);
+  end;
+  if length(rawdata)<sz then exit;
+
+  ptr:=PAnsiChar(@rawdata[1]);
+  i:=0;
+
+  _type:=pcardinal(@ptr[i])^;
+  i:=i+sizeof(_type);
+
+  for j:=0 to length(_limits)-1 do begin
+    _limits[j]:=pTOgfJointLimit(@ptr[i])^;
+    i:=i+sizeof(_limits[j]);
+  end;
+
+  _spring_factor:=psingle(@ptr[i])^;
+  i:=i+sizeof(_spring_factor);
+
+  _damping_factor:=psingle(@ptr[i])^;
+  i:=i+sizeof(_damping_factor);
+
+  _ik_flags:=pcardinal(@ptr[i])^;
+  i:=i+sizeof(_ik_flags);
+
+  _break_force:=psingle(@ptr[i])^;
+  i:=i+sizeof(_break_force);
+
+  _break_torque:=psingle(@ptr[i])^;
+  i:=i+sizeof(_break_torque);
+
+  if version > OGF_JOINT_IK_VERSION_0 then begin
+    _friction:=psingle(@ptr[i])^;
+    i:=i+sizeof(_friction);
+  end;
+
+  assert(sz = i);
+  result:=sz;
+end;
+
+function TOgfJointIKData.Serialize(version: cardinal): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  result:=result+SerializeCardinal(_type);
+  for i:=0 to length(_limits)-1 do begin
+    result:=result+SerializeVector2(_limits[i].limit);
+    result:=result+SerializeFloat(_limits[i].spring_factor);
+    result:=result+SerializeFloat(_limits[i].damping_factor);
+  end;
+
+  result:=result+SerializeFloat(_spring_factor);
+  result:=result+SerializeFloat(_damping_factor);
+  result:=result+SerializeCardinal(_ik_flags);
+  result:=result+SerializeFloat(_break_force);
+  result:=result+SerializeFloat(_break_torque);
+  if version > OGF_JOINT_IK_VERSION_0 then begin
+    result:=result+SerializeFloat(_friction);
+  end;
+end;
+
+{ TOgfBoneIKData }
+
+constructor TOgfBoneIKData.Create;
+begin
+  _ikdata:=TOgfJointIKData.Create;
+  Reset();
+end;
+
+destructor TOgfBoneIKData.Destroy;
+begin
+  Reset();
+  FreeAndNil(_ikdata);
+  inherited Destroy;
+end;
+
+procedure TOgfBoneIKData.Reset;
+begin
+  _version:=$FFFFFFFF;
+  _material:='';
+  _shape.shape_type:=OGF_SHAPE_TYPE_INVALID;
+  _shape.flags:=0;
+  set_zero(_shape.box);
+  set_zero(_shape.sphere);
+  set_zero(_shape.cylinder);
+  _ikdata.Reset();
+  set_zero(_rest_rotate);
+  set_zero(_rest_offset);
+  _mass:=0;
+  set_zero(_center_of_mass);
+end;
+
+function TOgfBoneIKData.Loaded(): boolean;
+begin
+  result:=(_version <> $FFFFFFFF);
+end;
+
+function TOgfBoneIKData.Deserialize(rawdata: string): integer;
+var
+  sz, total:integer;
+begin
+  result:=-1;
+  total:=0;
+
+  Reset();
+
+  if length(rawdata)<sizeof(_version) then exit;
+  _version:=pcardinal(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(_version)) then exit;
+  total:=total+sizeof(_version);
+
+  if not DeserializeZStringAndSplit(rawdata, _material) then exit;
+  total:=total+length(_material)+1;
+
+  if length(rawdata)<sizeof(_shape) then exit;
+  _shape:=pTOgfBoneShape(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(_shape)) then exit;
+  total:=total+sizeof(_shape);
+
+  sz:=_ikdata.Deserialize(rawdata, _version);
+  if sz < 0 then exit;
+  if not AdvanceString(rawdata, sz) then exit;
+  total:=total+sz;
+
+  if length(rawdata)<sizeof(_rest_rotate) then exit;
+  _rest_rotate:=pFVector3(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(_rest_rotate)) then exit;
+  total:=total+sizeof(_rest_rotate);
+
+  if length(rawdata)<sizeof(_rest_offset) then exit;
+  _rest_offset:=pFVector3(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(_rest_offset)) then exit;
+  total:=total+sizeof(_rest_offset);
+
+  if length(rawdata)<sizeof(_mass) then exit;
+  _mass:=pSingle(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(_mass)) then exit;
+  total:=total+sizeof(_mass);
+
+  if length(rawdata)<sizeof(_center_of_mass) then exit;
+  _center_of_mass:=pFVector3(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(_center_of_mass)) then exit;
+  total:=total+sizeof(_center_of_mass);
+
+  result:=total;
+end;
+
+function TOgfBoneIKData.Serialize(): string;
+var
+  t:string;
+begin
+  result:='';
+  if not Loaded() then exit;
+  t:=_ikdata.Serialize(_version);
+  if length(t) = 0 then exit;
+
+  result:=result+SerializeCardinal(_version);
+  result:=result+_material+chr(0);
+  result:=result+SerializeBlock(@_shape, sizeof(_shape));
+  result:=result+t;
+  result:=result+SerializeBlock(@_rest_rotate, sizeof(_rest_rotate));
+  result:=result+SerializeBlock(@_rest_offset, sizeof(_rest_offset));
+  result:=result+SerializeFloat(_mass);
+  result:=result+SerializeBlock(@_center_of_mass, sizeof(_center_of_mass));
+end;
 
 { TOgfBone }
 
