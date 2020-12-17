@@ -250,6 +250,21 @@ type
     function ChangeLinkType(new_link_type:cardinal):boolean;
   end;
 
+  { TOgfChildrenContainer }
+
+  TOgfChildrenContainer = class
+    _loaded:boolean;
+    _children:array of TOgfChild;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
 
   { TOgfBone }
 
@@ -342,6 +357,9 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string):boolean;
     function Serialize():string;
+
+    // Specific
+    function Count():integer;
   end;
 
   { TOgfBonesContainer }
@@ -357,6 +375,25 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string):boolean;
     function Serialize():string;
+
+    // Specific
+    function Count():integer;
+  end;
+
+
+  { TOgfSkeleton }
+
+  TOgfSkeleton = class
+    _loaded:boolean;
+    _bones:TOgfBonesContainer;
+    _ik:TOgfBonesIKDataContainer;
+  public
+    constructor Create();
+    procedure Reset;
+    function Loaded():boolean;
+    destructor Destroy(); override;
+
+    function Build(desc:TOgfBonesContainer; ik:TOgfBonesIKDataContainer):boolean;
   end;
 
   { TOgfUserdataContainer }
@@ -394,9 +431,11 @@ type
  TOgfParser = class
  private
    _loaded:boolean;
+   _original_data:string;
+
    _children:array of TOgfChild;
-   _bone_names_s:string;
-   _ikdata_s:string;
+   _bone_names:string;
+   _ikdata:string;
    _userdata:string;
    _lodref:string;
  public
@@ -411,6 +450,10 @@ type
    // Specific
    function LoadFromFile(fname:string):boolean;
    function LoadFromMem(addr:pointer; sz:cardinal):boolean;
+
+   function ReloadOriginal():boolean; // reload from original data and forget all modifications
+   function UpdateOriginal():boolean; // update original data with modifications
+
 end;
 
 const
@@ -461,6 +504,129 @@ end;
 function SerializeVector2(v:FVector2):string;
 begin
   result:=SerializeFloat(v.x)+SerializeFloat(v.y);
+end;
+
+{ TOgfChildrenContainer }
+
+constructor TOgfChildrenContainer.Create;
+begin
+  _loaded:=false;
+  setlength(_children, 0);
+end;
+
+destructor TOgfChildrenContainer.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TOgfChildrenContainer.Reset;
+var
+  i:integer;
+begin
+  _loaded:=false;
+  for i:=0 to length(_children)-1 do begin
+    _children[i].Free;
+  end;
+  setlength(_children, 0);
+end;
+
+function TOgfChildrenContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfChildrenContainer.Deserialize(rawdata: string): boolean;
+var
+  i:integer;
+  mem:TChunkedMemory;
+  chunk:TChunkedOffset;
+  data:string;
+begin
+  result:=false;
+  Reset();
+
+  mem:=TChunkedMemory.Create();
+  try
+    if not mem.LoadFromString(rawdata) then exit;
+
+    i:=0;
+    while true do begin
+      chunk:=mem.FindSubChunk(i);
+      if chunk = INVALID_CHUNK then break;
+
+      result:=false;
+      setlength(_children, i+1);
+      _children[i]:=TOgfChild.Create();
+      if not mem.EnterSubChunk(chunk) then break;
+      data:=mem.GetCurrentChunkRawDataAsString();
+      if not _children[i].Deserialize(data) then break;
+      if not mem.LeaveSubChunk() then break;
+      result:=true;
+      i:=i+1
+    end;
+  finally
+    if result then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+
+    mem.Free;
+  end;
+end;
+
+function TOgfChildrenContainer.Serialize(): string;
+var
+  i:integer;
+  data:string;
+begin
+  result:='';
+  if not Loaded then exit;
+
+  for i:=0 to length(_children)-1 do begin
+    data:=_children[i].Serialize();
+    if length(data) = 0 then begin
+      result:='';
+      break;
+    end;
+
+    result:=result+SerializeChunkHeader(i, length(data), 0)+data;
+  end;
+end;
+
+{ TOgfSkeleton }
+
+constructor TOgfSkeleton.Create();
+begin
+  Reset;
+end;
+
+procedure TOgfSkeleton.Reset;
+begin
+  _loaded:=false;
+  _ik:=nil;
+  _bones:=nil;
+end;
+
+function TOgfSkeleton.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+destructor TOgfSkeleton.Destroy();
+begin
+  Reset();
+  inherited Destroy();
+end;
+
+
+function TOgfSkeleton.Build(desc: TOgfBonesContainer; ik: TOgfBonesIKDataContainer): boolean;
+begin
+  result:=false;
+  if desc.Count()<>ik.Count() then exit;
+  _ik:=ik;
+  _bones:=desc;
+  result:=true;
 end;
 
 { TOgfLodRefsContainer }
@@ -604,6 +770,15 @@ begin
 
   for i:=0 to length(_ik_data)-1 do begin
     result:=result+_ik_data[i].Serialize();
+  end;
+end;
+
+function TOgfBonesIKDataContainer.Count(): integer;
+begin
+  if Loaded() then begin
+    result:=length(_ik_data);
+  end else begin
+    result:=0;
   end;
 end;
 
@@ -956,6 +1131,15 @@ begin
       exit;
     end;
     result:=result+bone_str;
+  end;
+end;
+
+function TOgfBonesContainer.Count(): integer;
+begin
+  if Loaded() then begin
+    result:=length(_bones);
+  end else begin
+    result:=0;
   end;
 end;
 
@@ -2182,6 +2366,16 @@ begin
 end;
 
 function TOgfParser.LoadFromMem(addr: pointer; sz: cardinal): boolean;
+begin
+
+end;
+
+function TOgfParser.ReloadOriginal(): boolean;
+begin
+
+end;
+
+function TOgfParser.UpdateOriginal(): boolean;
 begin
 
 end;
