@@ -367,6 +367,36 @@ begin
   end;
 end;
 
+function OgfParserTest():boolean;
+var
+  p:TOgfParser;
+  data_new, data_old:string;
+  f:TChunkedMemory;
+begin
+  result:=false;
+  p:=TOgfParser.Create();
+  f:=TChunkedMemory.Create();
+  try
+    if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+
+    if not p.LoadFromFile(TEST_OGF_IN_NAME) then exit;
+    data_new:=p.Serialize();
+    if length(data_new) = 0 then exit;
+
+    if not f.LoadFromString(data_new) then exit;
+    if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+    if data_new <> data_old then exit;
+
+    result:=true;
+  finally
+    p.Free;
+    f.Free;
+    DeleteFile(TEST_OGF_OUT_NAME);
+    PrintTestResult('OgfChildrenContainerTest', result);
+  end;
+end;
+
 function RunAllTests():boolean;
 begin
   result:=true;
@@ -378,6 +408,8 @@ begin
   if not OgfBoneTest() then result:=false;
   if not OgfIKDataTest() then result:=false;
   if not OgfChildrenContainerTest() then result:=false;
+  if not OgfParserTest() then result:=false;
+
 end;
 
 end.
