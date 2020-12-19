@@ -451,6 +451,7 @@ type
 
    // Specific
    function LoadFromFile(fname:string):boolean;
+   function SaveToFile(fname:string):boolean;
    function LoadFromMem(addr:pointer; sz:cardinal):boolean;
 
    function ReloadOriginal():boolean; // reload from original data and forget all modifications
@@ -2457,6 +2458,29 @@ begin
     result:=Deserialize(mem.GetCurrentChunkRawDataAsString());
   finally
     mem.Free;
+  end;
+end;
+
+function TOgfParser.SaveToFile(fname: string): boolean;
+var
+  data:string;
+  f:THandle;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  data:=Serialize();
+  if length(data) = 0 then exit;
+
+  f:=FileCreate(fname, fmOpenReadWrite);
+  if f = THandle(-1) then exit;
+
+  try
+    if length(data) = FileWrite(f, data[1], length(data)) then begin;
+      result:=true
+    end;
+  finally
+    FileClose(f);
   end;
 end;
 
