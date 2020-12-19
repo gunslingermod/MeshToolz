@@ -8,42 +8,68 @@ uses
   ogf_parser;
 
 type
-TModelSlotsContainer = class;
+TSlotsContainer = class;
 
 TSlotId = integer;
+
+TTempBufferType = (TTempTypeNone, TTempTypeString);
+
+{ TTempBuffer }
+
+TTempBuffer = class
+  _cur_type:TTempBufferType;
+  _buffer_string:string;
+public
+  constructor Create;
+  destructor Destroy; override;
+
+  procedure Clear();
+  function GetCurrentType():TTempBufferType;
+  function GetString(var outstr:string):boolean;
+  procedure SetString(s:string);
+end;
 
 { TModelSlot }
 
 TModelSlot = class
   _data:TOgfParser;
   _id:TSlotId;
-  _container:TModelSlotsContainer;
+  _container:TSlotsContainer;
 
-  function _CmdStatus():string;
+  function _CmdInfo():string;
   function _CmdLoadFromFile(path:string):string;
   function _CmdSaveToFile(path:string):string;
-  function _CmdUnload(path:string):string;
+  function _CmdUnload():string;
+
+  function _ProcessChildrenCommands(child_id:integer; cmd:string):string;
+  function _CmdChildInfo(child_id:integer):string;
 public
-  constructor Create(id:TSlotId; container:TModelSlotsContainer);
+  constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
   function Id():TSlotId;
 
   function ExecuteCmd(cmd:string):string;
 end;
 
-{ TModelSlotsContainer }
+{ TSlotsContainer }
 
-TModelSlotsContainer = class
-  _slots:array of TModelSlot;
+TSlotsContainer = class
+  _model_slots:array of TModelSlot;
+  _temp_buffer:TTempBuffer;
 public
   constructor Create();
   destructor Destroy(); override;
-  function GetSlotById(id:TSlotId):TModelSlot;
+  function GetModelSlotById(id:TSlotId):TModelSlot;
+  function GetTempBuffer():TTempBuffer;
   function TryGetSlotRefByString(in_string:string; var rest_string:string):TModelSlot;
 end;
 
 implementation
 uses sysutils, strutils;
+
+const
+  OPCODE_CALL:char=':';
+  OPCODE_INDEX:char='.';
 
 function IsNumberChar(chr:AnsiChar):boolean;
 begin
@@ -85,9 +111,47 @@ begin
   end;
 end;
 
+{ TTempBuffer }
+
+constructor TTempBuffer.Create;
+begin
+  Clear();
+end;
+
+destructor TTempBuffer.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TTempBuffer.Clear();
+begin
+  _cur_type:=TTempTypeNone;
+end;
+
+function TTempBuffer.GetCurrentType(): TTempBufferType;
+begin
+  result:=_cur_type;
+end;
+
+function TTempBuffer.GetString(var outstr: string): boolean;
+begin
+  if _cur_type = TTempTypeString then begin
+    result:=true;
+    outstr:=_buffer_string;
+  end else begin
+    result:=false;
+  end;
+end;
+
+procedure TTempBuffer.SetString(s: string);
+begin
+  _cur_type:=TTempTypeString;
+  _buffer_string:=s;
+end;
+
 { TModelSlot }
 
-function TModelSlot._CmdStatus(): string;
+function TModelSlot._CmdInfo(): string;
 begin
   if not _data.Loaded then begin
     result:='slot doesn''t contain loaded data';
@@ -124,7 +188,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdUnload(path: string): string;
+function TModelSlot._CmdUnload(): string;
 begin
   if not _data.Loaded() then begin
     result:='!Slot is empty';
@@ -135,7 +199,63 @@ begin
   result:='';
 end;
 
-constructor TModelSlot.Create(id: TSlotId; container: TModelSlotsContainer);
+function TModelSlot._ProcessChildrenCommands(child_id: integer; cmd: string): string;
+var
+  opcode:char;
+  args:string;
+  proccode:string;
+const
+  PROC_INFO:string='info';
+begin
+  if not _data.Loaded() then begin
+    result:='!please load model first';
+  end else if abs(child_id) >= _data.GetChildrenCount() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.GetChildrenCount());
+  end else begin
+    if child_id < 0 then begin
+      child_id:=_data.GetChildrenCount() - child_id;
+    end;
+
+    if length(trim(cmd))=0 then begin
+      result:=_CmdChildInfo(child_id);
+    end else begin
+      args:='';
+      opcode:=cmd[1];
+      cmd:=rightstr(cmd, length(cmd)-1);
+
+      if opcode = OPCODE_CALL then begin
+        proccode:=ExtractAlphabeticString(cmd);
+        if not ExtractProcArgs(cmd, args) then begin
+          result:='!can''t parse arguments to call procedure "'+proccode+'"';
+        end else if lowercase(proccode)=PROC_INFO then begin
+          result:=_CmdChildInfo(child_id);
+        end else begin
+          result:='!unknown procedure "'+proccode+'"';
+        end;
+      end else begin
+        result:='!unsupported opcode "'+opcode+'"';
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildInfo(child_id: integer): string;
+begin
+  if not _data.Loaded() then begin
+    result:='!please load model first';
+  end else if child_id >= _data.GetChildrenCount() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.GetChildrenCount());
+  end else begin
+    result:='Info for child #'+inttostr(child_id)+':'+chr($0d)+chr($0a);
+    result:=result+'Texture: '+_data.GetChild(child_id).GetTextureData().texture+chr($0d)+chr($0a);
+    result:=result+'Shader: '+_data.GetChild(child_id).GetTextureData().shader+chr($0d)+chr($0a);
+    result:=result+'Vertices count:'+inttostr(_data.GetChild(child_id).GetVerticesCount())+chr($0d)+chr($0a);
+    result:=result+'Tris count:'+inttostr(_data.GetChild(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
+    result:=result+'Current link type:'+inttostr(_data.GetChild(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
+  end;
+end;
+
+constructor TModelSlot.Create(id: TSlotId; container: TSlotsContainer);
 begin
   _id:=id;
   _data:=TOgfParser.Create();
@@ -159,14 +279,17 @@ const
   PROC_SAVETOFILE:string='savetofile';
   PROC_UNLOAD:string='unload';
   PROC_INFO:string='info';
+
+  PROP_CHILD:string='child';
 var
   args:string;
   opcode:char;
-  proccode:string;
+  proccode, propname:string;
+  i:integer;
 begin
   cmd:=TrimLeft(cmd);
   if length(trim(cmd))=0 then begin
-    result:=_CmdStatus();
+    result:=_CmdInfo();
     exit;
   end;
 
@@ -174,61 +297,86 @@ begin
   opcode:=cmd[1];
   cmd:=rightstr(cmd, length(cmd)-1);
 
-  if opcode = '.' then begin
+  if opcode = OPCODE_CALL then begin
     proccode:=ExtractAlphabeticString(cmd);
     if not ExtractProcArgs(cmd, args) then begin
       result:='!can''t parse arguments to call procedure "'+proccode+'"';
     end else if lowercase(proccode)=PROC_LOADFROMFILE then begin
       result:=_CmdLoadFromFile(args);
+    end else if not _data.Loaded() then begin
+      result:='!please load model first';
     end else if lowercase(proccode)=PROC_SAVETOFILE then begin
       result:=_CmdSaveToFile(args);
     end else if lowercase(proccode)=PROC_UNLOAD then begin
-      result:=_CmdUnload(args);
+      result:=_CmdUnload();
     end else if lowercase(proccode)=PROC_INFO then begin
-      result:=_CmdStatus();
+      result:=_CmdInfo();
     end else begin
-      result:='!can''t find procedure "'+proccode+'"';
+      result:='!unknown procedure "'+proccode+'"';
+    end;
+  end else if opcode = OPCODE_INDEX then begin
+    propname:=ExtractAlphabeticString(cmd);
+
+    if not _data.Loaded() then begin
+      result:='!please load model first';
+    end else if lowercase(propname)=PROP_CHILD then begin
+      args:=ExtractNumericString(cmd);
+      i:=strtointdef(args, -1);
+      if i<0 then begin
+        result:='!invalid child id "'+args+'"';
+      end else begin
+        result:=_ProcessChildrenCommands(i, cmd);
+      end;
+    end else begin
+      result:='!unknown procedure "'+propname+'"';
     end;
   end else begin
-    result:='!slot does not support requested operation';
+    result:='!unsupported opcode "'+opcode+'"';
   end;
 end;
 
-{ TModelSlotsContainer }
+{ TSlotsContainer }
 
-constructor TModelSlotsContainer.Create();
+constructor TSlotsContainer.Create();
 begin
-  setlength(_slots, 0);
+  setlength(_model_slots, 0);
+  _temp_buffer:=TTempBuffer.Create();
 end;
 
-destructor TModelSlotsContainer.Destroy();
+destructor TSlotsContainer.Destroy();
 var
   i:integer;
 begin
-  for i:=0 to length(_slots)-1 do begin
-    _slots[i].Free;
+  _temp_buffer.Free;
+  for i:=0 to length(_model_slots)-1 do begin
+    _model_slots[i].Free;
   end;
-  setlength(_slots, 0);
+  setlength(_model_slots, 0);
   inherited Destroy();
 end;
 
-function TModelSlotsContainer.GetSlotById(id: TSlotId): TModelSlot;
+function TSlotsContainer.GetModelSlotById(id: TSlotId): TModelSlot;
 var
   i:integer;
 begin
-   for i:=0 to length(_slots)-1 do begin
-     if _slots[i].Id() = id then begin
-       result:=_slots[i];
+   for i:=0 to length(_model_slots)-1 do begin
+     if _model_slots[i].Id() = id then begin
+       result:=_model_slots[i];
        exit;
      end;
    end;
 
-   setlength(_slots, length(_slots)+1);
+   setlength(_model_slots, length(_model_slots)+1);
    result:=TModelSlot.Create(id, self);
-   _slots[length(_slots)-1]:=result;
+   _model_slots[length(_model_slots)-1]:=result;
 end;
 
-function TModelSlotsContainer.TryGetSlotRefByString(in_string: string; var rest_string: string): TModelSlot;
+function TSlotsContainer.GetTempBuffer(): TTempBuffer;
+begin
+  result:=_temp_buffer;
+end;
+
+function TSlotsContainer.TryGetSlotRefByString(in_string: string; var rest_string: string): TModelSlot;
 const
   SLOT_REF_KEY='model';
 var
@@ -242,7 +390,7 @@ begin
     id_str:=ExtractNumericString(rest_string);
     id_str:='0'+id_str;
     idx:=strtointdef(id_str, 0);
-    result:=GetSlotById(idx)
+    result:=GetModelSlotById(idx)
   end;
 end;
 

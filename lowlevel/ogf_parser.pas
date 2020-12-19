@@ -263,6 +263,10 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string):boolean;
     function Serialize():string;
+
+    // Specific
+    function GetChildrenCount():integer;
+    function GetChild(i:integer):TOgfChild;
   end;
 
 
@@ -457,6 +461,9 @@ type
    function ReloadOriginal():boolean; // reload from original data and forget all modifications
    function UpdateOriginal():boolean; // update original data with modifications
 
+   function GetChildrenCount():integer;
+   function GetChild(id:integer):TOgfChild;
+
 end;
 
 const
@@ -599,6 +606,22 @@ begin
 
     result:=result+SerializeChunkHeader(i, length(data), 0)+data;
   end;
+end;
+
+function TOgfChildrenContainer.GetChildrenCount(): integer;
+begin
+  result:=0;
+  if not Loaded() then exit;
+
+  result:=length(_children);
+end;
+
+function TOgfChildrenContainer.GetChild(i: integer): TOgfChild;
+begin
+  result:=nil;
+  if not Loaded() or (length(_children)<=i) then exit;
+
+  result:=_children[i];
 end;
 
 { TOgfSkeleton }
@@ -2554,6 +2577,16 @@ begin
 
   result:=true;
 
+end;
+
+function TOgfParser.GetChildrenCount(): integer;
+begin
+  result:=_children.GetChildrenCount();
+end;
+
+function TOgfParser.GetChild(id: integer): TOgfChild;
+begin
+  result:=_children.GetChild(id);
 end;
 
 

@@ -3,7 +3,7 @@ program MeshCommander;
 uses CommandsParser, sysutils;
 
 var
-  g_models_slots:TModelSlotsContainer;
+  g_models_slots:TSlotsContainer;
 
 function ExecuteCmd(cmd:string):string;
 var
@@ -23,7 +23,7 @@ end;
 var
   cmd, res:string;
 begin
-  g_models_slots:=TModelSlotsContainer.Create();
+  g_models_slots:=TSlotsContainer.Create();
   cmd:='';
 
   writeln('OGFCommander by GUNSLINGER Mod team');
