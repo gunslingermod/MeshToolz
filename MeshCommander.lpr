@@ -27,7 +27,8 @@ begin
   cmd:='';
   DecimalSeparator{%H-} := '.';
 
-  writeln('OGFCommander by GUNSLINGER Mod team');
+  writeln('OGFCommander by GUNSLINGER Mod Team');
+  writeln('Build: '+{$INCLUDE %DATE%});
   writeln;
 
   try
