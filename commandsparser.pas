@@ -5,7 +5,7 @@ unit CommandsParser;
 interface
 
 uses
-  ogf_parser;
+  ogf_parser, basedefs;
 
 type
 TSlotsContainer = class;
@@ -40,13 +40,15 @@ TModelSlot = class
   function _CmdLoadFromFile(path:string):string;
   function _CmdSaveToFile(path:string):string;
   function _CmdUnload():string;
+  function _CmdPasteMeshFromTempBuf():string;
 
   function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
   function _CmdMeshInfo(child_id:integer):string;
   function _CmdMeshCopy(child_id:integer):string;
   function _CmdMeshInsert(child_id:integer):string;
-  function _CmdPasteMeshFromTempBuf():string;
   function _CmdMeshRemove(child_id:integer):string;
+  function _CmdMeshMove(child_id:integer; cmd:string):string;
+  function _CmdMeshScale(child_id:integer; cmd:string):string;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -75,6 +77,8 @@ uses sysutils, strutils;
 const
   OPCODE_CALL:char=':';
   OPCODE_INDEX:char='.';
+
+  ARGUMENTS_SEPARATOR:char=',';
 
 function IsNumberChar(chr:AnsiChar):boolean;
 begin
@@ -116,6 +120,46 @@ begin
   end;
 end;
 
+function ExtractFloatFromString(var inoutstr:string; var fout:single):boolean;
+var
+  separator_found:boolean;
+  tmpstr, numstr:string;
+  sign:single;
+const
+  SEPARATOR:char='.';
+begin
+  result:=false;
+  tmpstr:=TrimLeft(inoutstr);
+  if length(tmpstr) = 0 then exit;
+
+  if tmpstr[1]='-' then begin
+    sign:=-1;
+    tmpstr:=TrimLeft(rightstr(tmpstr, length(tmpstr)-1));
+    if length(tmpstr) = 0 then exit;
+  end else begin
+    sign:=1;
+  end;
+  if length(tmpstr) = 0 then exit;
+
+  separator_found:=false;
+  numstr:='';
+  while (length(tmpstr) > 0) and (IsNumberChar(tmpstr[1]) or ((tmpstr[1] = SEPARATOR) and (separator_found = false)) ) do begin
+    if (tmpstr[1] = SEPARATOR) then begin
+      separator_found:=true;
+    end;
+    numstr:=numstr+tmpstr[1];
+    tmpstr:=rightstr(tmpstr, length(tmpstr)-1);
+  end;
+
+  try
+    fout:=sign*strtofloat(numstr);
+    inoutstr:=tmpstr;
+    result:=true;
+  except
+    result:=false;
+  end;
+end;
+
 function ExtractABNString(var inoutstr:string):string;
 begin
   inoutstr:=TrimLeft(inoutstr);
@@ -137,6 +181,32 @@ begin
     out_left:=leftstr(instr, i-1);
     out_right:=rightstr(instr, length(instr)-i);
   end;
+end;
+
+function ExtractFVector3(var inoutstr:string; var v:FVector3):boolean;
+var
+  tmpstr:string;
+  tmpv:FVector3;
+begin
+  result:=false;
+  set_zero(tmpv{%H-});
+  tmpstr:=trimleft(inoutstr);
+
+  if not ExtractFloatFromString(tmpstr, tmpv.x) then exit;
+  tmpstr:=trimleft(tmpstr);
+  if (length(tmpstr)=0) or (tmpstr[1]<>ARGUMENTS_SEPARATOR) then exit;
+  tmpstr:=rightstr(tmpstr, length(tmpstr)-1);
+
+  if not ExtractFloatFromString(tmpstr, tmpv.y) then exit;
+  tmpstr:=trimleft(tmpstr);
+  if (length(tmpstr)=0) or (tmpstr[1]<>ARGUMENTS_SEPARATOR) then exit;
+  tmpstr:=rightstr(tmpstr, length(tmpstr)-1);
+
+  if not ExtractFloatFromString(tmpstr, tmpv.z) then exit;
+
+  inoutstr:=tmpstr;
+  v:=tmpv;
+  result:=true;
 end;
 
 type
@@ -335,6 +405,8 @@ const
   PROC_REMOVE:string='remove';
   PROC_COPY:string='copy';
   PROC_PASTE:string='paste';
+  PROC_MOVE:string='move';
+  PROC_SCALE:string='scale'; //mirror if negative
 begin
   if (not _data.Loaded()) or (_data.Meshes()=nil) then begin
     result:='!please load model first';
@@ -364,6 +436,10 @@ begin
           result:=_CmdMeshCopy(child_id);
         end else if lowercase(proccode)=PROC_PASTE then begin
           result:=_CmdMeshInsert(child_id);
+        end else if lowercase(proccode)=PROC_MOVE then begin
+          result:=_CmdMeshMove(child_id, args);
+        end else if lowercase(proccode)=PROC_SCALE then begin
+          result:=_CmdMeshScale(child_id, args);
         end else begin
           result:='!unknown procedure "'+proccode+'"';
         end;
@@ -424,6 +500,7 @@ begin
   end else if child_id >= _data.Meshes().Count()+1 then begin
     result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
   end else begin
+    s:='';
     if _container.GetTempBuffer().GetString(s) then begin
       meshid:=_data.Meshes().Insert(s, child_id);
       if (meshid < 0) or (meshid<>child_id) then begin
@@ -448,6 +525,7 @@ begin
   if not _data.Loaded() or (_data.Meshes()=nil) then begin
     result:='!please load model first';
   end else begin
+    s:='';
     if _container.GetTempBuffer().GetString(s) then begin
       meshid:=_data.Meshes().Append(s);
       if meshid < 0 then begin
@@ -478,6 +556,66 @@ begin
       result:='!remove operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
     end else begin
       result:='successfully removed mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshMove(child_id: integer; cmd: string): string;
+var
+  v:FVector3;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    set_zero(v{%H-});
+    if not ExtractFVector3(cmd, v) then begin
+      result:='!cannot extract vector argument';
+    end else begin
+      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+      cmd:=TrimLeft(cmd);
+      if length(cmd)>0 then begin
+        result:='!invalid arguments count, expected 3 floats';
+      end else begin
+        if not _data.Meshes().Get(child_id).Move(v) then begin
+          result:='!move operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+        end else begin
+          result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') successfully moved';
+        end;
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshScale(child_id: integer; cmd: string): string;
+var
+  v:FVector3;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    set_zero(v{%H-});
+    if not ExtractFVector3(cmd, v) then begin
+      result:='!cannot extract vector argument';
+    end else begin
+      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+      cmd:=TrimLeft(cmd);
+      if length(cmd)>0 then begin
+        result:='!invalid arguments count, expected 3 floats';
+      end else begin
+        if not _data.Meshes().Get(child_id).Scale(v) then begin
+          result:='!scale operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+        end else begin
+          result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') successfully scaled';
+        end;
+      end;
     end;
   end;
 end;
@@ -558,6 +696,7 @@ begin
       InitFilters(filters{%H-});
       PushFilter(filters, FILTER_TEXTURE_NAME);
       PushFilter(filters, FILTER_SHADER_NAME);
+      i:=0;
       if ExtractIndexFilter(cmd,filters,i) then begin
         if i < 0 then begin
           result:='!invalid filter rule';

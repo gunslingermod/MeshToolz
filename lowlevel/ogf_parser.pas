@@ -248,6 +248,10 @@ type
 
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
+
+    function Scale(v:FVector3):boolean;
+    function Move(v:FVector3):boolean;
+
   end;
 
   { TOgfChildrenContainer }
@@ -1940,6 +1944,24 @@ begin
     result:=false;
   end else begin
     result:=_verts.ChangeLinkType(new_link_type);
+  end;
+end;
+
+function TOgfChild.Scale(v: FVector3): boolean;
+begin
+  if not Loaded() then begin
+    result:=false;
+  end else begin
+    result:=_verts.ScaleVertices(v);
+  end;
+end;
+
+function TOgfChild.Move(v: FVector3): boolean;
+begin
+  if not Loaded() then begin
+    result:=false;
+  end else begin
+    result:=_verts.MoveVertices(v);
   end;
 end;
 

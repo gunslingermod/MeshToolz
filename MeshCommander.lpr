@@ -25,6 +25,7 @@ var
 begin
   g_models_slots:=TSlotsContainer.Create();
   cmd:='';
+  DecimalSeparator{%H-} := '.';
 
   writeln('OGFCommander by GUNSLINGER Mod team');
   writeln;
