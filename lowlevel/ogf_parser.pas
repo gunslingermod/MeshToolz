@@ -255,6 +255,8 @@ type
   TOgfChildrenContainer = class
     _loaded:boolean;
     _children:array of TOgfChild;
+
+    function _IsValidIndex(index:integer):boolean;
   public
     // Common
     constructor Create;
@@ -268,7 +270,8 @@ type
     function Count():integer;
     function Get(id:integer):TOgfChild;
     function Remove(id:integer):boolean;
-    function Append(data:string):boolean;
+    function Append(data:string):integer;
+    function Insert(data:string; index:integer):integer;
     function Replace(id:integer; data:string):boolean;
   end;
 
@@ -523,6 +526,11 @@ end;
 
 { TOgfChildrenContainer }
 
+function TOgfChildrenContainer._IsValidIndex(index:integer): boolean;
+begin
+  result:=(index >= 0) and (index < length(_children));
+end;
+
 constructor TOgfChildrenContainer.Create;
 begin
   _loaded:=false;
@@ -620,7 +628,7 @@ end;
 function TOgfChildrenContainer.Get(id: integer): TOgfChild;
 begin
   result:=nil;
-  if not Loaded() or (length(_children)<=id) then exit;
+  if not Loaded() or not _IsValidIndex(id) then exit;
 
   result:=_children[id];
 end;
@@ -630,7 +638,7 @@ var
   i:integer;
 begin
   result:=false;
-  if not Loaded() or (length(_children)<=id) then exit;
+  if not Loaded() or not _IsValidIndex(id) then exit;
 
   _children[id].Free();
   for i:=id to length(_children)-2 do begin
@@ -641,12 +649,12 @@ begin
   result:=true;
 end;
 
-function TOgfChildrenContainer.Append(data: string): boolean;
+function TOgfChildrenContainer.Append(data: string): integer;
 var
   child:TOgfChild;
   i:integer;
 begin
-  result:=false;
+  result:=-1;
   if not Loaded() then exit;
 
   child:=TOgfChild.Create();
@@ -656,7 +664,29 @@ begin
     i:=length(_children);
     setlength(_children, i+1);
     _children[i]:=child;
-    result:=true;
+    result:=i;
+  end;
+end;
+
+function TOgfChildrenContainer.Insert(data: string; index: integer): integer;
+var
+  child:TOgfChild;
+  i:integer;
+begin
+  result:=-1;
+  if not Loaded() then exit;
+  if (index < 0) or (index > length(_children)) then exit;
+
+  child:=TOgfChild.Create();
+  if not child.Deserialize(data) then begin
+    child.Free;
+  end else begin
+    setlength(_children, length(_children)+1);
+    for i:=index to length(_children)-2 do begin
+      _children[i+1]:=_children[i];
+    end;
+    _children[index]:=child;
+    result:=index;
   end;
 end;
 

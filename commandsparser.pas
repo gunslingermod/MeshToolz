@@ -43,6 +43,11 @@ TModelSlot = class
 
   function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
   function _CmdMeshInfo(child_id:integer):string;
+  function _CmdMeshCopy(child_id:integer):string;
+  function _CmdMeshInsert(child_id:integer):string;
+  function _CmdPasteMeshFromTempBuf():string;
+  function _CmdMeshRemove(child_id:integer):string;
+
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
@@ -327,6 +332,9 @@ var
   proccode:string;
 const
   PROC_INFO:string='info';
+  PROC_REMOVE:string='remove';
+  PROC_COPY:string='copy';
+  PROC_PASTE:string='paste';
 begin
   if (not _data.Loaded()) or (_data.Meshes()=nil) then begin
     result:='!please load model first';
@@ -350,6 +358,12 @@ begin
           result:='!can''t parse arguments to call procedure "'+proccode+'"';
         end else if lowercase(proccode)=PROC_INFO then begin
           result:=_CmdMeshInfo(child_id);
+        end else if lowercase(proccode)=PROC_REMOVE then begin
+          result:=_CmdMeshRemove(child_id);
+        end else if lowercase(proccode)=PROC_COPY then begin
+          result:=_CmdMeshCopy(child_id);
+        end else if lowercase(proccode)=PROC_PASTE then begin
+          result:=_CmdMeshInsert(child_id);
         end else begin
           result:='!unknown procedure "'+proccode+'"';
         end;
@@ -373,6 +387,98 @@ begin
     result:=result+'Vertices count:'+inttostr(_data.Meshes.Get(child_id).GetVerticesCount())+chr($0d)+chr($0a);
     result:=result+'Tris count:'+inttostr(_data.Meshes.Get(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
     result:=result+'Current link type:'+inttostr(_data.Meshes.Get(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
+  end;
+end;
+
+function TModelSlot._CmdMeshCopy(child_id: integer): string;
+var
+  shader, texture:string;
+  s:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+    s:=_data.Meshes().Get(child_id).Serialize();
+    if length(s) = 0 then begin
+      result:='!cannot serialize mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+'), buffer cleared';
+      _container.GetTempBuffer().Clear();
+    end else begin
+      _container.GetTempBuffer().SetString(s);
+      result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') successfully saved to temp buffer';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshInsert(child_id: integer): string;
+var
+  s:string;
+  meshid:integer;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count()+1 then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    if _container.GetTempBuffer().GetString(s) then begin
+      meshid:=_data.Meshes().Insert(s, child_id);
+      if (meshid < 0) or (meshid<>child_id) then begin
+        result:='!unable to insert data from temp buffer as a mesh';
+      end else begin
+        shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
+        texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
+        result:='mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully inserted';
+      end;
+    end else begin
+      result:='!can''t extract data from temp buffer, unsupported format?';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdPasteMeshFromTempBuf(): string;
+var
+  s:string;
+  meshid:integer;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else begin
+    if _container.GetTempBuffer().GetString(s) then begin
+      meshid:=_data.Meshes().Append(s);
+      if meshid < 0 then begin
+        result:='!unable to append data from temp buffer as a mesh';
+      end else begin
+        shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
+        texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
+        result:='mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully appended';
+      end;
+    end else begin
+      result:='!can''t extract data from temp buffer, unsupported format?';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshRemove(child_id: integer): string;
+var
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+    if not _data.Meshes().Remove(child_id) then begin
+      result:='!remove operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end else begin
+      result:='successfully removed mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end;
   end;
 end;
 
@@ -400,6 +506,7 @@ const
   PROC_SAVETOFILE:string='savetofile';
   PROC_UNLOAD:string='unload';
   PROC_INFO:string='info';
+  PROC_PASTEMESH:string='pastemesh';
 
   PROP_CHILD:string='mesh';
 
@@ -437,6 +544,8 @@ begin
       result:=_CmdUnload();
     end else if lowercase(proccode)=PROC_INFO then begin
       result:=_CmdInfo();
+    end else if lowercase(proccode)=PROC_PASTEMESH then begin
+      result:=_CmdPasteMeshFromTempBuf();
     end else begin
       result:='!unknown procedure "'+proccode+'"';
     end;
