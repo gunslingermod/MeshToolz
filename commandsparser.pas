@@ -41,8 +41,8 @@ TModelSlot = class
   function _CmdSaveToFile(path:string):string;
   function _CmdUnload():string;
 
-  function _ProcessChildrenCommands(child_id:integer; cmd:string):string;
-  function _CmdChildInfo(child_id:integer):string;
+  function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
+  function _CmdMeshInfo(child_id:integer):string;
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
@@ -108,6 +108,127 @@ begin
   while (length(inoutstr) > 0) and (IsNumberChar(inoutstr[1])) do begin
     result:=result+inoutstr[1];
     inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
+  end;
+end;
+
+function ExtractABNString(var inoutstr:string):string;
+begin
+  inoutstr:=TrimLeft(inoutstr);
+  result:='';
+  while (length(inoutstr) > 0) and (IsAlphabeticChar(inoutstr[1]) or IsNumberChar(inoutstr[1])) do begin
+    result:=result+inoutstr[1];
+    inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
+  end;
+end;
+
+function SplitString(instr:string; var out_left:string; var out_right:string; sep:char):boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  i:=Pos(sep, instr);
+  if i > 0 then begin
+    result:=true;
+    out_left:=leftstr(instr, i-1);
+    out_right:=rightstr(instr, length(instr)-i);
+  end;
+end;
+
+type
+TIndexFilter = packed record
+  name:string;
+  value:string;
+end;
+
+TFilterMode = (FILTER_MODE_EXACT, FILTER_MODE_BEGINWITH);
+
+TIndexFilters = array of TIndexFilter;
+
+procedure InitFilters(var f:TIndexFilters);
+begin
+  setlength(f, 0);
+end;
+
+procedure PushFilter(var f:TIndexFilters; name:string; defval:string='');
+var
+  l:integer;
+begin
+  l:=length(f);
+  setlength(f, l+1);
+  f[l].name:=name;
+  f[l].value:=defval;
+end;
+
+function IsMatchFilter(str:string; filter:TIndexFilter; mode:TFilterMode):boolean;
+begin
+  result:=false;
+  case mode of
+    FILTER_MODE_EXACT: result:=(length(filter.value)=0) or (str = filter.value);
+    FILTER_MODE_BEGINWITH: result:=(length(filter.value)=0) or (leftstr(str, length(filter.value)) = filter.value);
+  end;
+end;
+
+procedure ClearFilters(var f:TIndexFilters);
+begin
+  setlength(f, 0);
+end;
+
+function ExtractIndexFilter(var inoutstr:string; var filters:TIndexFilters; var filters_count:integer):boolean;
+var
+  filters_str:string;
+  rest_part:string;
+  filter_name, filter_value:string;
+  tmp, i:integer;
+begin
+  result:=false;
+  inoutstr:=trim(inoutstr);
+  filters_str:='';
+  rest_part:='';
+  if (length(inoutstr) < 2) or (inoutstr[1]<>'[') or not SplitString(inoutstr, filters_str, rest_part, ']') then exit;
+  result:=true;
+  inoutstr:=rest_part;
+  filters_count:=0;
+  filters_str:=trimleft(rightstr(filters_str, length(filters_str)-1));
+  while (filters_count>=0) and (length(filters_str)>0) do begin
+    tmp:=filters_count;
+    filters_count:=-1;
+
+    // Extract filter name
+    filters_str:=TrimLeft(filters_str);
+    filter_name:=ExtractABNString(filters_str);
+    filters_str:=TrimLeft(filters_str);
+    if (length(filter_name) = 0) or (length(filters_str)=0) or (filters_str[1]<>':') then break;
+
+    // Get rid of ':'
+    filters_str:=trimleft(rightstr(filters_str, length(filters_str)-1));
+    if (length(filters_str) = 0) then break;
+
+    // Extract filter value
+    filter_value:='';
+    if not SplitString(filters_str, filter_value, rest_part, ',') then begin
+      filter_value:=filters_str;
+      filters_str:='';
+    end else begin
+      filters_str:=trimleft(rest_part);
+    end;
+
+    // Find filter by extracted name and set extracted value to filter
+    for i:=0 to length(filters)-1 do begin
+      if filters[i].name = filter_name then begin
+        filters[i].value:=filter_value;
+        filter_name:='';
+        filter_value:='';
+      end;
+    end;
+
+    if length(filter_name) = 0 then begin
+      // All seems to be OK
+      filters_count:=tmp+1;
+    end else begin
+      // Filter not found, exiting
+      filters_count:=-1;
+      break;
+    end;
   end;
 end;
 
@@ -199,7 +320,7 @@ begin
   result:='';
 end;
 
-function TModelSlot._ProcessChildrenCommands(child_id: integer; cmd: string): string;
+function TModelSlot._ProcessMeshesCommands(child_id: integer; cmd: string): string;
 var
   opcode:char;
   args:string;
@@ -207,17 +328,17 @@ var
 const
   PROC_INFO:string='info';
 begin
-  if not _data.Loaded() then begin
+  if (not _data.Loaded()) or (_data.Meshes()=nil) then begin
     result:='!please load model first';
-  end else if abs(child_id) >= _data.GetChildrenCount() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.GetChildrenCount());
+  end else if abs(child_id) >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
   end else begin
     if child_id < 0 then begin
-      child_id:=_data.GetChildrenCount() - child_id;
+      child_id:=_data.Meshes().Count() - child_id;
     end;
 
     if length(trim(cmd))=0 then begin
-      result:=_CmdChildInfo(child_id);
+      result:=_CmdMeshInfo(child_id);
     end else begin
       args:='';
       opcode:=cmd[1];
@@ -228,7 +349,7 @@ begin
         if not ExtractProcArgs(cmd, args) then begin
           result:='!can''t parse arguments to call procedure "'+proccode+'"';
         end else if lowercase(proccode)=PROC_INFO then begin
-          result:=_CmdChildInfo(child_id);
+          result:=_CmdMeshInfo(child_id);
         end else begin
           result:='!unknown procedure "'+proccode+'"';
         end;
@@ -239,19 +360,19 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildInfo(child_id: integer): string;
+function TModelSlot._CmdMeshInfo(child_id: integer): string;
 begin
-  if not _data.Loaded() then begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
     result:='!please load model first';
-  end else if child_id >= _data.GetChildrenCount() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.GetChildrenCount());
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
   end else begin
     result:='Info for child #'+inttostr(child_id)+':'+chr($0d)+chr($0a);
-    result:=result+'Texture: '+_data.GetChild(child_id).GetTextureData().texture+chr($0d)+chr($0a);
-    result:=result+'Shader: '+_data.GetChild(child_id).GetTextureData().shader+chr($0d)+chr($0a);
-    result:=result+'Vertices count:'+inttostr(_data.GetChild(child_id).GetVerticesCount())+chr($0d)+chr($0a);
-    result:=result+'Tris count:'+inttostr(_data.GetChild(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
-    result:=result+'Current link type:'+inttostr(_data.GetChild(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
+    result:=result+'Texture: '+_data.Meshes.Get(child_id).GetTextureData().texture+chr($0d)+chr($0a);
+    result:=result+'Shader: '+_data.Meshes.Get(child_id).GetTextureData().shader+chr($0d)+chr($0a);
+    result:=result+'Vertices count:'+inttostr(_data.Meshes.Get(child_id).GetVerticesCount())+chr($0d)+chr($0a);
+    result:=result+'Tris count:'+inttostr(_data.Meshes.Get(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
+    result:=result+'Current link type:'+inttostr(_data.Meshes.Get(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
   end;
 end;
 
@@ -280,12 +401,17 @@ const
   PROC_UNLOAD:string='unload';
   PROC_INFO:string='info';
 
-  PROP_CHILD:string='child';
+  PROP_CHILD:string='mesh';
+
+  FILTER_TEXTURE_NAME='texture';
+  FILTER_SHADER_NAME='shader';
 var
-  args:string;
+  args, tmpstr:string;
   opcode:char;
   proccode, propname:string;
   i:integer;
+
+  filters:TIndexFilters;
 begin
   cmd:=TrimLeft(cmd);
   if length(trim(cmd))=0 then begin
@@ -320,15 +446,48 @@ begin
     if not _data.Loaded() then begin
       result:='!please load model first';
     end else if lowercase(propname)=PROP_CHILD then begin
-      args:=ExtractNumericString(cmd);
-      i:=strtointdef(args, -1);
-      if i<0 then begin
-        result:='!invalid child id "'+args+'"';
+      InitFilters(filters{%H-});
+      PushFilter(filters, FILTER_TEXTURE_NAME);
+      PushFilter(filters, FILTER_SHADER_NAME);
+      if ExtractIndexFilter(cmd,filters,i) then begin
+        if i < 0 then begin
+          result:='!invalid filter rule';
+        end else begin
+          result:='';
+
+          // We use reverse order because current child could disappear or new child in the end could appear while executing command
+          for i:=_data.Meshes().Count()-1 downto 0 do begin
+            if IsMatchFilter(_data.Meshes().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_BEGINWITH) and IsMatchFilter(_data.Meshes().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_BEGINWITH) then begin
+              tmpstr:=_ProcessMeshesCommands(i, cmd);
+              if (length(tmpstr)>0) then begin
+                if tmpstr[1]='!' then begin
+                  result:=result+'!mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+                end else if tmpstr[1]='#' then begin
+                  result:=result+'#mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+                end else begin
+                  result:=result+'mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+                end;
+              end;
+            end;
+          end;
+
+          if length(result) = 0 then begin
+            result:='#the filter doesn''t match any item, no action performed';
+          end;
+        end;
       end else begin
-        result:=_ProcessChildrenCommands(i, cmd);
+        args:=ExtractNumericString(cmd);
+        i:=strtointdef(args, -1);
+        if i<0 then begin
+          result:='!invalid child id "'+args+'"';
+        end else begin
+          result:=_ProcessMeshesCommands(i, cmd);
+        end;
       end;
+
+      ClearFilters(filters);
     end else begin
-      result:='!unknown procedure "'+propname+'"';
+      result:='!unknown property "'+propname+'"';
     end;
   end else begin
     result:='!unsupported opcode "'+opcode+'"';

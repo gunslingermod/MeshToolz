@@ -265,8 +265,11 @@ type
     function Serialize():string;
 
     // Specific
-    function GetChildrenCount():integer;
-    function GetChild(i:integer):TOgfChild;
+    function Count():integer;
+    function Get(id:integer):TOgfChild;
+    function Remove(id:integer):boolean;
+    function Append(data:string):boolean;
+    function Replace(id:integer; data:string):boolean;
   end;
 
 
@@ -461,9 +464,7 @@ type
    function ReloadOriginal():boolean; // reload from original data and forget all modifications
    function UpdateOriginal():boolean; // update original data with modifications
 
-   function GetChildrenCount():integer;
-   function GetChild(id:integer):TOgfChild;
-
+   function Meshes():TOgfChildrenContainer;
 end;
 
 const
@@ -608,7 +609,7 @@ begin
   end;
 end;
 
-function TOgfChildrenContainer.GetChildrenCount(): integer;
+function TOgfChildrenContainer.Count(): integer;
 begin
   result:=0;
   if not Loaded() then exit;
@@ -616,12 +617,55 @@ begin
   result:=length(_children);
 end;
 
-function TOgfChildrenContainer.GetChild(i: integer): TOgfChild;
+function TOgfChildrenContainer.Get(id: integer): TOgfChild;
 begin
   result:=nil;
-  if not Loaded() or (length(_children)<=i) then exit;
+  if not Loaded() or (length(_children)<=id) then exit;
 
-  result:=_children[i];
+  result:=_children[id];
+end;
+
+function TOgfChildrenContainer.Remove(id: integer): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() or (length(_children)<=id) then exit;
+
+  _children[id].Free();
+  for i:=id to length(_children)-2 do begin
+    _children[i]:=_children[i+1]
+  end;
+  setlength(_children, length(_children)-1);
+
+  result:=true;
+end;
+
+function TOgfChildrenContainer.Append(data: string): boolean;
+var
+  child:TOgfChild;
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  child:=TOgfChild.Create();
+  if not child.Deserialize(data) then begin
+    child.Free;
+  end else begin
+    i:=length(_children);
+    setlength(_children, i+1);
+    _children[i]:=child;
+    result:=true;
+  end;
+end;
+
+function TOgfChildrenContainer.Replace(id: integer; data: string): boolean;
+begin
+  result:=false;
+  if not Loaded() or (length(_children)<=id) then exit;
+
+  result:=_children[id].Deserialize(data);
 end;
 
 { TOgfSkeleton }
@@ -2579,14 +2623,12 @@ begin
 
 end;
 
-function TOgfParser.GetChildrenCount(): integer;
+function TOgfParser.Meshes(): TOgfChildrenContainer;
 begin
-  result:=_children.GetChildrenCount();
-end;
+  result:=nil;
+  if not Loaded() then exit;
 
-function TOgfParser.GetChild(id: integer): TOgfChild;
-begin
-  result:=_children.GetChild(id);
+  result:=_children;
 end;
 
 
