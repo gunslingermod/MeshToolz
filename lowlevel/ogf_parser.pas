@@ -102,6 +102,11 @@ type
   end;
 
   { TOgfVertsContainer }
+  TVertexFilterItem = packed record
+    need_remove:boolean;
+    new_id:cardinal;
+  end;
+  TVertexFilterItems = array of TVertexFilterItem;
 
   TOgfVertsContainer = class
   private
@@ -124,12 +129,15 @@ type
     function MoveVertices(offset:FVector3):boolean;
     function ScaleVertices(factors:FVector3):boolean;
     function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
-    function GetVerticesCountForBoneID(boneid:TBoneID):integer;
+    function GetVerticesCountForBoneID(boneid:TBoneID; ignorezeroweights:boolean):integer;
+    function IsVertexAssignedToBoneID(vertexid:cardinal; boneid:TBoneID; ignorezeroweights:boolean):boolean;
 
     function GetCurrentLinkType():cardinal;
     function GetVerticesCount():cardinal;
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
+
+    function FilterVertices(var filter:TVertexFilterItems):boolean;
   end;
 
   TOgfSlideWindowItem = packed record
@@ -192,6 +200,8 @@ type
     function AssignedLodParams():TOgfSlideWindowItem;
     function TrisCountTotal():integer;
     function TrisCountInCurrentLod():integer;
+
+    function FilterVertices(var filter:TVertexFilterItems):boolean;
   end;
 
   TOgfTextureData = record
@@ -251,6 +261,9 @@ type
     function ChangeLinkType(new_link_type:cardinal):boolean;
     function RebindVertices(target_boneid:TBoneID; source_boneid:TBoneID):boolean;
     function GetVerticesCountForBoneId(boneid:TBoneID):integer;
+
+    function FilterVertices(var filter:TVertexFilterItems):boolean;
+    function RemoveVerticesWithBoneId(boneid:TBoneID):boolean;
 
     function Scale(v:FVector3):boolean;
     function Move(v:FVector3):boolean;
@@ -1436,6 +1449,31 @@ begin
   end;
 end;
 
+function TOgfTrisContainer.FilterVertices(var filter: TVertexFilterItems): boolean;
+var
+  i, newi:integer;
+begin
+  result:=false;
+
+  if not Loaded() then exit;
+
+  // Filtering vertices is prohibited for models with SWR - we will need to edit all sliding windows
+  if IsLodAssigned() then exit;
+
+  newi:=0;
+  for i:=0 to length(_tris)-1 do begin
+    if not ((filter[_tris[i].v1].need_remove) or (filter[_tris[i].v2].need_remove) or (filter[_tris[i].v3].need_remove)) then begin
+      _tris[newi].v1:=filter[_tris[i].v1].new_id;
+      _tris[newi].v2:=filter[_tris[i].v2].new_id;
+      _tris[newi].v3:=filter[_tris[i].v3].new_id;
+      newi:=newi+1;
+    end;
+  end;
+  setlength(_tris, newi);
+
+  result:=true;
+end;
+
 { TOgfSwiContainer }
 
 constructor TOgfSwiContainer.Create;
@@ -2018,7 +2056,43 @@ end;
 
 function TOgfChild.GetVerticesCountForBoneId(boneid: TBoneID): integer;
 begin
-  result:=_verts.GetVerticesCountForBoneID(boneid);
+  result:=_verts.GetVerticesCountForBoneID(boneid, true);
+end;
+
+function TOgfChild.FilterVertices(var filter: TVertexFilterItems): boolean;
+begin
+  result:=false;
+
+  if not Loaded() then exit;
+
+  // TODO: remove all SWR LODS before filtering
+  if (_swr.GetLodLevelsCount()>0) then exit;
+
+  if not _verts.FilterVertices(filter) then exit;
+  if not _tris.FilterVertices(filter) then exit;
+
+  result:=true;
+end;
+
+function TOgfChild.RemoveVerticesWithBoneId(boneid: TBoneID): boolean;
+var
+  filter:TVertexFilterItems;
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() or (_verts.GetVerticesCount() = 0) then exit;
+
+  filter:=nil;
+  try
+    setlength(filter, _verts.GetVerticesCount());
+    for i:=0 to _verts.GetVerticesCount()-1 do begin
+      filter[i].need_remove:=_verts.IsVertexAssignedToBoneID(i, boneid, true);
+    end;
+
+    result:=FilterVertices(filter);
+  finally
+    setlength(filter, 0);
+  end;
 end;
 
 function TOgfChild.Scale(v: FVector3): boolean;
@@ -2353,7 +2427,7 @@ begin
   end;
 end;
 
-function TOgfVertsContainer.GetVerticesCountForBoneID(boneid: TBoneID): integer;
+function TOgfVertsContainer.GetVerticesCountForBoneID(boneid: TBoneID; ignorezeroweights: boolean): integer;
 var
   i,j:integer;
   b:TVertexBones;
@@ -2372,13 +2446,39 @@ begin
       if not _GetVertexBindings(i, b) then continue;
       for j:=0 to b.TotalLinkedBonesCount()-1 do begin
         bone:=b.GetBoneParams(j);
-        if (bone.bone_id = boneid) and (bone.weight > 0) then begin
+        if (bone.bone_id = boneid) and (not ignorezeroweights or (bone.weight > 0)) then begin
           result:=result+1;
           break;
         end;
       end;
     end;
 
+  finally
+    FreeAndNil(b);
+  end;
+end;
+
+function TOgfVertsContainer.IsVertexAssignedToBoneID(vertexid: cardinal; boneid: TBoneID; ignorezeroweights: boolean): boolean;
+var
+  i:integer;
+  b:TVertexBones;
+  bone:TVertexBone;
+begin
+  result:=false;
+  if not Loaded() or (vertexid >= _verts_count) then exit;
+  if (boneid = INVALID_BONE_ID) then exit;
+
+  b:=TVertexBones.Create();
+  try
+    if _GetVertexBindings(vertexid, b) then begin
+      for i:=0 to b.TotalLinkedBonesCount()-1 do begin
+        bone:=b.GetBoneParams(i);
+        if (bone.bone_id = boneid) and (not ignorezeroweights or (bone.weight > 0)) then begin
+          result:=true;
+          break;
+        end;
+      end;
+    end;
   finally
     FreeAndNil(b);
   end;
@@ -2530,6 +2630,59 @@ begin
     setlength(new_data, 0);
     FreeAndNil(b);
   end;
+end;
+
+function TOgfVertsContainer.FilterVertices(var filter: TVertexFilterItems): boolean;
+var
+  i, cursor, links, newcount:cardinal;
+  new_data:array of byte;
+  pvertex:pbyte;
+  sz:cardinal;
+  h:TOgfVertsHeader;
+begin
+  result:=false;
+  if not Loaded() or (_verts_count=0) or (cardinal(length(filter)) <> _verts_count) then exit;
+
+  links:=GetCurrentLinkType();
+  if (links<>OGF_LINK_TYPE_1) and (links<>OGF_LINK_TYPE_2) and (links<>OGF_LINK_TYPE_3) and (links<>OGF_LINK_TYPE_4) then exit;
+
+  new_data:=nil;
+  setlength(new_data, length(_raw_data));
+  h:=pTOgfVertsHeader(@_raw_data[0])^;
+  cursor:=sizeof(TOgfVertsHeader);
+  newcount:=0;
+  for i:=0 to _verts_count-1 do begin
+    if not filter[i].need_remove then begin
+      if (links=OGF_LINK_TYPE_1) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex1link)];
+        sz:=sizeof(TOgfVertex1link);
+      end else if (links=OGF_LINK_TYPE_2) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex2link)];
+        sz:=sizeof(TOgfVertex2link);
+      end else if (links=OGF_LINK_TYPE_3) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex3link)];
+        sz:=sizeof(TOgfVertex3link);
+      end else if (links=OGF_LINK_TYPE_4) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex4link)];
+        sz:=sizeof(TOgfVertex4link);
+      end;
+
+      Move(pvertex^, new_data[cursor], sz);
+      cursor:=cursor+sz;
+      filter[i].new_id:=newcount;
+      newcount:=newcount+1;
+    end else begin
+      filter[i].new_id:=$FFFFFFFF;
+    end;
+  end;
+  h.count:=newcount;
+  pTOgfVertsHeader(@new_data[0])^:=h;
+  Move(new_data[0], _raw_data[0], cursor);
+  setlength(_raw_data, cursor);
+  _verts_count:=newcount;
+
+  setlength(new_data, 0);
+  result:=true;
 end;
 
 function TOgfVertsContainer.Deserialize(rawdata: string): boolean;

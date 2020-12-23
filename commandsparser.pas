@@ -54,6 +54,7 @@ TModelSlot = class
   function _CmdMeshScale(child_id:integer; cmd:string):string;
   function _CmdMeshRebind(child_id:integer; cmd:string):string;
   function _CmdMeshBonestats(child_id:integer):string;
+  function _CmdMeshFilterBone(child_id:integer; cmd:string):string;
 
   function _ProcessBonesCommands(bone_id:integer; cmd:string):string;
 
@@ -428,6 +429,7 @@ const
   PROC_SCALE:string='scale'; //mirror if negative
   PROC_REBIND:string='rebind';
   PROC_BONESTATS:string='bonestats';
+  PROC_FILTERBONE:string='filterbone';
   PROC_CHANGELINK:string='changelinktype';
   PROC_GETOPTIMALLINKTYPE:string='getoptimallinktype';
 begin
@@ -467,6 +469,8 @@ begin
           result:=_CmdMeshRebind(child_id, args);
         end else if lowercase(proccode)=PROC_BONESTATS then begin
           result:=_CmdMeshBonestats(child_id);
+        end else if lowercase(proccode)=PROC_FILTERBONE then begin
+          result:=_CmdMeshFilterBone(child_id, args);
         end else begin
           result:='!unknown procedure "'+proccode+'"';
         end;
@@ -725,6 +729,39 @@ begin
       if not found then begin
         result:='#mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') is NOT assigned to any valid bone';
       end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshFilterBone(child_id: integer; cmd: string): string;
+var
+  boneid:TBoneID;
+  shader, texture:string;
+begin
+  result:='';
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    boneid:=INVALID_BONE_ID;
+    if ExtractBoneIdFromString(cmd, boneid) then begin
+      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+      if length(trimleft(cmd))>0 then begin
+        result:='!procedure expects 1 argument';
+      end else if _data.Meshes().Get(child_id).GetVerticesCountForBoneID(boneid) = 0 then begin
+        result:='#no vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') are assigned to bone '+GetBoneNameById(boneid);
+      end else if _data.Meshes().Get(child_id).RemoveVerticesWithBoneId(boneid) then begin
+        if _data.Meshes().Get(child_id).GetVerticesCount() = 0 then begin
+          result:='#mesh is fully collapsed (no vertices found), please remove it'+chr($0d)+chr($0a);
+        end;
+        result:=result+'successfully removed vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
+      end else begin
+        result:='!error filtering vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
+      end;
+    end else begin
+      result:='!can''t extract bone id';
     end;
   end;
 end;
