@@ -42,6 +42,9 @@ TModelSlot = class
   function _CmdUnload():string;
   function _CmdPasteMeshFromTempBuf():string;
 
+  function _CmdPropChildMesh(cmd:string):string;
+  function _CmdPropChildBone(cmd:string):string;
+
   function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
   function _CmdMeshInfo(child_id:integer):string;
   function _CmdMeshCopy(child_id:integer):string;
@@ -49,6 +52,10 @@ TModelSlot = class
   function _CmdMeshRemove(child_id:integer):string;
   function _CmdMeshMove(child_id:integer; cmd:string):string;
   function _CmdMeshScale(child_id:integer; cmd:string):string;
+  function _CmdMeshRebind(child_id:integer; cmd:string):string;
+  function _CmdMeshBonestats(child_id:integer):string;
+
+  function _ProcessBonesCommands(bone_id:integer; cmd:string):string;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -56,6 +63,8 @@ public
   function Id():TSlotId;
 
   function ExecuteCmd(cmd:string):string;
+  function ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
+  function GetBoneNameById(boneid:TBoneId):string;
 end;
 
 { TSlotsContainer }
@@ -110,10 +119,16 @@ begin
   result:=true;
 end;
 
-function ExtractNumericString(var inoutstr:string):string;
+function ExtractNumericString(var inoutstr:string; allow_negative:boolean):string;
 begin
   inoutstr:=TrimLeft(inoutstr);
   result:='';
+
+  if allow_negative and (length(inoutstr) > 0) and (inoutstr[1]='-') then begin
+    result:=result+'-';
+    inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
+  end;
+
   while (length(inoutstr) > 0) and (IsNumberChar(inoutstr[1])) do begin
     result:=result+inoutstr[1];
     inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
@@ -164,7 +179,7 @@ function ExtractABNString(var inoutstr:string):string;
 begin
   inoutstr:=TrimLeft(inoutstr);
   result:='';
-  while (length(inoutstr) > 0) and (IsAlphabeticChar(inoutstr[1]) or IsNumberChar(inoutstr[1])) do begin
+  while (length(inoutstr) > 0) and (IsAlphabeticChar(inoutstr[1]) or IsNumberChar(inoutstr[1]) or (inoutstr[1]='_')) do begin
     result:=result+inoutstr[1];
     inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
   end;
@@ -347,6 +362,8 @@ end;
 
 { TModelSlot }
 
+/////////////////////////////////// COMMON /////////////////////////////////////
+
 function TModelSlot._CmdInfo(): string;
 begin
   if not _data.Loaded then begin
@@ -395,6 +412,8 @@ begin
   result:='';
 end;
 
+/////////////////////////////////// MESHES /////////////////////////////////////
+
 function TModelSlot._ProcessMeshesCommands(child_id: integer; cmd: string): string;
 var
   opcode:char;
@@ -407,6 +426,10 @@ const
   PROC_PASTE:string='paste';
   PROC_MOVE:string='move';
   PROC_SCALE:string='scale'; //mirror if negative
+  PROC_REBIND:string='rebind';
+  PROC_BONESTATS:string='bonestats';
+  PROC_CHANGELINK:string='changelinktype';
+  PROC_GETOPTIMALLINKTYPE:string='getoptimallinktype';
 begin
   if (not _data.Loaded()) or (_data.Meshes()=nil) then begin
     result:='!please load model first';
@@ -440,6 +463,10 @@ begin
           result:=_CmdMeshMove(child_id, args);
         end else if lowercase(proccode)=PROC_SCALE then begin
           result:=_CmdMeshScale(child_id, args);
+        end else if lowercase(proccode)=PROC_REBIND then begin
+          result:=_CmdMeshRebind(child_id, args);
+        end else if lowercase(proccode)=PROC_BONESTATS then begin
+          result:=_CmdMeshBonestats(child_id);
         end else begin
           result:='!unknown procedure "'+proccode+'"';
         end;
@@ -620,6 +647,156 @@ begin
   end;
 end;
 
+function TModelSlot._CmdMeshRebind(child_id: integer; cmd: string): string;
+var
+  dest_boneid,  src_boneid:TBoneID;
+  shader, texture:string;
+  flag:boolean;
+  vcnt:integer;
+begin
+  result:='';
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    src_boneid:=INVALID_BONE_ID;
+    dest_boneid:=INVALID_BONE_ID;
+    if not ExtractBoneIdFromString(cmd, dest_boneid) then begin
+      result:='!can''t extract target bone id';
+    end else begin
+      cmd:=TrimLeft(cmd);
+      if (length(cmd) > 0) and (cmd[1]=ARGUMENTS_SEPARATOR) then begin
+        cmd:=TrimLeft(rightstr(cmd, length(cmd)-1));
+        flag:=ExtractBoneIdFromString(cmd, src_boneid);
+        cmd:=TrimLeft(cmd);
+        if (not flag) then begin
+          result:='!can''t extract source bone id';
+        end else if (length(cmd)>0) then begin
+          result:='!the procedure expects 1 or 2 argument(s)';
+        end;
+      end;
+
+      if (length(result) = 0) then begin
+        shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+        texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+        vcnt:= _data.Meshes().Get(child_id).GetVerticesCountForBoneID(src_boneid);
+        if vcnt = 0 then begin
+          result:='#mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') contains no vertices binded with '+GetBoneNameById(src_boneid);
+        end else if not _data.Meshes().Get(child_id).RebindVertices(dest_boneid, src_boneid) then begin
+          result:='!failed to rebind vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid);
+        end else begin
+          result:=inttostr(vcnt)+' vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') are successfully rebinded from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid);
+        end;
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshBonestats(child_id: integer): string;
+var
+  i, vcnt:integer;
+  shader, texture:string;
+  found:boolean;
+  s:TOgfSkeleton;
+begin
+  result:='';
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    s:=_data.Skeleton();
+    if s = nil then begin
+      result:='!model has no skeleton';
+    end else begin
+      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+      result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') is assigned to the following bones:'+chr($0d)+chr($0a);
+      found:=false;
+      for i:=0 to s.GetBonesCount()-1 do begin
+        vcnt:= _data.Meshes().Get(child_id).GetVerticesCountForBoneID(i);
+        if vcnt > 0 then begin
+          found:=true;
+          result:=result+'- '+GetBoneNameById(i)+' (vertices: '+inttostr(vcnt)+')'+chr($0d)+chr($0a);
+        end;
+      end;
+
+      if not found then begin
+        result:='#mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') is NOT assigned to any valid bone';
+      end;
+    end;
+  end;
+end;
+
+/////////////////////////////////// BONES //////////////////////////////////////
+function TModelSlot.ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
+var
+  tmpid, tmpstr:string;
+  tmp_num, i:integer;
+begin
+  result:=false;
+
+  if not result then begin
+    // Пробуем извлечь ID по имени кости
+    tmpstr:=inoutstr;
+    tmpid:=ExtractABNString(tmpstr);
+    tmpstr:=TrimLeft(tmpstr);
+    tmpid:=trim(tmpid);
+
+    for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
+      if _data.Skeleton().GetBoneName(i) = tmpid then begin
+        result:=true;
+        tmp_num:=i;
+        break;
+      end;
+    end;
+  end;
+
+  if not result then begin
+    // Пробуем извлечь ID напрямую
+    tmpstr:=inoutstr;
+    tmpid:=ExtractNumericString(tmpstr, true);
+    tmpstr:=TrimLeft(tmpstr);
+    tmp_num:=strtointdef(tmpid, -2);
+    if (tmp_num <> -2) then begin
+      result:=(_data.Skeleton().GetBonesCount() > tmp_num);
+    end;
+  end;
+
+  if result then begin
+    inoutstr:=tmpstr;
+    boneid:=tmp_num;
+  end;
+end;
+
+function TModelSlot.GetBoneNameById(boneid: TBoneId): string;
+var
+  s:TOgfSkeleton;
+begin
+  result:='[none]';
+  if not _data.Loaded() then exit;
+  s:=_data.Skeleton();
+  if s = nil then exit;
+
+  if boneid = INVALID_BONE_ID then begin
+    result:='[all]';
+    exit;
+  end;
+
+  if (boneid<s.GetBonesCount()) then begin
+    result:=s.GetBoneName(boneid);
+  end;
+end;
+
+function TModelSlot._ProcessBonesCommands(bone_id: integer; cmd: string): string;
+begin
+
+end;
+
+
+/////////////////////////////////// CORE ///////////////////////////////////////
+
 constructor TModelSlot.Create(id: TSlotId; container: TSlotsContainer);
 begin
   _id:=id;
@@ -638,6 +815,116 @@ begin
   result:=_id;
 end;
 
+/////////////////////////// COMMAND PROCESSORS /////////////////////////////////
+
+function TModelSlot._CmdPropChildMesh(cmd: string): string;
+var
+  filters:TIndexFilters;
+  i:integer;
+  tmpstr:string;
+  args:string;
+const
+  FILTER_TEXTURE_NAME='texture';
+  FILTER_SHADER_NAME='shader';
+begin
+  result:='';
+
+  InitFilters(filters{%H-});
+  PushFilter(filters, FILTER_TEXTURE_NAME);
+  PushFilter(filters, FILTER_SHADER_NAME);
+  i:=0;
+  if ExtractIndexFilter(cmd,filters,i) then begin
+    if i < 0 then begin
+      result:='!invalid filter rule';
+    end else begin
+      result:='';
+
+      // We use reverse order because current child could disappear or new child in the end could appear while executing command
+      for i:=_data.Meshes().Count()-1 downto 0 do begin
+        if IsMatchFilter(_data.Meshes().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_BEGINWITH) and IsMatchFilter(_data.Meshes().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_BEGINWITH) then begin
+          tmpstr:=_ProcessMeshesCommands(i, cmd);
+          if (length(tmpstr)>0) then begin
+            if tmpstr[1]='!' then begin
+              result:=result+'!mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+            end else if tmpstr[1]='#' then begin
+              result:=result+'#mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+            end else begin
+              result:=result+'mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+            end;
+          end;
+        end;
+      end;
+
+      if length(result) = 0 then begin
+        result:='#the specified filter doesn''t match any item, no action performed';
+      end;
+    end;
+  end else begin
+    args:=ExtractNumericString(cmd, false);
+    i:=strtointdef(args, -1);
+    if i<0 then begin
+      result:='!invalid child id "'+args+'"';
+    end else begin
+      result:=_ProcessMeshesCommands(i, cmd);
+    end;
+  end;
+
+  ClearFilters(filters);
+end;
+
+function TModelSlot._CmdPropChildBone(cmd: string): string;
+var
+  filters:TIndexFilters;
+  i:integer;
+  tmpstr:string;
+  args:string;
+const
+  FILTER_BONE_NAME='name';
+begin
+  result:='';
+
+  InitFilters(filters{%H-});
+  PushFilter(filters, FILTER_BONE_NAME);
+  i:=0;
+  if ExtractIndexFilter(cmd,filters,i) then begin
+    if i < 0 then begin
+      result:='!invalid filter rule';
+    end else begin
+      result:='';
+
+      // We use reverse order because current child could disappear or new child in the end could appear while executing command
+      {for i:=_data.Bones().Count()-1 downto 0 do begin
+        if IsMatchFilter(_data.Bones().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_BEGINWITH) and IsMatchFilter(_data.Bones().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_BEGINWITH) then begin
+          tmpstr:=_ProcessBonesCommands(i, cmd);
+          if (length(tmpstr)>0) then begin
+            if tmpstr[1]='!' then begin
+              result:=result+'!bone'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+            end else if tmpstr[1]='#' then begin
+              result:=result+'bone'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+            end else begin
+              result:=result+'bone'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
+            end;
+          end;
+        end;
+      end;}
+
+      if length(result) = 0 then begin
+        result:='#the specified filter doesn''t match any item, no action performed';
+      end;
+    end;
+  end else begin
+    args:=ExtractNumericString(cmd, false);
+    i:=strtointdef(args, -1);
+    if i<0 then begin
+      result:='!invalid bone id "'+args+'"';
+    end else begin
+      result:=_ProcessBonesCommands(i, cmd);
+    end;
+  end;
+
+  ClearFilters(filters);
+end;
+
 function TModelSlot.ExecuteCmd(cmd: string): string;
 const
   PROC_LOADFROMFILE:string='loadfromfile';
@@ -648,15 +935,11 @@ const
 
   PROP_CHILD:string='mesh';
 
-  FILTER_TEXTURE_NAME='texture';
-  FILTER_SHADER_NAME='shader';
 var
-  args, tmpstr:string;
+  args:string;
   opcode:char;
   proccode, propname:string;
-  i:integer;
 
-  filters:TIndexFilters;
 begin
   cmd:=TrimLeft(cmd);
   if length(trim(cmd))=0 then begin
@@ -693,47 +976,7 @@ begin
     if not _data.Loaded() then begin
       result:='!please load model first';
     end else if lowercase(propname)=PROP_CHILD then begin
-      InitFilters(filters{%H-});
-      PushFilter(filters, FILTER_TEXTURE_NAME);
-      PushFilter(filters, FILTER_SHADER_NAME);
-      i:=0;
-      if ExtractIndexFilter(cmd,filters,i) then begin
-        if i < 0 then begin
-          result:='!invalid filter rule';
-        end else begin
-          result:='';
-
-          // We use reverse order because current child could disappear or new child in the end could appear while executing command
-          for i:=_data.Meshes().Count()-1 downto 0 do begin
-            if IsMatchFilter(_data.Meshes().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_BEGINWITH) and IsMatchFilter(_data.Meshes().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_BEGINWITH) then begin
-              tmpstr:=_ProcessMeshesCommands(i, cmd);
-              if (length(tmpstr)>0) then begin
-                if tmpstr[1]='!' then begin
-                  result:=result+'!mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-                end else if tmpstr[1]='#' then begin
-                  result:=result+'#mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-                end else begin
-                  result:=result+'mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-                end;
-              end;
-            end;
-          end;
-
-          if length(result) = 0 then begin
-            result:='#the filter doesn''t match any item, no action performed';
-          end;
-        end;
-      end else begin
-        args:=ExtractNumericString(cmd);
-        i:=strtointdef(args, -1);
-        if i<0 then begin
-          result:='!invalid child id "'+args+'"';
-        end else begin
-          result:=_ProcessMeshesCommands(i, cmd);
-        end;
-      end;
-
-      ClearFilters(filters);
+      result:=_CmdPropChildMesh(cmd);
     end else begin
       result:='!unknown property "'+propname+'"';
     end;
@@ -794,7 +1037,7 @@ begin
   in_string:=TrimLeft(in_string);
   if leftstr(in_string, length(SLOT_REF_KEY))=SLOT_REF_KEY then begin
     rest_string:=TrimLeft(rightstr(in_string, length(in_string)-length(SLOT_REF_KEY)));
-    id_str:=ExtractNumericString(rest_string);
+    id_str:=ExtractNumericString(rest_string, false);
     id_str:='0'+id_str;
     idx:=strtointdef(id_str, 0);
     result:=GetModelSlotById(idx)

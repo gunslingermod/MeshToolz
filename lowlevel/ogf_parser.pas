@@ -124,6 +124,7 @@ type
     function MoveVertices(offset:FVector3):boolean;
     function ScaleVertices(factors:FVector3):boolean;
     function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
+    function GetVerticesCountForBoneID(boneid:TBoneID):integer;
 
     function GetCurrentLinkType():cardinal;
     function GetVerticesCount():cardinal;
@@ -248,6 +249,8 @@ type
 
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
+    function RebindVertices(target_boneid:TBoneID; source_boneid:TBoneID):boolean;
+    function GetVerticesCountForBoneId(boneid:TBoneID):integer;
 
     function Scale(v:FVector3):boolean;
     function Move(v:FVector3):boolean;
@@ -294,6 +297,12 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string):integer;
     function Serialize():string;
+
+    //Specific
+    function GetName():string;
+    function GetParentName():string;
+    function GetOBB():FObb;
+
   end;
 
   { TOgfBoneShape }
@@ -392,15 +401,19 @@ type
 
     // Specific
     function Count():integer;
+    function Bone(i:integer):TOgfBone;
   end;
-
 
   { TOgfSkeleton }
 
+  TOgfSkeletonData = packed record
+    bones:TOgfBonesContainer;
+    ik:TOgfBonesIKDataContainer;
+  end;
+
   TOgfSkeleton = class
     _loaded:boolean;
-    _bones:TOgfBonesContainer;
-    _ik:TOgfBonesIKDataContainer;
+    _data:TOgfSkeletonData;
   public
     constructor Create();
     procedure Reset;
@@ -408,6 +421,9 @@ type
     destructor Destroy(); override;
 
     function Build(desc:TOgfBonesContainer; ik:TOgfBonesIKDataContainer):boolean;
+
+    function GetBonesCount():integer;
+    function GetBoneName(id:integer):string;
   end;
 
   { TOgfUserdataContainer }
@@ -452,6 +468,7 @@ type
    _ikdata:TOgfBonesIKDataContainer;
    _userdata:TOgfUserdataContainer;
    _lodref:TOgfLodRefsContainer;
+   _skeleton:TOgfSkeleton;
 
    function _UpdateChunk(id:word; data:string):boolean;
  public
@@ -472,6 +489,7 @@ type
    function UpdateOriginal():boolean; // update original data with modifications
 
    function Meshes():TOgfChildrenContainer;
+   function Skeleton():TOgfSkeleton;
 end;
 
 const
@@ -712,8 +730,8 @@ end;
 procedure TOgfSkeleton.Reset;
 begin
   _loaded:=false;
-  _ik:=nil;
-  _bones:=nil;
+  _data.ik:=nil;
+  _data.bones:=nil;
 end;
 
 function TOgfSkeleton.Loaded(): boolean;
@@ -732,9 +750,33 @@ function TOgfSkeleton.Build(desc: TOgfBonesContainer; ik: TOgfBonesIKDataContain
 begin
   result:=false;
   if desc.Count()<>ik.Count() then exit;
-  _ik:=ik;
-  _bones:=desc;
+  Reset();
+  _data.ik:=ik;
+  _data.bones:=desc;
+
+  _loaded:=true;
   result:=true;
+end;
+
+function TOgfSkeleton.GetBonesCount(): integer;
+begin
+  if not Loaded() then begin
+    result:=0;
+    exit;
+  end;
+
+  result:=_data.bones.Count();
+end;
+
+function TOgfSkeleton.GetBoneName(id: integer): string;
+var
+  b:TOgfBone;
+begin
+  result:='';
+  if not Loaded() then exit;
+  b:=_data.bones.Bone(id);
+  if b=nil then exit;
+  result:=b.GetName();
 end;
 
 { TOgfLodRefsContainer }
@@ -1164,6 +1206,21 @@ begin
   end;
 end;
 
+function TOgfBone.GetName(): string;
+begin
+  result:=_name;
+end;
+
+function TOgfBone.GetParentName(): string;
+begin
+  result:=_parent_name;
+end;
+
+function TOgfBone.GetOBB(): FObb;
+begin
+  result:=_obb;
+end;
+
 { TOgfBonesContainer }
 
 constructor TOgfBonesContainer.Create;
@@ -1249,6 +1306,13 @@ begin
   end else begin
     result:=0;
   end;
+end;
+
+function TOgfBonesContainer.Bone(i: integer): TOgfBone;
+begin
+  result:=nil;
+  if not Loaded() or (i<0) or (i >= Count()) then exit;
+  result:=_bones[i];
 end;
 
 { TOgfFacesContainer }
@@ -1947,6 +2011,16 @@ begin
   end;
 end;
 
+function TOgfChild.RebindVertices(target_boneid: TBoneID; source_boneid: TBoneID): boolean;
+begin
+  result:=_verts.RebindVerticesToNewBone(target_boneid, source_boneid);
+end;
+
+function TOgfChild.GetVerticesCountForBoneId(boneid: TBoneID): integer;
+begin
+  result:=_verts.GetVerticesCountForBoneID(boneid);
+end;
+
 function TOgfChild.Scale(v: FVector3): boolean;
 begin
   if not Loaded() then begin
@@ -2253,18 +2327,58 @@ begin
 
   b:=TVertexBones.Create();
   try
+    if old_bone_index = INVALID_BONE_ID then begin
+      if not ChangeLinkType(OGF_LINK_TYPE_1) then exit;
+      bone.bone_id:=new_bone_index;
+      bone.weight:=1;
+      b.AddBone(bone, false);
+    end;
+
     for i:=0 to _verts_count-1 do begin
-      if not _GetVertexBindings(i, b) then exit;
-      for j:=0 to b.TotalLinkedBonesCount()-1 do begin
-        bone:=b.GetBoneParams(i);
-        if bone.bone_id = old_bone_index then begin
-          bone.bone_id:=new_bone_index;
-          if not b.SetBoneParams(i, bone, false) then exit;
+      if old_bone_index <> INVALID_BONE_ID then begin
+        if not _GetVertexBindings(i, b) then exit;
+        for j:=0 to b.TotalLinkedBonesCount()-1 do begin
+          bone:=b.GetBoneParams(j);
+          if bone.bone_id = old_bone_index then begin
+            bone.bone_id:=new_bone_index;
+            if not b.SetBoneParams(j, bone, false) then exit;
+          end;
         end;
       end;
       if not _SetVertexBindings(i, b) then exit;
     end;
     result:=true;
+  finally
+    FreeAndNil(b);
+  end;
+end;
+
+function TOgfVertsContainer.GetVerticesCountForBoneID(boneid: TBoneID): integer;
+var
+  i,j:integer;
+  b:TVertexBones;
+  bone:TVertexBone;
+begin
+  result:=0;
+  if not Loaded() then exit;
+  if boneid = INVALID_BONE_ID then begin
+    result:=_verts_count;
+    exit;
+  end;
+
+  b:=TVertexBones.Create();
+  try
+    for i:=0 to _verts_count-1 do begin
+      if not _GetVertexBindings(i, b) then continue;
+      for j:=0 to b.TotalLinkedBonesCount()-1 do begin
+        bone:=b.GetBoneParams(j);
+        if (bone.bone_id = boneid) and (bone.weight > 0) then begin
+          result:=result+1;
+          break;
+        end;
+      end;
+    end;
+
   finally
     FreeAndNil(b);
   end;
@@ -2466,11 +2580,14 @@ begin
   _ikdata:=TOgfBonesIKDataContainer.Create();
   _userdata:=TOgfUserdataContainer.Create();
   _lodref:=TOgfLodRefsContainer.Create();
+
+  _skeleton:=TOgfSkeleton.Create();
 end;
 
 destructor TOgfParser.Destroy;
 begin
   Reset();
+  _skeleton.Free();
   _children.Free();
   _bone_names.Free();
   _ikdata.Free();
@@ -2541,6 +2658,8 @@ begin
         mem.LeaveSubChunk();
         if not r then break;
       end;
+
+      if not _skeleton.Build(_bone_names, _ikdata) then exit;
 
       _original_data:=rawdata;
       result:=true;
@@ -2681,6 +2800,14 @@ begin
   if not Loaded() then exit;
 
   result:=_children;
+end;
+
+function TOgfParser.Skeleton(): TOgfSkeleton;
+begin
+  result:=nil;
+  if not Loaded() then exit;
+
+  result:=_skeleton;
 end;
 
 
