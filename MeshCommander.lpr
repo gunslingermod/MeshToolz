@@ -20,6 +20,42 @@ begin
   result:=s.ExecuteCmd(tmpstr);
 end;
 
+procedure ProcessFile(filename:string);
+var
+  f:textfile;
+  cmd, res:string;
+  lineid:integer;
+begin
+  assignfile(f, filename);
+  reset(f);
+  lineid:=0;
+  try
+    while not eof(f) do begin
+      readln(f, cmd);
+      lineid:=lineid+1;
+
+      res:=TrimLeft(cmd);
+      if length(cmd)=0 then continue;
+      if (length(cmd)>2) and (cmd[1]='/') and (cmd[2]='/') then continue;
+
+      res:=ExecuteCmd(cmd);
+
+      if length(res)>0 then begin
+        if res[1] = '!' then begin
+          writeln('ERROR (line '+inttostr(lineid)+') : ', PAnsiChar(@res[2]));
+          break;
+        end else if res[1] = '#'  then begin
+          writeln('WARNING (line '+inttostr(lineid)+') : ', PAnsiChar(@res[2]));
+        end else begin
+          writeln(res);
+        end;
+      end;
+    end;
+  finally
+    closefile(f);
+  end;
+end;
+
 var
   cmd, res:string;
 begin
@@ -30,6 +66,11 @@ begin
   writeln('OGFCommander by GUNSLINGER Mod Team');
   writeln('Build: '+{$INCLUDE %DATE%});
   writeln;
+
+  if ParamCount > 0 then begin
+    ProcessFile(ParamStr(1));
+    exit;
+  end;
 
   try
     if length(cmd)=0 then begin
@@ -42,9 +83,9 @@ begin
         res:=ExecuteCmd(cmd);
         if length(res)>0 then begin
           if res[1] = '!' then begin
-            writeln('ERROR:', PAnsiChar(@res[2]));
+            writeln('ERROR: ', PAnsiChar(@res[2]));
           end else if res[1] = '#'  then begin
-            writeln('WARNING:', PAnsiChar(@res[2]));
+            writeln('WARNING: ', PAnsiChar(@res[2]));
           end else begin
             writeln(res);
           end;

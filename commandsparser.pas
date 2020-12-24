@@ -41,12 +41,15 @@ TModelSlot = class
   function _CmdSaveToFile(path:string):string;
   function _CmdUnload():string;
   function _CmdPasteMeshFromTempBuf():string;
+  function _CmdRemoveCollapsedMeshes():string;
 
   function _CmdPropChildMesh(cmd:string):string;
   function _CmdPropChildBone(cmd:string):string;
 
   function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
   function _CmdMeshInfo(child_id:integer):string;
+  function _CmdMeshSetTexture(child_id:integer; args:string):string;
+  function _CmdMeshSetShader(child_id:integer; args:string):string;
   function _CmdMeshCopy(child_id:integer):string;
   function _CmdMeshInsert(child_id:integer):string;
   function _CmdMeshRemove(child_id:integer):string;
@@ -89,6 +92,7 @@ const
   OPCODE_INDEX:char='.';
 
   ARGUMENTS_SEPARATOR:char=',';
+  ARGUMENT_INVERSE:char='!';
 
 function IsNumberChar(chr:AnsiChar):boolean;
 begin
@@ -229,6 +233,7 @@ type
 TIndexFilter = packed record
   name:string;
   value:string;
+  inverse:boolean;
 end;
 
 TFilterMode = (FILTER_MODE_EXACT, FILTER_MODE_BEGINWITH);
@@ -257,6 +262,7 @@ begin
     FILTER_MODE_EXACT: result:=(length(filter.value)=0) or (str = filter.value);
     FILTER_MODE_BEGINWITH: result:=(length(filter.value)=0) or (leftstr(str, length(filter.value)) = filter.value);
   end;
+  if filter.inverse then result:=not result;
 end;
 
 procedure ClearFilters(var f:TIndexFilters);
@@ -270,6 +276,7 @@ var
   rest_part:string;
   filter_name, filter_value:string;
   tmp, i:integer;
+  inverse:boolean;
 begin
   result:=false;
   inoutstr:=trim(inoutstr);
@@ -288,7 +295,9 @@ begin
     filters_str:=TrimLeft(filters_str);
     filter_name:=ExtractABNString(filters_str);
     filters_str:=TrimLeft(filters_str);
-    if (length(filter_name) = 0) or (length(filters_str)=0) or (filters_str[1]<>':') then break;
+    if (length(filter_name) = 0) or (length(filters_str)=0) or ((filters_str[1]<>':') and (filters_str[1]<>ARGUMENT_INVERSE)) then break;
+
+    inverse:=(filters_str[1]=ARGUMENT_INVERSE);
 
     // Get rid of ':'
     filters_str:=trimleft(rightstr(filters_str, length(filters_str)-1));
@@ -307,6 +316,7 @@ begin
     for i:=0 to length(filters)-1 do begin
       if filters[i].name = filter_name then begin
         filters[i].value:=filter_value;
+        filters[i].inverse:=inverse;
         filter_name:='';
         filter_value:='';
       end;
@@ -422,6 +432,8 @@ var
   proccode:string;
 const
   PROC_INFO:string='info';
+  PROC_SETTEXTURE:string='settexture';
+  PROC_SETSHADER:string='setshader';
   PROC_REMOVE:string='remove';
   PROC_COPY:string='copy';
   PROC_PASTE:string='paste';
@@ -455,6 +467,10 @@ begin
           result:='!can''t parse arguments to call procedure "'+proccode+'"';
         end else if lowercase(proccode)=PROC_INFO then begin
           result:=_CmdMeshInfo(child_id);
+        end else if lowercase(proccode)=PROC_SETTEXTURE then begin
+          result:=_CmdMeshSetTexture(child_id, args);
+        end else if lowercase(proccode)=PROC_SETSHADER then begin
+          result:=_CmdMeshSetShader(child_id, args);
         end else if lowercase(proccode)=PROC_REMOVE then begin
           result:=_CmdMeshRemove(child_id);
         end else if lowercase(proccode)=PROC_COPY then begin
@@ -494,6 +510,50 @@ begin
     result:=result+'Vertices count:'+inttostr(_data.Meshes.Get(child_id).GetVerticesCount())+chr($0d)+chr($0a);
     result:=result+'Tris count:'+inttostr(_data.Meshes.Get(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
     result:=result+'Current link type:'+inttostr(_data.Meshes.Get(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
+  end;
+end;
+
+function TModelSlot._CmdMeshSetTexture(child_id: integer; args: string): string;
+var
+  texdata:TOgfTextureData;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+    texdata:=_data.Meshes().Get(child_id).GetTextureData();
+    texdata.texture:=trim(args);
+    if _data.Meshes().Get(child_id).SetTextureData(texdata) then begin
+      result:='texture successfully updated for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end else begin
+      result:='!can''t update texture for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdMeshSetShader(child_id: integer; args: string): string;
+var
+  texdata:TOgfTextureData;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else if child_id >= _data.Meshes().Count() then begin
+    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
+    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+    texdata:=_data.Meshes().Get(child_id).GetTextureData();
+    texdata.shader:=trim(args);
+    if _data.Meshes().Get(child_id).SetTextureData(texdata) then begin
+      result:='shader successfully updated for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end else begin
+      result:='!can''t update shader for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
+    end;
   end;
 end;
 
@@ -568,6 +628,30 @@ begin
       end;
     end else begin
       result:='!can''t extract data from temp buffer, unsupported format?';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdRemoveCollapsedMeshes(): string;
+var
+  i:integer;
+  shader, texture:string;
+begin
+  if not _data.Loaded() or (_data.Meshes()=nil) then begin
+    result:='!please load model first';
+  end else begin
+    result:='';
+    for i:=_data.Meshes().Count()-1 downto 0 do begin
+      shader:=_data.Meshes().Get(i).GetTextureData().shader;
+      texture:=_data.Meshes().Get(i).GetTextureData().texture;
+
+      if _data.Meshes().Get(i).GetVerticesCount() = 0 then begin;
+        if not _data.Meshes().Remove(i) then begin
+          result:='!'+result+'Failed to remove mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
+        end else begin
+          result:=result+'Removed collapses mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
+        end;
+      end;
     end;
   end;
 end;
@@ -737,6 +821,7 @@ function TModelSlot._CmdMeshFilterBone(child_id: integer; cmd: string): string;
 var
   boneid:TBoneID;
   shader, texture:string;
+  inverse:boolean;
 begin
   result:='';
   if not _data.Loaded() or (_data.Meshes()=nil) then begin
@@ -745,20 +830,34 @@ begin
     result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
   end else begin
     boneid:=INVALID_BONE_ID;
+
+    inverse:=false;
+    cmd:=trimleft(cmd);
+    if (length(cmd)>0) and (cmd[1]=ARGUMENT_INVERSE) then begin
+      inverse:=true;
+      cmd:=trimleft(rightstr(cmd, length(cmd)-1));
+    end;
+
     if ExtractBoneIdFromString(cmd, boneid) then begin
       shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
       texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
+
       if length(trimleft(cmd))>0 then begin
         result:='!procedure expects 1 argument';
-      end else if _data.Meshes().Get(child_id).GetVerticesCountForBoneID(boneid) = 0 then begin
-        result:='#no vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') are assigned to bone '+GetBoneNameById(boneid);
-      end else if _data.Meshes().Get(child_id).RemoveVerticesWithBoneId(boneid) then begin
-        if _data.Meshes().Get(child_id).GetVerticesCount() = 0 then begin
-          result:='#mesh is fully collapsed (no vertices found), please remove it'+chr($0d)+chr($0a);
-        end;
-        result:=result+'successfully removed vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
       end else begin
-        result:='!error filtering vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
+        if not inverse and (_data.Meshes().Get(child_id).GetVerticesCountForBoneID(boneid) = 0) then begin
+          result:='#no vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') are assigned to bone '+GetBoneNameById(boneid);
+        end;
+
+        if _data.Meshes().Get(child_id).RemoveVerticesForBoneId(boneid, inverse) then begin
+          if _data.Meshes().Get(child_id).GetVerticesCount() = 0 then begin
+            result:='#mesh is fully collapsed (no vertices found), please remove it'+chr($0d)+chr($0a);
+          end;
+          result:=result+'successfully removed vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
+        end else begin
+          result:='!error filtering vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
+        end;
+
       end;
     end else begin
       result:='!can''t extract bone id';
@@ -969,6 +1068,7 @@ const
   PROC_UNLOAD:string='unload';
   PROC_INFO:string='info';
   PROC_PASTEMESH:string='pastemesh';
+  PROC_REMCOLLAPSED:string='removecollapsedmeshes';
 
   PROP_CHILD:string='mesh';
 
@@ -1004,6 +1104,8 @@ begin
       result:=_CmdInfo();
     end else if lowercase(proccode)=PROC_PASTEMESH then begin
       result:=_CmdPasteMeshFromTempBuf();
+    end else if lowercase(proccode)=PROC_REMCOLLAPSED then begin
+      result:=_CmdRemoveCollapsedMeshes();
     end else begin
       result:='!unknown procedure "'+proccode+'"';
     end;

@@ -263,7 +263,7 @@ type
     function GetVerticesCountForBoneId(boneid:TBoneID):integer;
 
     function FilterVertices(var filter:TVertexFilterItems):boolean;
-    function RemoveVerticesWithBoneId(boneid:TBoneID):boolean;
+    function RemoveVerticesForBoneId(boneid:TBoneID; remove_all_except_selected:boolean):boolean;
 
     function Scale(v:FVector3):boolean;
     function Move(v:FVector3):boolean;
@@ -378,6 +378,11 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string):integer;
     function Serialize():string;
+
+    // Specific
+    function MoveShape(v:FVector3):boolean;
+    function SerializeShape():string;
+    function DeserializeShape(s:string):boolean;
   end;
 
   { TOgfBonesIKDataContainer }
@@ -559,6 +564,27 @@ begin
   result:=SerializeFloat(v.x)+SerializeFloat(v.y);
 end;
 
+function ShapeMove(var s:TOgfBoneShape; v:FVector3):boolean;
+begin
+  result:=false;
+  if s.shape_type = OGF_SHAPE_TYPE_BOX then begin
+    s.box.m_translate.x:=s.box.m_translate.x+v.x;
+    s.box.m_translate.y:=s.box.m_translate.y+v.y;
+    s.box.m_translate.z:=s.box.m_translate.z+v.z;
+    result:=true;
+  end else if s.shape_type = OGF_SHAPE_TYPE_SPHERE then begin
+    s.sphere.p.x:=s.sphere.p.x+s.box.m_translate.x+v.x;
+    s.sphere.p.y:=s.sphere.p.y+s.box.m_translate.y+v.y;
+    s.sphere.p.z:=s.sphere.p.z+s.box.m_translate.z+v.z;
+    result:=true;
+  end else if s.shape_type = OGF_SHAPE_TYPE_CYLINDER then begin
+    s.cylinder.m_center.x:=s.cylinder.m_center.x+v.x;
+    s.cylinder.m_center.y:=s.cylinder.m_center.y+v.y;
+    s.cylinder.m_center.z:=s.cylinder.m_center.z+v.z;
+    result:=true;
+  end;
+end;
+
 { TOgfChildrenContainer }
 
 function TOgfChildrenContainer._IsValidIndex(index:integer): boolean;
@@ -706,7 +732,7 @@ end;
 function TOgfChildrenContainer.Insert(data: string; index: integer): integer;
 var
   child:TOgfChild;
-  i:integer;
+  i, oldlen:integer;
 begin
   result:=-1;
   if not Loaded() then exit;
@@ -716,8 +742,9 @@ begin
   if not child.Deserialize(data) then begin
     child.Free;
   end else begin
-    setlength(_children, length(_children)+1);
-    for i:=index to length(_children)-2 do begin
+    oldlen:=length(_children);
+    setlength(_children, oldlen+1);
+    for i:=oldlen downto index do begin
       _children[i+1]:=_children[i];
     end;
     _children[index]:=child;
@@ -1160,6 +1187,39 @@ begin
   result:=result+SerializeBlock(@_rest_offset, sizeof(_rest_offset));
   result:=result+SerializeFloat(_mass);
   result:=result+SerializeBlock(@_center_of_mass, sizeof(_center_of_mass));
+end;
+
+function TOgfBoneIKData.MoveShape(v: FVector3): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if _shape.shape_type = OGF_SHAPE_TYPE_NONE then begin
+    result:=true
+  end else begin
+    result:=ShapeMove(_shape, v);
+  end;
+end;
+
+function TOgfBoneIKData.SerializeShape(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  for i:=0 to sizeof(_shape)-1 do begin
+    result:= result+PAnsiChar(@_shape)[i];
+  end;
+end;
+
+function TOgfBoneIKData.DeserializeShape(s: string): boolean;
+begin
+  result:=false;
+  if length(s) <> sizeof(_shape) then exit;
+  if not Loaded() then exit;
+  _shape:=pTOgfBoneShape(@s[1])^;
+  result:=true;
 end;
 
 { TOgfBone }
@@ -2074,7 +2134,7 @@ begin
   result:=true;
 end;
 
-function TOgfChild.RemoveVerticesWithBoneId(boneid: TBoneID): boolean;
+function TOgfChild.RemoveVerticesForBoneId(boneid: TBoneID; remove_all_except_selected: boolean): boolean;
 var
   filter:TVertexFilterItems;
   i:integer;
@@ -2086,7 +2146,11 @@ begin
   try
     setlength(filter, _verts.GetVerticesCount());
     for i:=0 to _verts.GetVerticesCount()-1 do begin
-      filter[i].need_remove:=_verts.IsVertexAssignedToBoneID(i, boneid, true);
+      if remove_all_except_selected then begin
+        filter[i].need_remove:=not _verts.IsVertexAssignedToBoneID(i, boneid, true);
+      end else begin
+        filter[i].need_remove:=_verts.IsVertexAssignedToBoneID(i, boneid, true);
+      end;
     end;
 
     result:=FilterVertices(filter);
@@ -2402,7 +2466,8 @@ begin
   b:=TVertexBones.Create();
   try
     if old_bone_index = INVALID_BONE_ID then begin
-      if not ChangeLinkType(OGF_LINK_TYPE_1) then exit;
+      if (GetCurrentLinkType()<>OGF_LINK_TYPE_1) and not ChangeLinkType(OGF_LINK_TYPE_1) then exit;
+
       bone.bone_id:=new_bone_index;
       bone.weight:=1;
       b.AddBone(bone, false);
