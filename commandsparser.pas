@@ -44,7 +44,7 @@ TModelSlot = class
   function _CmdRemoveCollapsedMeshes():string;
 
   function _CmdPropChildMesh(cmd:string):string;
-  function _CmdPropChildBone(cmd:string):string;
+  function _CmdPropSkeleton(cmd:string):string;
 
   function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
   function _CmdMeshInfo(child_id:integer):string;
@@ -60,6 +60,7 @@ TModelSlot = class
   function _CmdMeshFilterBone(child_id:integer; cmd:string):string;
 
   function _ProcessBonesCommands(bone_id:integer; cmd:string):string;
+  function _CmdBoneInfo(bone_id:integer):string;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -504,12 +505,12 @@ begin
   end else if child_id >= _data.Meshes().Count() then begin
     result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
   end else begin
-    result:='Info for child #'+inttostr(child_id)+':'+chr($0d)+chr($0a);
-    result:=result+'Texture: '+_data.Meshes.Get(child_id).GetTextureData().texture+chr($0d)+chr($0a);
-    result:=result+'Shader: '+_data.Meshes.Get(child_id).GetTextureData().shader+chr($0d)+chr($0a);
-    result:=result+'Vertices count:'+inttostr(_data.Meshes.Get(child_id).GetVerticesCount())+chr($0d)+chr($0a);
-    result:=result+'Tris count:'+inttostr(_data.Meshes.Get(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
-    result:=result+'Current link type:'+inttostr(_data.Meshes.Get(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
+    result:='Info for child mesh #'+inttostr(child_id)+':'+chr($0d)+chr($0a);
+    result:=result+'- Texture: '+_data.Meshes.Get(child_id).GetTextureData().texture+chr($0d)+chr($0a);
+    result:=result+'- Shader: '+_data.Meshes.Get(child_id).GetTextureData().shader+chr($0d)+chr($0a);
+    result:=result+'- Vertices count:'+inttostr(_data.Meshes.Get(child_id).GetVerticesCount())+chr($0d)+chr($0a);
+    result:=result+'- Tris count:'+inttostr(_data.Meshes.Get(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
+    result:=result+'- Current link type:'+inttostr(_data.Meshes.Get(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
   end;
 end;
 
@@ -926,10 +927,56 @@ begin
 end;
 
 function TModelSlot._ProcessBonesCommands(bone_id: integer; cmd: string): string;
+var
+  opcode:char;
+  args:string;
+  proccode:string;
+const
+  PROC_INFO:string='info';
 begin
+  if (not _data.Loaded()) or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else if abs(bone_id) >= _data.Skeleton().GetBonesCount() then begin
+    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Meshes().Count());
+  end else begin
+    if bone_id < 0 then begin
+      bone_id:=_data.Skeleton().GetBonesCount() - bone_id;
+    end;
 
+      if length(trim(cmd))=0 then begin
+        result:=_CmdBoneInfo(bone_id);
+      end else begin
+        args:='';
+        opcode:=cmd[1];
+        cmd:=rightstr(cmd, length(cmd)-1);
+
+        if opcode = OPCODE_CALL then begin
+          proccode:=ExtractAlphabeticString(cmd);
+          if not ExtractProcArgs(cmd, args) then begin
+            result:='!can''t parse arguments to call procedure "'+proccode+'"';
+          end else if lowercase(proccode)=PROC_INFO then begin
+            result:=_CmdBoneInfo(bone_id);
+          end else begin
+            result:='!unknown procedure "'+proccode+'"';
+          end;
+        end else begin
+          result:='!unsupported opcode "'+opcode+'"';
+        end;
+      end;
+  end;
 end;
 
+function TModelSlot._CmdBoneInfo(bone_id: integer): string;
+begin
+  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
+    result:='!child id #'+inttostr(bone_id)+' out of bounds, total children count: '+inttostr(_data.Skeleton().GetBonesCount());
+  end else begin
+    result:='Info for bone #'+inttostr(bone_id)+':'+chr($0d)+chr($0a);
+    result:=result+'- Name: '+_data.Skeleton().GetBoneName(bone_id);
+  end;
+end;
 
 /////////////////////////////////// CORE ///////////////////////////////////////
 
@@ -977,7 +1024,7 @@ begin
 
       // We use reverse order because current child could disappear or new child in the end could appear while executing command
       for i:=_data.Meshes().Count()-1 downto 0 do begin
-        if IsMatchFilter(_data.Meshes().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_BEGINWITH) and IsMatchFilter(_data.Meshes().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_BEGINWITH) then begin
+        if IsMatchFilter(_data.Meshes().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_EXACT) and IsMatchFilter(_data.Meshes().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_EXACT) then begin
           tmpstr:=_ProcessMeshesCommands(i, cmd);
           if (length(tmpstr)>0) then begin
             if tmpstr[1]='!' then begin
@@ -1008,19 +1055,21 @@ begin
   ClearFilters(filters);
 end;
 
-function TModelSlot._CmdPropChildBone(cmd: string): string;
+function TModelSlot._CmdPropSkeleton(cmd: string): string;
 var
   filters:TIndexFilters;
   i:integer;
   tmpstr:string;
   args:string;
 const
-  FILTER_BONE_NAME='name';
+  FILTER_BONE_NAME='bonename';
+  FILTER_BONE_ID='boneid';
 begin
   result:='';
 
   InitFilters(filters{%H-});
   PushFilter(filters, FILTER_BONE_NAME);
+  PushFilter(filters, FILTER_BONE_ID);
   i:=0;
   if ExtractIndexFilter(cmd,filters,i) then begin
     if i < 0 then begin
@@ -1029,8 +1078,8 @@ begin
       result:='';
 
       // We use reverse order because current child could disappear or new child in the end could appear while executing command
-      {for i:=_data.Bones().Count()-1 downto 0 do begin
-        if IsMatchFilter(_data.Bones().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_BEGINWITH) and IsMatchFilter(_data.Bones().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_BEGINWITH) then begin
+      for i:=_data.Skeleton().GetBonesCount()-1 downto 0 do begin
+        if IsMatchFilter(_data.Skeleton().GetBoneName(i), filters[0], FILTER_MODE_EXACT) and IsMatchFilter(inttostr(i), filters[1], FILTER_MODE_EXACT) then begin
           tmpstr:=_ProcessBonesCommands(i, cmd);
           if (length(tmpstr)>0) then begin
             if tmpstr[1]='!' then begin
@@ -1042,7 +1091,7 @@ begin
             end;
           end;
         end;
-      end;}
+      end;
 
       if length(result) = 0 then begin
         result:='#the specified filter doesn''t match any item, no action performed';
@@ -1071,6 +1120,7 @@ const
   PROC_REMCOLLAPSED:string='removecollapsedmeshes';
 
   PROP_CHILD:string='mesh';
+  PROP_SKELETON:string='skeleton';
 
 var
   args:string;
@@ -1116,6 +1166,8 @@ begin
       result:='!please load model first';
     end else if lowercase(propname)=PROP_CHILD then begin
       result:=_CmdPropChildMesh(cmd);
+    end else if lowercase(propname)=PROP_SKELETON then begin
+      result:=_CmdPropSkeleton(cmd);
     end else begin
       result:='!unknown property "'+propname+'"';
     end;
