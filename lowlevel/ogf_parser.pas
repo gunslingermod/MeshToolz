@@ -315,6 +315,7 @@ type
     function GetName():string;
     function GetParentName():string;
     function GetOBB():FObb;
+    function Rename(name:string):boolean;
 
   end;
 
@@ -380,6 +381,7 @@ type
     function Serialize():string;
 
     // Specific
+    function GetShape():TOgfBoneShape;
     function MoveShape(v:FVector3):boolean;
     function SerializeShape():string;
     function DeserializeShape(s:string):boolean;
@@ -401,6 +403,7 @@ type
 
     // Specific
     function Count():integer;
+    function Get(i:integer):TOgfBoneIKData;
   end;
 
   { TOgfBonesContainer }
@@ -442,6 +445,10 @@ type
 
     function GetBonesCount():integer;
     function GetBoneName(id:integer):string;
+    function GetOgfShape(boneid:integer):TOgfBoneShape;
+
+    function CopySerializedBoneIKData(id:integer):string;
+    function PasteSerializedBoneIKData(id:integer; s:string):boolean;
   end;
 
   { TOgfUserdataContainer }
@@ -744,7 +751,7 @@ begin
   end else begin
     oldlen:=length(_children);
     setlength(_children, oldlen+1);
-    for i:=oldlen downto index do begin
+    for i:=oldlen-1 downto index do begin
       _children[i+1]:=_children[i];
     end;
     _children[index]:=child;
@@ -817,6 +824,39 @@ begin
   b:=_data.bones.Bone(id);
   if b=nil then exit;
   result:=b.GetName();
+end;
+
+function TOgfSkeleton.GetOgfShape(boneid: integer): TOgfBoneShape;
+var
+  boneik:TOgfBoneIKData;
+begin
+  result.shape_type:=OGF_SHAPE_TYPE_INVALID;
+  boneik:=_data.ik.Get(boneid);
+  if boneik<>nil then begin
+    result:=boneik.GetShape();
+  end;
+end;
+
+function TOgfSkeleton.CopySerializedBoneIKData(id: integer): string;
+var
+  ikd:TOgfBoneIKData;
+begin
+  result:='';
+  if not Loaded() then exit;
+  ikd:=_data.ik.Get(id);
+  if ikd=nil then exit;
+  result:=ikd.Serialize();
+end;
+
+function TOgfSkeleton.PasteSerializedBoneIKData(id: integer; s: string): boolean;
+var
+  ikd:TOgfBoneIKData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  ikd:=_data.ik.Get(id);
+  if ikd=nil then exit;
+  result:=(ikd.Deserialize(s)>0);
 end;
 
 { TOgfLodRefsContainer }
@@ -970,6 +1010,13 @@ begin
   end else begin
     result:=0;
   end;
+end;
+
+function TOgfBonesIKDataContainer.Get(i: integer): TOgfBoneIKData;
+begin
+  result:=nil;
+  if not Loaded() or (i<0) or (i >= length(_ik_data)) then exit;
+  result:=_ik_data[i];
 end;
 
 { TOgfJointIKData }
@@ -1189,6 +1236,11 @@ begin
   result:=result+SerializeBlock(@_center_of_mass, sizeof(_center_of_mass));
 end;
 
+function TOgfBoneIKData.GetShape(): TOgfBoneShape;
+begin
+  result:=_shape;
+end;
+
 function TOgfBoneIKData.MoveShape(v: FVector3): boolean;
 begin
   result:=false;
@@ -1292,6 +1344,12 @@ end;
 function TOgfBone.GetOBB(): FObb;
 begin
   result:=_obb;
+end;
+
+function TOgfBone.Rename(name: string): boolean;
+begin
+  _name:=name;
+  result:=true;
 end;
 
 { TOgfBonesContainer }

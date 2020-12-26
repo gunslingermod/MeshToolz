@@ -62,6 +62,11 @@ TModelSlot = class
   function _ProcessBonesCommands(bone_id:integer; cmd:string):string;
   function _CmdBoneInfo(bone_id:integer):string;
 
+  function _ProcessIKDataCommands(bone_id:integer; cmd:string):string;
+  function _CmdIKDataInfo(bone_id:integer):string;
+  function _CmdIKDataCopy(bone_id:integer):string;
+  function _CmdIKDataPaste(bone_id:integer):string;
+
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
@@ -931,8 +936,11 @@ var
   opcode:char;
   args:string;
   proccode:string;
+  propname:string;
 const
   PROC_INFO:string='info';
+
+  PROP_IKDATA:string='ikdata';
 begin
   if (not _data.Loaded()) or (_data.Skeleton()=nil) then begin
     result:='!please load model first';
@@ -943,26 +951,34 @@ begin
       bone_id:=_data.Skeleton().GetBonesCount() - bone_id;
     end;
 
-      if length(trim(cmd))=0 then begin
-        result:=_CmdBoneInfo(bone_id);
-      end else begin
-        args:='';
-        opcode:=cmd[1];
-        cmd:=rightstr(cmd, length(cmd)-1);
-
-        if opcode = OPCODE_CALL then begin
-          proccode:=ExtractAlphabeticString(cmd);
-          if not ExtractProcArgs(cmd, args) then begin
-            result:='!can''t parse arguments to call procedure "'+proccode+'"';
-          end else if lowercase(proccode)=PROC_INFO then begin
-            result:=_CmdBoneInfo(bone_id);
-          end else begin
-            result:='!unknown procedure "'+proccode+'"';
-          end;
+    if length(trim(cmd))=0 then begin
+      result:=_CmdBoneInfo(bone_id);
+    end else begin
+      args:='';
+      opcode:=cmd[1];
+      cmd:=rightstr(cmd, length(cmd)-1);
+      if opcode = OPCODE_CALL then begin
+        proccode:=ExtractAlphabeticString(cmd);
+        if not ExtractProcArgs(cmd, args) then begin
+          result:='!can''t parse arguments to call procedure "'+proccode+'"';
+        end else if lowercase(proccode)=PROC_INFO then begin
+          result:=_CmdBoneInfo(bone_id);
         end else begin
-          result:='!unsupported opcode "'+opcode+'"';
+          result:='!unknown procedure "'+proccode+'"';
         end;
+      end else if opcode = OPCODE_INDEX then begin
+        propname:=ExtractAlphabeticString(cmd);
+        if not _data.Loaded() then begin
+          result:='!please load model first';
+        end else if propname = PROP_IKDATA then begin
+          result:=_ProcessIKDataCommands(bone_id, cmd)
+        end else begin
+          result:='!unknown property "'+propname+'"';
+        end;
+      end else begin
+        result:='!unsupported opcode "'+opcode+'"';
       end;
+    end;
   end;
 end;
 
@@ -971,10 +987,122 @@ begin
   if not _data.Loaded() or (_data.Skeleton()=nil) then begin
     result:='!please load model first';
   end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
-    result:='!child id #'+inttostr(bone_id)+' out of bounds, total children count: '+inttostr(_data.Skeleton().GetBonesCount());
+    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
   end else begin
     result:='Info for bone #'+inttostr(bone_id)+':'+chr($0d)+chr($0a);
     result:=result+'- Name: '+_data.Skeleton().GetBoneName(bone_id);
+  end;
+end;
+
+function TModelSlot._ProcessIKDataCommands(bone_id: integer; cmd: string): string;
+var
+  opcode:char;
+  args:string;
+  proccode:string;
+const
+  PROC_INFO:string='info';
+  PROC_COPYIKDATA:string='copy';
+  PROC_PASTEIKDATA:string='paste';
+begin
+  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
+    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
+  end else begin
+    if bone_id < 0 then begin
+      bone_id:=_data.Skeleton().GetBonesCount() - bone_id;
+    end;
+
+    if length(trim(cmd))=0 then begin
+      result:=_CmdIKDataInfo(bone_id);
+    end else begin
+      args:='';
+      opcode:=cmd[1];
+      cmd:=rightstr(cmd, length(cmd)-1);
+          if opcode = OPCODE_CALL then begin
+        proccode:=ExtractAlphabeticString(cmd);
+        if not ExtractProcArgs(cmd, args) then begin
+          result:='!can''t parse arguments to call procedure "'+proccode+'"';
+        end else if lowercase(proccode)=PROC_INFO then begin
+          result:=_CmdIKDataInfo(bone_id);
+        end else if lowercase(proccode)=PROC_COPYIKDATA then begin
+          result:=_CmdIKDataCopy(bone_id);
+        end else if lowercase(proccode)=PROC_PASTEIKDATA then begin
+          result:=_CmdIKDataPaste(bone_id);
+        end else begin
+          result:='!unknown procedure "'+proccode+'"';
+        end;
+      end else begin
+        result:='!unsupported opcode "'+opcode+'"';
+      end;
+    end;
+  end;
+end;
+
+function ShapeTypeById(shape:word):string;
+begin
+  if shape = OGF_SHAPE_TYPE_BOX then begin
+    result:='BOX';
+  end else if shape = OGF_SHAPE_TYPE_CYLINDER then begin
+    result:='CYLINDER';
+  end else if shape = OGF_SHAPE_TYPE_INVALID then begin
+    result:='INVALID';
+  end else if shape = OGF_SHAPE_TYPE_SPHERE then begin
+    result:='SPHERE';
+  end else if shape = OGF_SHAPE_TYPE_NONE then begin
+    result:='NONE';
+  end else begin
+    result:='[unknown]';
+  end;
+end;
+
+function TModelSlot._CmdIKDataInfo(bone_id: integer): string;
+begin
+  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
+    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
+  end else begin
+    result:='IKData info for bone #'+inttostr(bone_id)+' ('+_data.Skeleton().GetBoneName(bone_id)+'):'+chr($0d)+chr($0a);
+    result:=result+'- Shape type: '+ShapeTypeById(_data.Skeleton().GetOgfShape(bone_id).shape_type);
+  end;
+end;
+
+function TModelSlot._CmdIKDataCopy(bone_id: integer): string;
+var
+  s:string;
+begin
+  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
+    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
+  end else begin
+    s:=_data.Skeleton().CopySerializedBoneIKData(bone_id);
+    if length(s)=0 then begin
+      result:='!failed to serialize data';
+    end else begin
+      _container.GetTempBuffer().SetString(s);
+      result:='data successfully copied to temp buffer';
+    end;
+  end;
+end;
+
+function TModelSlot._CmdIKDataPaste(bone_id: integer): string;
+var
+  s:string;
+begin
+  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
+    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
+  end else begin
+    if not _container.GetTempBuffer().GetString(s) then begin
+      result:='!failed to extract data from temp buffer';
+    end else if not _data.Skeleton().PasteSerializedBoneIKData(bone_id, s) then begin
+      result:='!failed to paste serialized data';
+    end else begin
+      result:='data successfully pasted';
+    end;
   end;
 end;
 
@@ -1120,6 +1248,7 @@ const
   PROC_REMCOLLAPSED:string='removecollapsedmeshes';
 
   PROP_CHILD:string='mesh';
+  PROP_BONE:string='bone';
   PROP_SKELETON:string='skeleton';
 
 var
@@ -1166,7 +1295,7 @@ begin
       result:='!please load model first';
     end else if lowercase(propname)=PROP_CHILD then begin
       result:=_CmdPropChildMesh(cmd);
-    end else if lowercase(propname)=PROP_SKELETON then begin
+    end else if (lowercase(propname)=PROP_SKELETON) or (lowercase(propname)=PROP_BONE) then begin
       result:=_CmdPropSkeleton(cmd);
     end else begin
       result:='!unknown property "'+propname+'"';
