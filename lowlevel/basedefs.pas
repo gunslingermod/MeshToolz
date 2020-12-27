@@ -53,6 +53,11 @@ type
   procedure set_zero(var m:FMatrix3x3); overload;
   procedure set_zero(var o:FObb); overload;
 
+  procedure uniform_scale(var v:FVector3; k:single); overload;
+  procedure uniform_scale(var s:FSphere; k:single); overload;
+  procedure uniform_scale(var c:FCylinder; k:single); overload;
+  procedure uniform_scale(var o:FObb; k:single); overload;
+
 implementation
 
 procedure set_zero(var v: FVector2);
@@ -94,6 +99,32 @@ begin
   set_zero(o.m_rotate);
   set_zero(o.m_translate);
   set_zero(o.m_halfsize);
+end;
+
+procedure uniform_scale(var v: FVector3; k: single);
+begin
+  v.x:=v.x*k;
+  v.y:=v.y*k;
+  v.z:=v.z*k;
+end;
+
+procedure uniform_scale(var s: FSphere; k: single);
+begin
+  uniform_scale(s.p, k);
+  s.r:=s.r*k;
+end;
+
+procedure uniform_scale(var c: FCylinder; k: single);
+begin
+  uniform_scale(c.m_center, k);
+  c.m_height:=c.m_height*k;
+  c.m_radius:=c.m_radius*k;
+end;
+
+procedure uniform_scale(var o: FObb; k: single);
+begin
+  uniform_scale(o.m_halfsize, k);
+  uniform_scale(o.m_translate, k);
 end;
 
 end.

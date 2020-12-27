@@ -36,7 +36,7 @@ begin
 
       res:=TrimLeft(cmd);
       if length(cmd)=0 then continue;
-      if (length(cmd)>2) and (cmd[1]='/') and (cmd[2]='/') then continue;
+      if (length(cmd)>=2) and (cmd[1]='/') and (cmd[2]='/') then continue;
 
       res:=ExecuteCmd(cmd);
 

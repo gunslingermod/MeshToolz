@@ -41,7 +41,9 @@ TModelSlot = class
   function _CmdSaveToFile(path:string):string;
   function _CmdUnload():string;
   function _CmdPasteMeshFromTempBuf():string;
+
   function _CmdRemoveCollapsedMeshes():string;
+  function _CmdSkeletonUniformScale(cmd:string):string;
 
   function _CmdPropChildMesh(cmd:string):string;
   function _CmdPropSkeleton(cmd:string):string;
@@ -1106,6 +1108,25 @@ begin
   end;
 end;
 
+function TModelSlot._CmdSkeletonUniformScale(cmd: string): string;
+var
+  k:single;
+begin
+  if not ExtractFloatFromString(cmd, k) then begin
+    result:='!procedure expects a floating-point argument';
+  end else if length(trim(cmd)) > 0 then begin
+    result:='!procedure expects 1 argument';
+  end else if not _data.Loaded() or (_data.Skeleton()=nil) then begin
+    result:='!please load model first';
+  end else begin
+    if not _data.Skeleton().UniformScale(k) then begin
+      result:='!error scaling skeleton';
+    end else begin
+      result:='skeleton successfully scaled';
+    end;
+  end;
+end;
+
 /////////////////////////////////// CORE ///////////////////////////////////////
 
 constructor TModelSlot.Create(id: TSlotId; container: TSlotsContainer);
@@ -1246,6 +1267,7 @@ const
   PROC_INFO:string='info';
   PROC_PASTEMESH:string='pastemesh';
   PROC_REMCOLLAPSED:string='removecollapsedmeshes';
+  PROC_UNIFORMSCALE:string='uniformscaleskeleton';
 
   PROP_CHILD:string='mesh';
   PROP_BONE:string='bone';
@@ -1285,6 +1307,8 @@ begin
       result:=_CmdPasteMeshFromTempBuf();
     end else if lowercase(proccode)=PROC_REMCOLLAPSED then begin
       result:=_CmdRemoveCollapsedMeshes();
+    end else if lowercase(proccode)=PROC_UNIFORMSCALE then begin
+      result:=_CmdSkeletonUniformScale(args);
     end else begin
       result:='!unknown procedure "'+proccode+'"';
     end;

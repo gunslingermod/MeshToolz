@@ -317,6 +317,7 @@ type
     function GetOBB():FObb;
     function Rename(name:string):boolean;
 
+    function UniformScale(k:single):boolean;
   end;
 
   { TOgfBoneShape }
@@ -385,6 +386,8 @@ type
     function MoveShape(v:FVector3):boolean;
     function SerializeShape():string;
     function DeserializeShape(s:string):boolean;
+
+    function UniformScale(k:single):boolean;
   end;
 
   { TOgfBonesIKDataContainer }
@@ -404,6 +407,8 @@ type
     // Specific
     function Count():integer;
     function Get(i:integer):TOgfBoneIKData;
+
+    function UniformScale(k:single):boolean;
   end;
 
   { TOgfBonesContainer }
@@ -423,6 +428,8 @@ type
     // Specific
     function Count():integer;
     function Bone(i:integer):TOgfBone;
+
+    function UniformScale(k:single):boolean;
   end;
 
   { TOgfSkeleton }
@@ -449,6 +456,8 @@ type
 
     function CopySerializedBoneIKData(id:integer):string;
     function PasteSerializedBoneIKData(id:integer; s:string):boolean;
+
+    function UniformScale(k:single):boolean;
   end;
 
   { TOgfUserdataContainer }
@@ -588,6 +597,24 @@ begin
     s.cylinder.m_center.x:=s.cylinder.m_center.x+v.x;
     s.cylinder.m_center.y:=s.cylinder.m_center.y+v.y;
     s.cylinder.m_center.z:=s.cylinder.m_center.z+v.z;
+    result:=true;
+  end;
+end;
+
+function ShapeUniformScale(var s:TOgfBoneShape; k:single):boolean;
+begin
+  result:=false;
+
+  if s.shape_type = OGF_SHAPE_TYPE_BOX then begin
+    uniform_scale(s.box, k);
+    result:=true;
+  end else if s.shape_type = OGF_SHAPE_TYPE_SPHERE then begin
+    uniform_scale(s.sphere, k);
+    result:=true;
+  end else if s.shape_type = OGF_SHAPE_TYPE_CYLINDER then begin
+    uniform_scale(s.cylinder, k);
+    result:=true;
+  end else if s.shape_type = OGF_SHAPE_TYPE_NONE then begin;
     result:=true;
   end;
 end;
@@ -859,6 +886,14 @@ begin
   result:=(ikd.Deserialize(s)>0);
 end;
 
+function TOgfSkeleton.UniformScale(k: single): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  result:= _data.bones.UniformScale(k) and _data.ik.UniformScale(k);
+end;
+
+
 { TOgfLodRefsContainer }
 
 constructor TOgfLodRefsContainer.Create;
@@ -1017,6 +1052,18 @@ begin
   result:=nil;
   if not Loaded() or (i<0) or (i >= length(_ik_data)) then exit;
   result:=_ik_data[i];
+end;
+
+function TOgfBonesIKDataContainer.UniformScale(k: single): boolean;
+var
+  i:integer;
+begin
+  result:=Loaded();
+  if not result then exit;
+
+  for i:=0 to length(_ik_data)-1 do begin
+    result:=result and _ik_data[i].UniformScale(k);
+  end;
 end;
 
 { TOgfJointIKData }
@@ -1274,6 +1321,17 @@ begin
   result:=true;
 end;
 
+function TOgfBoneIKData.UniformScale(k: single): boolean;
+begin
+  result:=Loaded();
+  if not result then exit;
+  result:= ShapeUniformScale(_shape, k);
+  if not result then exit;
+
+  uniform_scale(_rest_offset, k);
+  uniform_scale(_center_of_mass, k);
+end;
+
 { TOgfBone }
 
 constructor TOgfBone.Create;
@@ -1349,6 +1407,14 @@ end;
 function TOgfBone.Rename(name: string): boolean;
 begin
   _name:=name;
+  result:=true;
+end;
+
+function TOgfBone.UniformScale(k: single): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  uniform_scale(_obb, k);
   result:=true;
 end;
 
@@ -1444,6 +1510,19 @@ begin
   result:=nil;
   if not Loaded() or (i<0) or (i >= Count()) then exit;
   result:=_bones[i];
+end;
+
+function TOgfBonesContainer.UniformScale(k: single): boolean;
+var
+  i:integer;
+begin
+  result:=Loaded();
+  if not result then exit;
+
+  for i:=0 to length(_bones)-1 do begin
+    result:=result and _bones[i].UniformScale(k);
+    if not result then break;
+  end;
 end;
 
 { TOgfFacesContainer }
