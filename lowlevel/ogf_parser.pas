@@ -2415,11 +2415,11 @@ begin
     bindings_out.Reset();
 
     bone.bone_id:=pvert2link^.bone0;
-    bone.weight:=1 - pvert2link^.bone1;
+    bone.weight:=1 - pvert2link^.weight1;
     bindings_out.AddBone(bone, false);
 
     bone.bone_id:=pvert2link^.bone1;
-    bone.weight:=pvert2link^.bone1;
+    bone.weight:=pvert2link^.weight1;
     bindings_out.AddBone(bone, false);
 
     result:=true;
