@@ -20,7 +20,12 @@ begin
   result:=s.ExecuteCmd(tmpstr);
 end;
 
-procedure ProcessFile(filename:string);
+function TryLoadOgf(filename:string):boolean;
+begin
+  result:= length(g_models_slots.GetModelSlotById(0)._CmdLoadFromFile(filename)) = 0;
+end;
+
+procedure ProcessScriptFile(filename:string);
 var
   f:textfile;
   cmd, res:string;
@@ -68,8 +73,12 @@ begin
   writeln;
 
   if ParamCount > 0 then begin
-    ProcessFile(ParamStr(1));
-    exit;
+    if TryLoadOgf(ParamStr(1)) then begin
+      writeln('Loaded model file '+ParamStr(1));
+    end else begin
+      ProcessScriptFile(ParamStr(1));
+      exit;
+    end;
   end;
 
   try
