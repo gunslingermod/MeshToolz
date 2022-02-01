@@ -49,6 +49,7 @@ type
   function SerializeBlock(data:pointer; sz:cardinal):string;
 
   function DeserializeZStringAndSplit(var instr:string; var outstr:string):boolean;
+  function DeserializeTermString(var instr:string; var outstr:string):boolean;
   function AdvanceString(var str:string; cnt:integer):boolean;
 
 const
@@ -137,6 +138,30 @@ begin
   if i<=0 then exit;
   outstr:=leftstr(instr, i-1);
   instr:=rightstr(instr, length(instr)-i);
+  result:=true;
+end;
+
+function DeserializeTermString(var instr: string; var outstr: string): boolean;
+var
+  i,j:integer;
+begin
+  result:=false;
+  i:=Pos(chr($0d), instr);
+  j:=Pos(chr($0a), instr);
+  if i <= 0 then begin
+    i:=j;
+  end else if (j>0) and (j < i) then begin
+    i:=j;
+  end;
+  if i<=0 then exit;
+
+  outstr:=leftstr(instr, i-1);
+  instr:=rightstr(instr, length(instr)-i);
+
+  while (length(instr)>0) and ((instr[1]=chr($0d)) or (instr[1]=chr($0a))) do begin
+    instr:=rightstr(instr, length(instr)-1);
+  end;
+
   result:=true;
 end;
 

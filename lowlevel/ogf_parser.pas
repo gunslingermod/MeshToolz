@@ -922,7 +922,7 @@ function TOgfLodRefsContainer.Deserialize(rawdata: string): boolean;
 begin
   result:=false;
   Reset;
-  if not DeserializeZStringAndSplit(rawdata, _lodref) then exit;
+  if not DeserializeTermString(rawdata, _lodref) then exit;
   result:=true;
 end;
 
