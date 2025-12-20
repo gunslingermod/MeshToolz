@@ -992,7 +992,8 @@ begin
     result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
   end else begin
     result:='Info for bone #'+inttostr(bone_id)+':'+chr($0d)+chr($0a);
-    result:=result+'- Name: '+_data.Skeleton().GetBoneName(bone_id);
+    result:=result+'- Name: '+_data.Skeleton().GetBoneName(bone_id)+chr($0d)+chr($0a);
+    result:=result+'- Parent: '+_data.Skeleton().GetParentBoneName(bone_id);
   end;
 end;
 

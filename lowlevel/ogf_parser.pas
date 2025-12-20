@@ -452,6 +452,7 @@ type
 
     function GetBonesCount():integer;
     function GetBoneName(id:integer):string;
+    function GetParentBoneName(id:integer):string;
     function GetOgfShape(boneid:integer):TOgfBoneShape;
 
     function CopySerializedBoneIKData(id:integer):string;
@@ -851,6 +852,17 @@ begin
   b:=_data.bones.Bone(id);
   if b=nil then exit;
   result:=b.GetName();
+end;
+
+function TOgfSkeleton.GetParentBoneName(id: integer): string;
+var
+  b:TOgfBone;
+begin
+  result:='';
+  if not Loaded() then exit;
+  b:=_data.bones.Bone(id);
+  if b=nil then exit;
+  result:=b.GetParentName();
 end;
 
 function TOgfSkeleton.GetOgfShape(boneid: integer): TOgfBoneShape;
