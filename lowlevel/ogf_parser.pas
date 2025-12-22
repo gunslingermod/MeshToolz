@@ -699,7 +699,7 @@ type
     function Deserialize(rawdata:string):boolean; virtual; abstract;
     function Serialize():string;                              // performs UpdateSource and serialization
 
-    procedure ResetSource();
+    procedure ResetSource(new_source:TChunkedMemory); virtual;
     function ReloadFromSource():boolean;                      // forget all modifications, reload from source
     function UpdateSource():boolean; virtual; abstract;       // apply all modifications to source
 
@@ -737,6 +737,7 @@ type
    _userdata:TOgfUserdataContainer;
    _lodref:TOgfLodRefsContainer;
    _skeleton:TOgfSkeleton;
+   _animations:TOgfAnimationsParser;
 
  public
    // Common
@@ -745,6 +746,7 @@ type
    procedure Reset; override;
    function Deserialize(rawdata:string):boolean; override;
    function UpdateSource():boolean; override;
+   procedure ResetSource(new_source:TChunkedMemory); override;
 
    function Meshes():TOgfChildrenContainer;
    function Skeleton():TOgfSkeleton;
@@ -1338,7 +1340,7 @@ begin
     _version:=PWord(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
-    if _version<>4 then exit;
+    if ((_version>4) or (_version < 3)) then exit;
 
     sz:=sizeof(word);
     if length(rawdata)<sz then exit;
@@ -4102,13 +4104,19 @@ begin
   _loaded:=false;
 end;
 
-procedure TOgfBaseFileParser.ResetSource();
+procedure TOgfBaseFileParser.ResetSource(new_source: TChunkedMemory);
 begin
   if _owns_source then begin
     _source.Free();
   end;
-  _owns_source:=true;
-  _source:=TChunkedMemory.Create();
+
+  if new_source = nil then begin
+    _owns_source:=true;
+    _source:=TChunkedMemory.Create();
+  end else begin
+    _owns_source:=false;
+    _source:=new_source;
+  end;
 end;
 
 function TOgfBaseFileParser.Loaded(): boolean;
@@ -4134,7 +4142,7 @@ end;
 function TOgfBaseFileParser.LoadFromFile(fname: string): boolean;
 begin
   result:=false;
-  ResetSource();
+  ResetSource(nil);
 
   try
     if not _source.LoadFromFile(fname, 0) then exit;
@@ -4168,7 +4176,7 @@ begin
     s:=s+PAnsiChar(addr)[i];
   end;
 
-  ResetSource();
+  ResetSource(nil);
   _source.LoadFromString(s);
   result:=Deserialize(_source.GetCurrentChunkRawDataAsString());
 
@@ -4178,7 +4186,7 @@ end;
 function TOgfBaseFileParser.LoadFromChunkedMem(mem: TChunkedMemory): boolean;
 begin
   result:=false;
-  ResetSource();
+  ResetSource(nil);
   _source.Free();
   _source:=mem;
   _owns_source:=false;
@@ -4277,8 +4285,6 @@ end;
 
 { TOgfParser }
 
-{ TOgfParser }
-
 constructor TOgfParser.Create;
 begin
   inherited;
@@ -4290,10 +4296,12 @@ begin
   _lodref:=TOgfLodRefsContainer.Create();
 
   _skeleton:=TOgfSkeleton.Create();
+  _animations:=TOgfAnimationsParser.Create();
 end;
 
 destructor TOgfParser.Destroy;
 begin
+  _animations.Free();
   _skeleton.Free();
   _children.Free();
   _bone_names.Free();
@@ -4306,6 +4314,9 @@ end;
 
 procedure TOgfParser.Reset;
 begin
+  _animations.Free();
+  _animations:=TOgfAnimationsParser.Create();
+
   _children.Reset();
   _bone_names.Reset();
   _ikdata.Reset();
@@ -4361,6 +4372,13 @@ begin
 
       if not _skeleton.Build(_bone_names, _ikdata) then exit;
 
+      if _animations.LoadFromChunkedMem(mem) then begin
+        _animations.ResetSource(_source);
+      end else begin
+        _animations.Free();
+        _animations:=TOgfAnimationsParser.Create();
+      end;
+
       result:=true;
   finally
     mem.Free;
@@ -4396,8 +4414,20 @@ begin
   if not _UpdateChunk(CHUNK_OGF_S_USERDATA, userdata) then exit;
   if not _UpdateChunk(CHUNK_OGF_S_LODS, lodref) then exit;
 
+  if _animations.Loaded() then begin
+    _animations.UpdateSource();
+  end;
+
   result:=true;
 
+end;
+
+procedure TOgfParser.ResetSource(new_source: TChunkedMemory);
+begin
+  if _animations.Loaded() then begin
+    _animations.ResetSource(new_source);
+  end;
+  inherited ResetSource(new_source);
 end;
 
 function TOgfParser.Meshes(): TOgfChildrenContainer;
