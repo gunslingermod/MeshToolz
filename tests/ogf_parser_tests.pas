@@ -376,7 +376,7 @@ begin
   end;
 end;
 
-function OgfParserTest():boolean;
+function OgfModelParserTest():boolean;
 var
   p:TOgfParser;
   data_new, data_old:string;
@@ -402,7 +402,7 @@ begin
     p.Free;
     f.Free;
     DeleteFile(TEST_OGF_OUT_NAME);
-    PrintTestResult('OgfChildrenContainerTest', result);
+    PrintTestResult('OgfModelParserTest', result);
   end;
 end;
 
@@ -469,7 +469,36 @@ begin
     DeleteFile(TEST_OMF_OUT_NAME);
     PrintTestResult('OgfMotionParamsContainerTest', result);
   end;
+end;
 
+function OgfMotionsParserTest():boolean;
+var
+  p:TOgfAnimationsParser;
+  data_new, data_old:string;
+  f:TChunkedMemory;
+begin
+  result:=false;
+  p:=TOgfAnimationsParser.Create();
+  f:=TChunkedMemory.Create();
+  try
+    if not f.LoadFromFile(TEST_OMF_IN_NAME, 0) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+
+    if not p.LoadFromChunkedMem(f) then exit;
+    data_new:=p.Serialize();
+    if length(data_new) = 0 then exit;
+
+    if not f.LoadFromString(data_new) then exit;
+    if not f.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+    if data_new <> data_old then exit;
+
+    result:=true;
+  finally
+    p.Free;
+    f.Free;
+    DeleteFile(TEST_OGF_OUT_NAME);
+    PrintTestResult('OgfMotionsParserTest', result);
+  end;
 end;
 
 function RunAllTests():boolean;
@@ -483,9 +512,10 @@ begin
   if not OgfBoneTest() then result:=false;
   if not OgfIKDataTest() then result:=false;
   if not OgfChildrenContainerTest() then result:=false;
-  if not OgfParserTest() then result:=false;
+  if not OgfModelParserTest() then result:=false;
   if not OgfMotionTracksContainerTest() then result:=false;
   if not OgfMotionParamsContainerTest() then result:=false;
+  if not OgfMotionsParserTest() then  result:=false;
 
 end;
 

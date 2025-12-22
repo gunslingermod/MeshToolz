@@ -680,36 +680,57 @@ type
     function Serialize():string;
   end;
 
-  { TOgfAnimationsParser }
+  { TOgfBaseFileParser }
 
-  TOgfAnimationsParser = class
+  TOgfBaseFileParser = class
+  protected
     _loaded:boolean;
-    _original_data:string;
-
-    _tracks:TOgfMotionTracksContainer;
-    _params:TOgfMotionParamsContainer;
+    _source:TChunkedMemory;
+    _owns_source:boolean;
 
     function _UpdateChunk(id:word; data:string):boolean;
   public
     // Common
     constructor Create;
     destructor Destroy; override;
-    procedure Reset;
+    procedure Reset; virtual;                                 // For deserialized data only, not source
     function Loaded():boolean;
-    function Deserialize(rawdata:string):boolean;
-    function Serialize():string;
 
-    // Specific
+    function Deserialize(rawdata:string):boolean; virtual; abstract;
+    function Serialize():string;                              // performs UpdateSource and serialization
+
+    procedure ResetSource();
+    function ReloadFromSource():boolean;                      // forget all modifications, reload from source
+    function UpdateSource():boolean; virtual; abstract;       // apply all modifications to source
+
+    function LoadFromFile(fname:string):boolean;
+    function SaveToFile(fname:string):boolean;
+    function LoadFromMem(addr:pointer; sz:cardinal):boolean;
+    function LoadFromChunkedMem(mem:TChunkedMemory):boolean;  // doesn't copy mem, stores reference!
+
+  end;
+
+  { TOgfAnimationsParser }
+
+  TOgfAnimationsParser = class(TOgfBaseFileParser)
+    _tracks:TOgfMotionTracksContainer;
+    _params:TOgfMotionParamsContainer;
+
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset; override;
+    function Deserialize(rawdata:string):boolean; override;
+    function UpdateSource():boolean; override;
+
     procedure Sanitize();
   end;
 
  { TOgfParser }
 
- TOgfParser = class
+ TOgfParser = class(TOgfBaseFileParser)
  private
-   _loaded:boolean;
-   _original_data:string;
-
    _children:TOgfChildrenContainer;
    _bone_names:TOgfBonesContainer;
    _ikdata:TOgfBonesIKDataContainer;
@@ -717,23 +738,13 @@ type
    _lodref:TOgfLodRefsContainer;
    _skeleton:TOgfSkeleton;
 
-   function _UpdateChunk(id:word; data:string):boolean;
  public
    // Common
    constructor Create;
    destructor Destroy; override;
-   procedure Reset;
-   function Loaded():boolean;
-   function Deserialize(rawdata:string):boolean;
-   function Serialize():string;
-
-   // Specific
-   function LoadFromFile(fname:string):boolean;
-   function SaveToFile(fname:string):boolean;
-   function LoadFromMem(addr:pointer; sz:cardinal):boolean;
-
-   function ReloadOriginal():boolean; // reload from original data and forget all modifications
-   function UpdateOriginal():boolean; // update original data with modifications
+   procedure Reset; override;
+   function Deserialize(rawdata:string):boolean; override;
+   function UpdateSource():boolean; override;
 
    function Meshes():TOgfChildrenContainer;
    function Skeleton():TOgfSkeleton;
@@ -759,6 +770,8 @@ const
   CHUNK_OGF_SWIDATA:word=6;
   CHUNK_OGF_CHILDREN:word=9;
   CHUNK_OGF_S_BONE_NAMES:word=13;
+  CHUNK_OGF_S_MOTIONS:word=14;
+  CHUNK_OGF_S_SMPARAMS:word=15;
   CHUNK_OGF_S_IKDATA:word=16;
   CHUNK_OGF_S_USERDATA:word=17;
   CHUNK_OGF_S_LODS:word=23;
@@ -4048,21 +4061,147 @@ begin
   result:=true;
 end;
 
+{ TOgfBaseFileParser }
+
+function TOgfBaseFileParser._UpdateChunk(id: word; data: string): boolean;
+var
+  chunk:TChunkedOffset;
+begin
+  result:=false;
+  // no need to check if loaded - we are operating just with source
+
+  chunk:=_source.FindSubChunk(id);
+  if (chunk=INVALID_CHUNK) or (not _source.EnterSubChunk(chunk)) then begin
+    result:=(length(data)=0);
+  end else begin
+    if _source.ReplaceCurrentRawDataWithString(data) and _source.LeaveSubChunk() then begin
+      result:=true;
+    end;
+  end;
+end;
+
+constructor TOgfBaseFileParser.Create;
+begin
+  _loaded:=false;
+  _owns_source:=true;
+  _source:=TChunkedMemory.Create();
+end;
+
+destructor TOgfBaseFileParser.Destroy;
+begin
+  if _owns_source then begin
+    _source.Free();
+  end;
+  _loaded:=false;
+
+  inherited Destroy;
+end;
+
+procedure TOgfBaseFileParser.Reset;
+begin
+  _loaded:=false;
+end;
+
+procedure TOgfBaseFileParser.ResetSource();
+begin
+  if _owns_source then begin
+    _source.Free();
+  end;
+  _owns_source:=true;
+  _source:=TChunkedMemory.Create();
+end;
+
+function TOgfBaseFileParser.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfBaseFileParser.Serialize(): string;
+begin
+  result:='';
+  if not Loaded() then exit;
+  if not UpdateSource() then exit;
+  result:=_source.GetCurrentChunkRawDataAsString();
+end;
+
+function TOgfBaseFileParser.ReloadFromSource(): boolean;
+begin
+  result:=false;
+  if not Loaded then exit;
+  result:=Deserialize(_source.GetCurrentChunkRawDataAsString());
+end;
+
+function TOgfBaseFileParser.LoadFromFile(fname: string): boolean;
+begin
+  result:=false;
+  ResetSource();
+
+  try
+    if not _source.LoadFromFile(fname, 0) then exit;
+    result:=Deserialize(_source.GetCurrentChunkRawDataAsString());
+  except
+    result:=false;
+  end;
+
+  if not result then Reset();
+end;
+
+function TOgfBaseFileParser.SaveToFile(fname: string): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if not UpdateSource() then exit;
+  result:=_source.SaveToFile(fname);
+end;
+
+function TOgfBaseFileParser.LoadFromMem(addr: pointer; sz: cardinal): boolean;
+var
+  s:string;
+  i:integer;
+begin
+  result:=false;
+  if sz = 0 then exit;
+
+  // TODO: optimize, no real need to re-construct data into string
+  s:='';
+  for i:=0 to sz-1 do begin
+    s:=s+PAnsiChar(addr)[i];
+  end;
+
+  ResetSource();
+  _source.LoadFromString(s);
+  result:=Deserialize(_source.GetCurrentChunkRawDataAsString());
+
+  if not result then Reset();
+end;
+
+function TOgfBaseFileParser.LoadFromChunkedMem(mem: TChunkedMemory): boolean;
+begin
+  result:=false;
+  ResetSource();
+  _source.Free();
+  _source:=mem;
+  _owns_source:=false;
+
+  result:=Deserialize(mem.GetCurrentChunkRawDataAsString());
+
+  if not result then begin
+    Reset();
+  end;
+end;
+
 
 { TOgfAnimationsParser }
 
 constructor TOgfAnimationsParser.Create;
 begin
-  _loaded:=false;
-  _original_data:='';
+  inherited;
   _tracks:=TOgfMotionTracksContainer.Create();
   _params:=TOgfMotionParamsContainer.Create();
-  Reset();
 end;
 
 destructor TOgfAnimationsParser.Destroy;
 begin
-  Reset();
   _params.Free();
   _tracks.Free();
   inherited Destroy;
@@ -4070,24 +4209,61 @@ end;
 
 procedure TOgfAnimationsParser.Reset;
 begin
-  _loaded:=false;
-  _original_data:='';
   _tracks.Reset();
   _params.Reset();
-end;
-
-function TOgfAnimationsParser.Loaded(): boolean;
-begin
-  result:=_loaded;
+  inherited Reset;
 end;
 
 function TOgfAnimationsParser.Deserialize(rawdata: string): boolean;
+var
+  mem:TChunkedMemory;
+  chunk:TChunkedOffset;
+  r:boolean;
 begin
+  result:=false;
+  Reset();
 
+  mem:=TChunkedMemory.Create();
+  mem.LoadFromString(rawdata);
+  try
+    chunk:=mem.FindSubChunk(CHUNK_OGF_S_SMPARAMS);
+    if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
+    r:=_params.Deserialize(mem.GetCurrentChunkRawDataAsString());
+    mem.LeaveSubChunk();
+    if not r then exit;
+
+    chunk:=mem.FindSubChunk(CHUNK_OGF_S_MOTIONS);
+    if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
+    r:=_tracks.Deserialize(mem.GetCurrentChunkRawDataAsString());
+    mem.LeaveSubChunk();
+    if not r then exit;
+
+    result:=true;
+  finally
+    mem.Free;
+
+    if result then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
 end;
 
-function TOgfAnimationsParser.Serialize(): string;
+function TOgfAnimationsParser.UpdateSource(): boolean;
+var
+  params:string;
+  tracks:string;
 begin
+  result:=false;
+  if not Loaded() then exit;
+  params:=_params.Serialize();
+  tracks:=_tracks.Serialize();
+
+  if not _UpdateChunk(CHUNK_OGF_S_SMPARAMS, params) then exit;
+  if not _UpdateChunk(CHUNK_OGF_S_MOTIONS, tracks) then exit;
+
+  result:=true;
 
 end;
 
@@ -4101,10 +4277,11 @@ end;
 
 { TOgfParser }
 
+{ TOgfParser }
+
 constructor TOgfParser.Create;
 begin
-  _loaded:=false;
-  _original_data:='';
+  inherited;
 
   _children:=TOgfChildrenContainer.Create();
   _bone_names:=TOgfBonesContainer.Create();
@@ -4113,13 +4290,10 @@ begin
   _lodref:=TOgfLodRefsContainer.Create();
 
   _skeleton:=TOgfSkeleton.Create();
-
-  Reset();
 end;
 
 destructor TOgfParser.Destroy;
 begin
-  Reset();
   _skeleton.Free();
   _children.Free();
   _bone_names.Free();
@@ -4132,19 +4306,13 @@ end;
 
 procedure TOgfParser.Reset;
 begin
-  _loaded:=false;
-  _original_data:='';
-
   _children.Reset();
   _bone_names.Reset();
   _ikdata.Reset();
   _userdata.Reset();
   _lodref.Reset();
-end;
 
-function TOgfParser.Loaded(): boolean;
-begin
-  result:=_loaded;
+  inherited Reset;
 end;
 
 function TOgfParser.Deserialize(rawdata: string): boolean;
@@ -4159,148 +4327,53 @@ begin
   mem:=TChunkedMemory.Create();
   mem.LoadFromString(rawdata);
   try
-    while true do begin
       chunk:=mem.FindSubChunk(CHUNK_OGF_CHILDREN);
-      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then break;
+      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
       r:=_children.Deserialize(mem.GetCurrentChunkRawDataAsString());
       mem.LeaveSubChunk();
-      if not r then break;
+      if not r then exit;
 
       chunk:=mem.FindSubChunk(CHUNK_OGF_S_BONE_NAMES);
-      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then break;
+      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
       r:=_bone_names.Deserialize(mem.GetCurrentChunkRawDataAsString());
       mem.LeaveSubChunk();
-      if not r then break;
+      if not r then exit;
 
       chunk:=mem.FindSubChunk(CHUNK_OGF_S_IKDATA);
-      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then break;
+      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
       r:=_ikdata.Deserialize(mem.GetCurrentChunkRawDataAsString());
       mem.LeaveSubChunk();
-      if not r then break;
+      if not r then exit;
 
       chunk:=mem.FindSubChunk(CHUNK_OGF_S_USERDATA);
-      if (chunk <> INVALID_CHUNK) and mem.EnterSubChunk(chunk) then begin;
+      if (chunk <> INVALID_CHUNK) and mem.EnterSubChunk(chunk) then begin
         r:=_userdata.Deserialize(mem.GetCurrentChunkRawDataAsString());
         mem.LeaveSubChunk();
-        if not r then break;
+        if not r then exit;
       end;
 
       chunk:=mem.FindSubChunk(CHUNK_OGF_S_LODS);
       if (chunk <> INVALID_CHUNK) and mem.EnterSubChunk(chunk) then begin
         r:=_lodref.Deserialize(mem.GetCurrentChunkRawDataAsString());
         mem.LeaveSubChunk();
-        if not r then break;
+        if not r then exit;
       end;
 
       if not _skeleton.Build(_bone_names, _ikdata) then exit;
 
-      _original_data:=rawdata;
       result:=true;
-      break;
-    end;
-
   finally
     mem.Free;
-  end;
 
-  if result then begin
-    _loaded:=true;
-  end else begin
-    Reset;
-  end;
-end;
-
-function TOgfParser.Serialize(): string;
-begin
-  result:='';
-  if not Loaded() then exit;
-  if not UpdateOriginal() then exit;
-  result:=_original_data;
-end;
-
-function TOgfParser.LoadFromFile(fname: string): boolean;
-var
-  mem:TChunkedMemory;
-begin
-  result:=false;
-  mem:=TChunkedMemory.Create();
-  try
-    if not mem.LoadFromFile(fname, 0) then exit;
-    result:=Deserialize(mem.GetCurrentChunkRawDataAsString());
-  finally
-    mem.Free;
-  end;
-end;
-
-function TOgfParser.SaveToFile(fname: string): boolean;
-var
-  data:string;
-  f:THandle;
-begin
-  result:=false;
-  if not Loaded() then exit;
-
-  data:=Serialize();
-  if length(data) = 0 then exit;
-
-  f:=FileCreate(fname, fmOpenReadWrite);
-  if f = THandle(-1) then exit;
-
-  try
-    if length(data) = FileWrite(f, data[1], length(data)) then begin;
-      result:=true
-    end;
-  finally
-    FileClose(f);
-  end;
-end;
-
-function TOgfParser.LoadFromMem(addr: pointer; sz: cardinal): boolean;
-var
-  s:string;
-  i:integer;
-begin
-  result:=false;
-  if sz = 0 then exit;
-
-  s:='';
-  for i:=0 to sz-1 do begin
-    s:=s+PAnsiChar(addr)[i];
-  end;
-  result:=Deserialize(s);
-end;
-
-function TOgfParser.ReloadOriginal(): boolean;
-begin
-  result:=false;
-  if not Loaded then exit;
-  result:=Deserialize(_original_data);
-end;
-
-function TOgfParser._UpdateChunk(id: word; data: string): boolean;
-var
-  chunk:TChunkedOffset;
-  mem:TChunkedMemory;
-begin
-  result:=false;
-  mem:=TChunkedMemory.Create;
-  try
-    if not mem.LoadFromString(_original_data) then exit;
-    chunk:=mem.FindSubChunk(id);
-    if (chunk=INVALID_CHUNK) or (not mem.EnterSubChunk(chunk)) then begin
-      result:=(length(data)=0);
+    if result then begin
+      _loaded:=true;
     end else begin
-      if mem.ReplaceCurrentRawDataWithString(data) and mem.LeaveSubChunk() then begin
-        _original_data:=mem.GetCurrentChunkRawDataAsString();
-        result:=true;
-      end;
+      Reset;
     end;
-  finally
-    mem.Free;
   end;
 end;
 
-function TOgfParser.UpdateOriginal(): boolean;
+function TOgfParser.UpdateSource(): boolean;
 var
   children:string;
   bone_names:string;
