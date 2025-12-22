@@ -45,6 +45,7 @@ type
   function SerializeChunkHeader(hdr:TChunkHeader):string; overload;
   function SerializeCardinal(data:cardinal):string;
   function SerializeFloat(data:single):string;
+  function SerializeByte(data:byte):string;
   function SerializeWord(data:word):string;
   function SerializeBlock(data:pointer; sz:cardinal):string;
 
@@ -102,6 +103,11 @@ begin
   for i:=0 to sizeof(data)-1 do begin
     result:=result+p[i];
   end;
+end;
+
+function SerializeByte(data: byte): string;
+begin
+  result:=PAnsiChar(@data)[0]
 end;
 
 function SerializeWord(data: word): string;

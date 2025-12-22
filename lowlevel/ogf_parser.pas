@@ -74,6 +74,30 @@ type
     weight:single;
   end;
 
+  TOgfMotionKeyQR = packed record
+    x:smallint;
+    y:smallint;
+    z:smallint;
+    w:smallint;
+  end;
+
+  TOgfMotionKeyQT8 = packed record
+    x1:shortint;
+    y1:shortint;
+    z1:shortint;
+  end;
+
+  TOgfMotionKeyQT16 = packed record
+    x1:smallint;
+    y1:smallint;
+    z1:smallint;
+  end;
+
+  TOgfMotionMarkInterval = packed record
+    start:single;
+    finish:single;
+  end;
+
   { TVertexBones }
 
   TVertexBones = class
@@ -491,6 +515,194 @@ type
     function Serialize():string;
   end;
 
+  { TOgfMotionBoneTrack }
+
+  TOgfMotionBoneTrack = class
+    _loaded:boolean;
+    _rot_keys_present:boolean;
+    _trans_keys_present:boolean;
+    _is16bittransform:boolean;
+
+    _frames_count:integer;
+
+    _rot_keys_rawdata:array of byte;
+    _trans_keys_rawdata:array of byte;
+
+    _sizeT:FVector3;
+    _initT:FVector3;
+
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string; frames_count:cardinal):integer;
+    function Serialize():string;
+  end;
+
+  { TOgfMotionTrack }
+
+  TOgfMotionTrack = class
+    _loaded:boolean;
+    _name:string;
+    _length:cardinal;
+    _bone_tracks:array of TOgfMotionBoneTrack;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
+
+  { TOgfMotionTracksContainer }
+
+  TOgfMotionTracksContainer = class
+    _loaded:boolean;
+    _motions:array of TOgfMotionTrack;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
+   { TOgfMotionBoneParams }
+
+   TOgfMotionBoneParams = class
+     _loaded:boolean;
+     _name:string;
+     _idx:cardinal;
+   public
+     // Common
+     constructor Create;
+     destructor Destroy; override;
+     procedure Reset;
+     function Loaded():boolean;
+     function Deserialize(rawdata:string):integer;
+     function Serialize():string;
+   end;
+
+   { TOgfMotionBonePart }
+
+   TOgfMotionBonePart = class
+     _loaded:boolean;
+     _name:string;
+     _bones_params:array of TOgfMotionBoneParams;
+   public
+     // Common
+     constructor Create;
+     destructor Destroy; override;
+     procedure Reset;
+     function Loaded():boolean;
+     function Deserialize(rawdata:string):integer;
+     function Serialize():string;
+   end;
+
+
+
+   { TOgfMotionMark }
+
+   TOgfMotionMark = class
+     _loaded:boolean;
+     _name:string;
+     _intervals: array of TOgfMotionMarkInterval;
+   public
+     // Common
+     constructor Create;
+     destructor Destroy; override;
+     procedure Reset;
+     function Loaded():boolean;
+     function Deserialize(rawdata:string):integer;
+     function Serialize():string;
+   end;
+
+   { TOgfMotionMarks }
+
+   TOgfMotionMarks = class
+     _loaded:boolean;
+     _marks:array of TOgfMotionMark;
+   public
+     // Common
+     constructor Create;
+     destructor Destroy; override;
+     procedure Reset;
+     function Loaded():boolean;
+     function Deserialize(rawdata:string):integer;
+     function Serialize():string;
+   end;
+
+   { TOgfMotionDef }
+
+   TOgfMotionDef = class
+     _loaded:boolean;
+     _name:string;
+     _flags:cardinal;
+     _bone_or_part:word;
+     _motion_id:word;
+     _speed:single;
+     _power:single;
+     _accrue:single;
+     _falloff:single;
+     _marks:TOgfMotionMarks;
+   public
+     // Common
+     constructor Create;
+     destructor Destroy; override;
+     procedure Reset;
+     function Loaded():boolean;
+     function Deserialize(rawdata:string; version:cardinal):integer;
+     function Serialize():string;
+   end;
+
+  { TOgfMotionParamsContainer }
+
+  TOgfMotionParamsContainer = class
+    _loaded:boolean;
+    _version:word;
+    _bone_parts:array of TOgfMotionBonePart;
+    _defs: array of TOgfMotionDef;
+
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+  end;
+
+  { TOgfAnimationsParser }
+
+  TOgfAnimationsParser = class
+    _loaded:boolean;
+    _original_data:string;
+
+    _tracks:TOgfMotionTracksContainer;
+    _params:TOgfMotionParamsContainer;
+
+    function _UpdateChunk(id:word; data:string):boolean;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string):boolean;
+    function Serialize():string;
+
+    // Specific
+    procedure Sanitize();
+  end;
+
  { TOgfParser }
 
  TOgfParser = class
@@ -568,8 +780,12 @@ const
   OGF_JOINT_IK_VERSION_0:cardinal = 0;
   OGF_JOINT_IK_VERSION_1:cardinal = 1;
 
+  MOTION_FLAG_T_KEY_PRESENT:byte = 1;
+  MOTION_FLAG_R_KEY_ABSENT:byte = 2;
+  MOTION_FLAG_T_KEY_16BIT:byte = 4;
+
 implementation
-uses sysutils;
+uses sysutils, FastCrc;
 
 function SerializeVector3(v:FVector3):string;
 begin
@@ -620,6 +836,896 @@ begin
   end;
 end;
 
+{ TOgfMotionMark }
+
+constructor TOgfMotionMark.Create;
+begin
+  _loaded:=false;
+  _name:='';
+  setlength(_intervals, 0);
+  Reset();
+end;
+
+destructor TOgfMotionMark.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TOgfMotionMark.Reset;
+begin
+  _loaded:=false;
+  _name:='';
+  setlength(_intervals, 0);
+end;
+
+function TOgfMotionMark.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionMark.Deserialize(rawdata: string): integer;
+var
+  sz:integer;
+  cnt:integer;
+  i:integer;
+  initial_len:integer;
+begin
+  result:=0;
+  Reset();
+
+  try
+    initial_len:=length(rawdata);
+
+    if not DeserializeTermString(rawdata, _name) then exit;
+
+    sz:=sizeof(cardinal);
+    if length(rawdata)<sz then exit;
+    cnt:=PCardinal(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+    setlength(_intervals, cnt);
+
+
+
+    for i:=0 to cnt-1 do begin
+      sz:=sizeof(single);
+      if length(rawdata)<sz then exit;
+      _intervals[i].start:=PSingle(PAnsiChar(rawdata))^;
+      if not AdvanceString(rawdata, sz) then exit;
+
+      sz:=sizeof(single);
+      if length(rawdata)<sz then exit;
+      _intervals[i].finish:=PSingle(PAnsiChar(rawdata))^;
+      if not AdvanceString(rawdata, sz) then exit;
+    end;
+
+    result:=initial_len - length(rawdata);
+  finally
+    if result>0 then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+end;
+
+function TOgfMotionMark.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not _loaded then exit;
+  result:=result+_name+chr($0d)+chr($0a);
+  result:=result+SerializeCardinal(length(_intervals));
+  for i:=0 to length(_intervals)-1 do begin
+    result:=result+SerializeFloat(_intervals[i].start);
+    result:=result+SerializeFloat(_intervals[i].finish);
+  end;
+end;
+
+{ TOgfMotionMarks }
+
+constructor TOgfMotionMarks.Create;
+begin
+  _loaded:=false;
+  setlength(_marks, 0);
+  Reset;
+end;
+
+destructor TOgfMotionMarks.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionMarks.Reset;
+var
+  i:integer;
+begin
+  _loaded:=false;
+  for i:=0 to length(_marks)-1 do begin
+    _marks[i].Free();
+  end;
+  setlength(_marks, 0);
+end;
+
+function TOgfMotionMarks.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionMarks.Deserialize(rawdata: string): integer;
+var
+  sz:integer;
+  cnt:integer;
+  i:integer;
+  initial_len:integer;
+begin
+  result:=0;
+  Reset();
+
+  try
+    initial_len:=length(rawdata);
+
+    sz:=sizeof(cardinal);
+    if length(rawdata)<sz then exit;
+    cnt:=PCardinal(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    setlength(_marks, cnt);
+    for i:=0 to cnt-1 do begin
+      _marks[i]:=TOgfMotionMark.Create;
+    end;
+
+    for i:=0 to cnt-1 do begin
+      sz:=_marks[i].Deserialize(rawdata);
+      if sz<=0 then exit;
+      if not AdvanceString(rawdata, sz) then exit;
+    end;
+
+    result:=initial_len - length(rawdata);
+  finally
+    if result>0 then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+
+end;
+
+function TOgfMotionMarks.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not _loaded then exit;
+  result:=result+SerializeCardinal(length(_marks));
+
+  for i:=0 to length(_marks)-1 do begin
+    result:=result+_marks[i].Serialize();
+  end;
+end;
+
+{ TOgfMotionDef }
+
+constructor TOgfMotionDef.Create;
+begin
+  _loaded:=false;
+  _marks:=TOgfMotionMarks.Create();
+  Reset();
+end;
+
+destructor TOgfMotionDef.Destroy;
+begin
+  Reset();
+  FreeAndNil(_marks);
+  inherited Destroy;
+end;
+
+procedure TOgfMotionDef.Reset;
+var
+  i:integer;
+begin
+  _loaded:=false;
+  _marks.Reset;
+
+  _name:='';
+  _flags:=0;
+  _bone_or_part:=0;
+  _motion_id:=0;
+  _speed:=1;
+  _power:=1;
+  _accrue:=2;
+  _falloff:=2;
+end;
+
+function TOgfMotionDef.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionDef.Deserialize(rawdata: string; version: cardinal): integer;
+var
+  initial_len: integer;
+  sz:integer;
+begin
+  result:=0;
+  Reset();
+
+  try
+    initial_len:=length(rawdata);
+    if not DeserializeZStringAndSplit(rawdata, _name) then exit;
+
+    sz:=sizeof(cardinal);
+    if length(rawdata)<sz then exit;
+    _flags:=PCardinal(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    sz:=sizeof(word);
+    if length(rawdata)<sz then exit;
+    _bone_or_part:=PWord(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    sz:=sizeof(word);
+    if length(rawdata)<sz then exit;
+    _motion_id:=PWord(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    sz:=sizeof(single);
+    if length(rawdata)<sz then exit;
+    _speed:=PSingle(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    sz:=sizeof(single);
+    if length(rawdata)<sz then exit;
+    _power:=PSingle(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    sz:=sizeof(single);
+    if length(rawdata)<sz then exit;
+    _accrue:=PSingle(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    sz:=sizeof(single);
+    if length(rawdata)<sz then exit;
+    _falloff:=PSingle(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    if version>=4 then begin
+      sz:=_marks.Deserialize(rawdata);
+      if sz <=0 then exit;
+      if not AdvanceString(rawdata, sz) then exit;
+    end;
+    result:=initial_len - length(rawdata);
+  finally
+    if result>0 then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+end;
+
+function TOgfMotionDef.Serialize(): string;
+begin
+  result:='';
+  if not _loaded then exit;
+
+  result:=result+_name+chr(0);
+  result:=result+SerializeCardinal(_flags);
+  result:=result+SerializeWord(_bone_or_part);
+  result:=result+SerializeWord(_motion_id);
+  result:=result+SerializeFloat(_speed);
+  result:=result+SerializeFloat(_power);
+  result:=result+SerializeFloat(_accrue);
+  result:=result+SerializeFloat(_falloff);
+  result:=result+_marks.Serialize(); // for version <4 returns an empty string
+
+end;
+
+{ TOgfMotionBoneParams }
+
+constructor TOgfMotionBoneParams.Create;
+begin
+  Reset();
+end;
+
+destructor TOgfMotionBoneParams.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionBoneParams.Reset;
+begin
+  _loaded:=false;
+  _name:='';
+  _idx:=0;
+end;
+
+function TOgfMotionBoneParams.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionBoneParams.Deserialize(rawdata: string): integer;
+var
+  initial_len:integer;
+  sz:cardinal;
+begin
+  result:=0;
+  Reset();
+
+  try
+    initial_len:=length(rawdata);
+    if not DeserializeZStringAndSplit(rawdata, _name) then exit;
+    sz:=sizeof(cardinal);
+    if length(rawdata)<sz then exit;
+    _idx:=(PCardinal(PAnsiChar(rawdata))^) and $FFFF;
+    if not AdvanceString(rawdata, sz) then exit;
+    result:=initial_len - length(rawdata);
+  finally
+    if result>0 then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+end;
+
+function TOgfMotionBoneParams.Serialize(): string;
+begin
+  result:='';
+  if not _loaded then exit;
+
+  result:=result+_name+chr(0);
+  result:=result+SerializeCardinal(_idx);
+end;
+
+{ TOgfMotionBonePart }
+
+constructor TOgfMotionBonePart.Create;
+begin
+  setlength(_bones_params, 0);
+  _loaded:=false;
+  _name:='';
+  Reset();
+end;
+
+destructor TOgfMotionBonePart.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionBonePart.Reset;
+var
+  i:integer;
+begin
+  _loaded:=false;
+  _name:='';
+  for i:=0 to length(_bones_params)-1 do begin
+    _bones_params[i].Free;
+  end;
+  setlength(_bones_params, 0);
+end;
+
+function TOgfMotionBonePart.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionBonePart.Deserialize(rawdata: string): integer;
+var
+  initial_len:integer;
+  sz:integer;
+  bones_cnt:word;
+  i:integer;
+begin
+  result:=0;
+  Reset();
+
+  try
+    initial_len:=length(rawdata);
+    if not DeserializeZStringAndSplit(rawdata, _name) then exit;
+
+    sz:=sizeof(word);
+    if length(rawdata)<sz then exit;
+    bones_cnt:=PWord(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    setlength(_bones_params, bones_cnt);
+    for i:=0 to bones_cnt-1 do begin
+      _bones_params[i]:=TOgfMotionBoneParams.Create();
+    end;
+
+    for i:=0 to bones_cnt-1 do begin
+      sz:=_bones_params[i].Deserialize(rawdata);
+      if sz <= 0 then exit;
+      if not AdvanceString(rawdata, sz) then exit;
+    end;
+
+    result:=initial_len - length(rawdata);
+  finally
+    if result>0 then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+end;
+
+function TOgfMotionBonePart.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not _loaded then exit;
+
+  result:=result+_name+chr(0);
+  result:=result+SerializeWord(length(_bones_params));
+
+  for i:=0 to length(_bones_params)-1 do begin
+    result:=result+_bones_params[i].Serialize();
+  end;
+
+end;
+
+
+{ TOgfMotionParamsContainer }
+
+constructor TOgfMotionParamsContainer.Create;
+begin
+  _loaded:=false;
+  _version:=0;
+  setlength(_bone_parts, 0);
+  setlength(_defs, 0);
+  Reset();
+end;
+
+destructor TOgfMotionParamsContainer.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionParamsContainer.Reset;
+var
+  i:integer;
+begin
+  _loaded:=false;
+  _version:=0;
+
+  for i:=0 to length(_bone_parts)-1 do begin
+    _bone_parts[i].Free;
+  end;
+  setlength(_bone_parts, 0);
+
+  for i:=0 to length(_defs)-1 do begin
+    _defs[i].Free;
+  end;
+  setlength(_defs, 0);
+end;
+
+function TOgfMotionParamsContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionParamsContainer.Deserialize(rawdata: string): boolean;
+var
+  sz, cnt, i:integer;
+begin
+  result:=false;
+  Reset();
+
+  try
+    sz:=sizeof(word);
+    if length(rawdata)<sz then exit;
+    _version:=PWord(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    if _version<>4 then exit;
+
+    sz:=sizeof(word);
+    if length(rawdata)<sz then exit;
+    cnt:=PWord(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    setlength(_bone_parts, cnt);
+    for i:=0 to cnt-1 do begin
+      _bone_parts[i]:=TOgfMotionBonePart.Create();
+    end;
+
+    for i:=0 to cnt-1 do begin
+      sz:=_bone_parts[i].Deserialize(rawdata);
+      if sz <= 0 then exit;
+      if not AdvanceString(rawdata, sz) then exit;
+    end;
+
+    sz:=sizeof(word);
+    if length(rawdata)<sz then exit;
+    cnt:=PWord(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    setlength(_defs, cnt);
+    for i:=0 to cnt-1 do begin
+      _defs[i]:=TOgfMotionDef.Create();
+    end;
+
+    for i:=0 to cnt-1 do begin
+      sz:=_defs[i].Deserialize(rawdata, _version);
+      if sz <= 0 then exit;
+      if not AdvanceString(rawdata, sz) then exit;
+    end;
+
+    result:=true;
+  finally
+    if result then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+end;
+
+function TOgfMotionParamsContainer.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not _loaded then exit;
+
+  result:=result+SerializeWord(_version);
+  result:=result+SerializeWord(length(_bone_parts));
+  for i:=0 to length(_bone_parts)-1 do begin
+    result:=result+_bone_parts[i].Serialize();
+  end;
+
+  result:=result+SerializeWord(length(_defs));
+  for i:=0 to length(_defs)-1 do begin
+    result:=result+_defs[i].Serialize();
+  end;
+
+end;
+
+{ TOgfMotionBoneTrack }
+
+constructor TOgfMotionBoneTrack.Create;
+begin
+  Reset();
+end;
+
+destructor TOgfMotionBoneTrack.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionBoneTrack.Reset;
+begin
+  _loaded:=false;
+  _is16bittransform:=false;
+  _rot_keys_present:=false;
+  _trans_keys_present:=false;
+  _frames_count:=0;
+  setlength(_rot_keys_rawdata, 0);
+  setlength(_trans_keys_rawdata, 0);
+end;
+
+function TOgfMotionBoneTrack.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionBoneTrack.Deserialize(rawdata: string; frames_count: cardinal): integer;
+var
+  flags:byte;
+  total:integer;
+  sz:integer;
+begin
+  result:=0;
+  total:=0;
+  Reset();
+  _frames_count:=frames_count;
+
+  try
+    sz:=sizeof(byte);
+    if length(rawdata) < sz then exit;
+    flags:=PByte(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+    total:=total+sz;
+
+    _rot_keys_present:=(flags and MOTION_FLAG_R_KEY_ABSENT) = 0;
+    _trans_keys_present:=(flags and MOTION_FLAG_T_KEY_PRESENT) <> 0;
+    _is16bittransform:=(flags and MOTION_FLAG_T_KEY_16BIT)<>0;
+
+    if _rot_keys_present then begin
+      sz:=sizeof(cardinal); // rot crc
+      if not AdvanceString(rawdata, sz) then exit;
+      total:=total+sz;
+
+      sz:=frames_count*sizeof(TOgfMotionKeyQR);
+    end else begin
+      sz:=sizeof(TOgfMotionKeyQR);
+    end;
+
+    if length(rawdata) < sz then exit;
+    setlength(_rot_keys_rawdata, sz);
+    Move(PAnsiChar(rawdata)^, _rot_keys_rawdata[0], sz);
+    if not AdvanceString(rawdata, sz) then exit;
+    total:=total+sz;
+
+    if _trans_keys_present then begin
+      sz:=sizeof(cardinal); //trans crc
+      if not AdvanceString(rawdata, sz) then exit;
+      total:=total+sz;
+
+      if _is16bittransform then begin
+        sz:=frames_count*sizeof(TOgfMotionKeyQT16);
+      end else begin
+        sz:=frames_count*sizeof(TOgfMotionKeyQT8);
+      end;
+
+      if length(rawdata) < sz then exit;
+      setlength(_trans_keys_rawdata, sz);
+      Move(PAnsiChar(rawdata)^, _trans_keys_rawdata[0], sz);
+      if not AdvanceString(rawdata, sz) then exit;
+      total:=total+sz;
+
+      sz:=sizeof(FVector3);
+      if length(rawdata) < sz then exit;
+      _sizeT:=pFVector3(PAnsiChar(rawdata))^;
+      if not AdvanceString(rawdata, sz) then exit;
+      total:=total+sz;
+    end;
+
+    sz:=sizeof(FVector3);
+    if length(rawdata) < sz then exit;
+    _initT:=pFVector3(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+    total:=total+sz;
+
+    result:=total;
+  finally
+    if result>0 then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+
+end;
+
+function TOgfMotionBoneTrack.Serialize(): string;
+var
+  flags:byte;
+  crc:cardinal;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  flags:=0;
+  if not _rot_keys_present then begin
+    flags:=flags or MOTION_FLAG_R_KEY_ABSENT;
+  end;
+  if _trans_keys_present then begin
+    flags:=flags or MOTION_FLAG_T_KEY_PRESENT;
+  end;
+  if _is16bittransform then begin
+    flags:=flags or MOTION_FLAG_T_KEY_16BIT;
+  end;
+  result:=result+SerializeByte(flags);
+
+  if _rot_keys_present then begin
+     crc:=GetMemCRC32(@_rot_keys_rawdata[0], length(_rot_keys_rawdata));
+     result:=result+SerializeCardinal(crc);
+  end;
+  result:=result+SerializeBlock(@_rot_keys_rawdata[0], length(_rot_keys_rawdata));
+
+  if _trans_keys_present then begin
+    crc:=GetMemCRC32(@_trans_keys_rawdata[0], length(_trans_keys_rawdata));
+    result:=result+SerializeCardinal(crc);
+  end;
+  result:=result+SerializeBlock(@_trans_keys_rawdata[0], length(_trans_keys_rawdata));
+  if _trans_keys_present then begin
+    result:=result+SerializeVector3(_sizeT);
+  end;
+  result:=result+SerializeVector3(_initT);
+end;
+
+{ TOgfMotionTrack }
+
+constructor TOgfMotionTrack.Create;
+begin
+  setlength(_bone_tracks, 0);
+  _loaded:=false;
+  _length:=0;
+  _name:='';
+  Reset();
+end;
+
+destructor TOgfMotionTrack.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionTrack.Reset;
+var
+  i:integer;
+begin
+  _loaded:=false;
+  _name:='';
+  _length:=0;
+  for i:=0 to length(_bone_tracks)-1 do begin
+    _bone_tracks[i].Free;
+  end;
+  setlength(_bone_tracks, 0);
+end;
+
+function TOgfMotionTrack.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionTrack.Deserialize(rawdata: string): boolean;
+var
+  i, sz:integer;
+begin
+  result:=false;
+  Reset();
+
+  try
+    if not DeserializeZStringAndSplit(rawdata, _name) then exit;
+    sz:=sizeof(cardinal);
+    if length(rawdata)<sz then exit;
+    _length:=PCardinal(PAnsiChar(rawdata))^;
+    if not AdvanceString(rawdata, sz) then exit;
+
+    while length(rawdata)>0 do begin
+      i:=length(_bone_tracks);
+      setlength(_bone_tracks, i+1);
+      _bone_tracks[i]:=TOgfMotionBoneTrack.Create();
+      sz:=_bone_tracks[i].Deserialize(rawdata, _length);
+
+      if sz <= 0 then begin
+         _bone_tracks[i].Free();
+         setlength(_bone_tracks, i);
+         break;
+      end else begin
+         if not AdvanceString(rawdata, sz) then exit;
+      end;
+    end;
+
+    result:=(length(_bone_tracks)>0);
+  finally
+    if result then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+  end;
+
+end;
+
+function TOgfMotionTrack.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  result:=result+_name+chr(0);
+  result:=result+SerializeCardinal(_length);
+
+  for i:=0 to length(_bone_tracks)-1 do begin
+    result:=result+_bone_tracks[i].Serialize();
+  end;
+
+end;
+
+{ TOgfMotionTracksContainer }
+
+constructor TOgfMotionTracksContainer.Create;
+begin
+  setlength(_motions, 0);
+  _loaded:=false;
+  Reset();
+end;
+
+destructor TOgfMotionTracksContainer.Destroy;
+begin
+  Reset();
+  inherited Destroy;
+end;
+
+procedure TOgfMotionTracksContainer.Reset;
+var
+  i:integer;
+begin
+  for i:=0 to length(_motions)-1 do begin
+    _motions[i].Free;
+  end;
+  setlength(_motions, 0);
+  _loaded:=false;
+end;
+
+function TOgfMotionTracksContainer.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionTracksContainer.Deserialize(rawdata: string): boolean;
+var
+  mem:TChunkedMemory;
+  chunk:TChunkedOffset;
+  data:string;
+  cnt:cardinal;
+  i:integer;
+begin
+  result:=false;
+  Reset();
+
+  mem:=TChunkedMemory.Create();
+  try
+    if not mem.LoadFromString(rawdata) then exit;
+
+    chunk:=mem.FindSubChunk(0);
+    if chunk = INVALID_CHUNK then exit;
+
+    if not mem.EnterSubChunk(chunk) then exit;
+    data:=mem.GetCurrentChunkRawDataAsString();
+
+    if length(data) < sizeof(cardinal) then exit;
+    cnt:= PCardinal(PAnsiChar(data))^;
+    if not mem.LeaveSubChunk() then exit;
+
+    setlength(_motions, cnt);
+    for i:=0 to length(_motions)-1 do begin
+      _motions[i]:=TOgfMotionTrack.Create();
+    end;
+
+    for i:=0 to length(_motions)-1 do begin
+      chunk:=mem.FindSubChunk(i+1);
+      if chunk = INVALID_CHUNK then exit;
+      if not mem.EnterSubChunk(chunk) then exit;
+      data:=mem.GetCurrentChunkRawDataAsString();
+      if not _motions[i].Deserialize(data) then exit;
+      if not mem.LeaveSubChunk() then exit;
+    end;
+
+    result:=true;
+  finally
+    if result then begin
+      _loaded:=true;
+    end else begin
+      Reset;
+    end;
+
+    mem.Free;
+  end;
+end;
+
+function TOgfMotionTracksContainer.Serialize(): string;
+var
+  i:integer;
+  data:string;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  i:=length(_motions);
+  data:=SerializeCardinal(i);
+  result:=result+SerializeChunkHeader(0, length(data), 0)+data;
+
+  for i:=0 to length(_motions)-1 do begin
+    data:=_motions[i].Serialize();
+    result:=result+SerializeChunkHeader(i+1, length(data), 0)+data;
+  end;
+  result:=result;
+end;
+
 { TOgfChildrenContainer }
 
 function TOgfChildrenContainer._IsValidIndex(index:integer): boolean;
@@ -631,10 +1737,12 @@ constructor TOgfChildrenContainer.Create;
 begin
   _loaded:=false;
   setlength(_children, 0);
+  Reset();
 end;
 
 destructor TOgfChildrenContainer.Destroy;
 begin
+  Reset();
   inherited Destroy;
 end;
 
@@ -935,6 +2043,7 @@ begin
   result:=false;
   Reset;
   if not DeserializeTermString(rawdata, _lodref) then exit;
+  _loaded:=true;
   result:=true;
 end;
 
@@ -942,7 +2051,7 @@ function TOgfLodRefsContainer.Serialize(): string;
 begin
   result:='';
   if not Loaded() then exit;
-  result:=result+_lodref+chr(0);
+  result:=result+_lodref+chr($0d)+chr($0a);
 end;
 
 { TOgfUserdataContainer }
@@ -990,6 +2099,7 @@ constructor TOgfBonesIKDataContainer.Create;
 begin
   _loaded:=false;
   setlength(_ik_data, 0);
+  Reset();
 end;
 
 destructor TOgfBonesIKDataContainer.Destroy;
@@ -1436,6 +2546,7 @@ constructor TOgfBonesContainer.Create;
 begin
   setlength(_bones, 0);
   _loaded:=false;
+  Reset();
 end;
 
 destructor TOgfBonesContainer.Destroy;
@@ -2069,6 +3180,7 @@ begin
   _texture:=TOgfTextureDataContainer.Create();
   _tris:=TOgfTrisContainer.Create();
   _swr:=TOgfSwiContainer.Create();
+  Reset();
 end;
 
 destructor TOgfChild.Destroy;
@@ -2906,6 +4018,7 @@ var
   raw_data_sz:cardinal;
 begin
   result:=false;
+  Reset();
   raw_data_sz:=length(rawdata);
   if raw_data_sz < sizeof(TOgfVertsHeader) then exit;
   phdr:=@rawdata[1];
@@ -2935,6 +4048,57 @@ begin
   result:=true;
 end;
 
+
+{ TOgfAnimationsParser }
+
+constructor TOgfAnimationsParser.Create;
+begin
+  _loaded:=false;
+  _original_data:='';
+  _tracks:=TOgfMotionTracksContainer.Create();
+  _params:=TOgfMotionParamsContainer.Create();
+  Reset();
+end;
+
+destructor TOgfAnimationsParser.Destroy;
+begin
+  Reset();
+  _params.Free();
+  _tracks.Free();
+  inherited Destroy;
+end;
+
+procedure TOgfAnimationsParser.Reset;
+begin
+  _loaded:=false;
+  _original_data:='';
+  _tracks.Reset();
+  _params.Reset();
+end;
+
+function TOgfAnimationsParser.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfAnimationsParser.Deserialize(rawdata: string): boolean;
+begin
+
+end;
+
+function TOgfAnimationsParser.Serialize(): string;
+begin
+
+end;
+
+procedure TOgfAnimationsParser.Sanitize();
+begin
+  // compare count of animations in tracks and defs, correct if needed
+  // compare animation names in tracks and defs, correct (using values from defs)
+  // check if bone count & names corresponds with bones in the model
+  // check bones indices in anims
+end;
+
 { TOgfParser }
 
 constructor TOgfParser.Create;
@@ -2949,6 +4113,8 @@ begin
   _lodref:=TOgfLodRefsContainer.Create();
 
   _skeleton:=TOgfSkeleton.Create();
+
+  Reset();
 end;
 
 destructor TOgfParser.Destroy;

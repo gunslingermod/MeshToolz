@@ -19,6 +19,9 @@ const
   TEST_OGF_IN_NAME:string='test_data\test_in.ogf';
   TEST_OGF_OUT_NAME:string='test_data\test_out.ogf';
 
+  TEST_OMF_IN_NAME:string='test_data\test_omf_in.omf';
+  TEST_OMF_OUT_NAME:string='test_data\test_omf_out.omf';
+
 
 procedure PrintTestResult(test_name:string; result:boolean);
 var
@@ -281,7 +284,7 @@ function OgfBoneTest():boolean;
 var
   f:TChunkedMemory;
   bones:TOgfBonesContainer;
-  data_new:string;
+  data_new, data_old:string;
 const
   CHUNK_PATH:string='13';
 begin
@@ -291,11 +294,13 @@ begin
   try
     if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
     if not f.NavigateToChunk(CHUNK_PATH) then exit;
-    if not bones.Deserialize(f.GetCurrentChunkRawDataAsString()) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+    if not bones.Deserialize(data_old) then exit;
 
     data_new:=bones.Serialize();
     if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
     if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+    if data_new <> data_old then exit;
     if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
 
     result:=true;
@@ -311,7 +316,7 @@ function OgfIKDataTest():boolean;
 var
   f:TChunkedMemory;
   ik:TOgfBonesIKDataContainer;
-  data_new:string;
+  data_new, data_old:string;
 const
   CHUNK_PATH:string='16';
 begin
@@ -321,11 +326,13 @@ begin
   try
     if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
     if not f.NavigateToChunk(CHUNK_PATH) then exit;
-    if not ik.Deserialize(f.GetCurrentChunkRawDataAsString()) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+    if not ik.Deserialize(data_old) then exit;
 
     data_new:=ik.Serialize();
     if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
     if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+    if data_new <> data_old then exit;
     if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
 
     result:=true;
@@ -341,7 +348,7 @@ function OgfChildrenContainerTest():boolean;
 var
   f:TChunkedMemory;
   children:TOgfChildrenContainer;
-  data_new:string;
+  data_new, data_old:string;
 const
   CHUNK_PATH:string='9';
 begin
@@ -351,11 +358,13 @@ begin
   try
     if not f.LoadFromFile(TEST_OGF_IN_NAME, 0) then exit;
     if not f.NavigateToChunk(CHUNK_PATH) then exit;
-    if not children.Deserialize(f.GetCurrentChunkRawDataAsString()) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+    if not children.Deserialize(data_old) then exit;
 
     data_new:=children.Serialize();
     if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
     if not f.SaveToFile(TEST_OGF_OUT_NAME) then exit;
+    if data_new<>data_old then exit;
     if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
 
     result:=true;
@@ -397,6 +406,72 @@ begin
   end;
 end;
 
+function OgfMotionTracksContainerTest():boolean;
+var
+  f:TChunkedMemory;
+  container:TOgfMotionTracksContainer;
+  data_old:string;
+  data_new:string;
+const
+  CHUNK_PATH:string='14';
+begin
+  result:=false;
+  f:=TChunkedMemory.Create();
+  container:=TOgfMotionTracksContainer.Create();
+  try
+    if not f.LoadFromFile(TEST_OMF_IN_NAME, 0) then exit;
+    if not f.NavigateToChunk(CHUNK_PATH) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+    if not container.Deserialize(data_old) then exit;
+
+    data_new:=container.Serialize();
+    if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
+    if not f.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+    if data_new<>data_old then exit;
+    if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
+    result:=true;
+  finally
+    container.Free;
+    f.Free;
+    DeleteFile(TEST_OMF_OUT_NAME);
+    PrintTestResult('OgfMotionTracksContainerTest', result);
+  end;
+
+end;
+
+function OgfMotionParamsContainerTest():boolean;
+var
+  f:TChunkedMemory;
+  container:TOgfMotionParamsContainer;
+  data_old:string;
+  data_new:string;
+const
+  CHUNK_PATH:string='15';
+begin
+  result:=false;
+  f:=TChunkedMemory.Create();
+  container:=TOgfMotionParamsContainer.Create();
+  try
+    if not f.LoadFromFile(TEST_OMF_IN_NAME, 0) then exit;
+    if not f.NavigateToChunk(CHUNK_PATH) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+    if not container.Deserialize(data_old) then exit;
+
+    data_new:=container.Serialize();
+    if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
+    if not f.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+    if data_new<>data_old then exit;
+    if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
+    result:=true;
+  finally
+    container.Free;
+    f.Free;
+    DeleteFile(TEST_OMF_OUT_NAME);
+    PrintTestResult('OgfMotionParamsContainerTest', result);
+  end;
+
+end;
+
 function RunAllTests():boolean;
 begin
   result:=true;
@@ -409,6 +484,8 @@ begin
   if not OgfIKDataTest() then result:=false;
   if not OgfChildrenContainerTest() then result:=false;
   if not OgfParserTest() then result:=false;
+  if not OgfMotionTracksContainerTest() then result:=false;
+  if not OgfMotionParamsContainerTest() then result:=false;
 
 end;
 
