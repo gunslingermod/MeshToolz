@@ -606,8 +606,6 @@ type
      function Serialize():string;
    end;
 
-
-
    { TOgfMotionMark }
 
    TOgfMotionMark = class
@@ -617,6 +615,7 @@ type
    public
      // Common
      constructor Create;
+     constructor Create(second:TOgfMotionMark);
      destructor Destroy; override;
      procedure Reset;
      function Loaded():boolean;
@@ -637,21 +636,27 @@ type
      function Loaded():boolean;
      function Deserialize(rawdata:string):integer;
      function Serialize():string;
+
+     procedure CopyFrom(second:TOgfMotionMarks);
    end;
 
    { TOgfMotionDef }
 
+   TOgfMotionDefData = record
+     name:string;
+     flags:cardinal;
+     bone_or_part:word;
+     motion_id:word;
+     speed:single;
+     power:single;
+     accrue:single;
+     falloff:single;
+     marks:TOgfMotionMarks;
+   end;
+
    TOgfMotionDef = class
      _loaded:boolean;
-     _name:string;
-     _flags:cardinal;
-     _bone_or_part:word;
-     _motion_id:word;
-     _speed:single;
-     _power:single;
-     _accrue:single;
-     _falloff:single;
-     _marks:TOgfMotionMarks;
+     _data:TOgfMotionDefData;
    public
      // Common
      constructor Create;
@@ -660,6 +665,9 @@ type
      function Loaded():boolean;
      function Deserialize(rawdata:string; version:cardinal):integer;
      function Serialize():string;
+
+     function GetData():TOgfMotionDefData;
+     procedure SetData(d:TOgfMotionDefData);
    end;
 
   { TOgfMotionParamsContainer }
@@ -678,6 +686,12 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string):boolean;
     function Serialize():string;
+
+    //Specific
+    function MotionsDefsCount():integer;
+    function GetMotionDefByIdx(idx:integer):TOgfMotionDefData;
+    function UpdateMotionDefsForIdx(idx:integer; data:TOgfMotionDefData):boolean;
+    function GetMotionIdxForName(name:string):integer;
   end;
 
   { TOgfBaseFileParser }
@@ -724,7 +738,11 @@ type
     function Deserialize(rawdata:string):boolean; override;
     function UpdateSource():boolean; override;
 
-    procedure Sanitize();
+    procedure Sanitize(skeleton:TOgfSkeleton);
+
+    function AnimationsCount():integer;
+    function GetAnimationParams(idx:integer):TOgfMotionDefData;
+    function UpdateAnimationParams(idx:integer; d:TOgfMotionDefData):boolean;
   end;
 
  { TOgfParser }
@@ -750,6 +768,7 @@ type
 
    function Meshes():TOgfChildrenContainer;
    function Skeleton():TOgfSkeleton;
+   function Animations():TOgfAnimationsParser;
 end;
 
 const
@@ -859,6 +878,21 @@ begin
   _name:='';
   setlength(_intervals, 0);
   Reset();
+end;
+
+constructor TOgfMotionMark.Create(second: TOgfMotionMark);
+var
+  i:integer;
+begin
+  Create();
+  _loaded:=second._loaded;
+  if _loaded then begin
+     setlength(_intervals, length(second._intervals));
+     _name:=second._name;
+     for i:=0 to length(_intervals)-1 do begin
+       _intervals[i]:=second._intervals[i];
+     end;
+  end;
 end;
 
 destructor TOgfMotionMark.Destroy;
@@ -1021,19 +1055,35 @@ begin
   end;
 end;
 
+procedure TOgfMotionMarks.CopyFrom(second: TOgfMotionMarks);
+var
+  i:integer;
+begin
+  if second = self then exit;
+  Reset();
+  if second = nil then exit;
+  if not second.Loaded() then exit;
+
+  _loaded:=true;
+  setlength(_marks, length(second._marks));
+  for i:=0 to length(_marks)-1 do begin
+    _marks[i]:=TOgfMotionMark.Create(second._marks[i]);
+  end;
+end;
+
 { TOgfMotionDef }
 
 constructor TOgfMotionDef.Create;
 begin
   _loaded:=false;
-  _marks:=TOgfMotionMarks.Create();
+  _data.marks:=TOgfMotionMarks.Create();
   Reset();
 end;
 
 destructor TOgfMotionDef.Destroy;
 begin
   Reset();
-  FreeAndNil(_marks);
+  FreeAndNil(_data.marks);
   inherited Destroy;
 end;
 
@@ -1042,16 +1092,16 @@ var
   i:integer;
 begin
   _loaded:=false;
-  _marks.Reset;
+  _data.marks.Reset;
 
-  _name:='';
-  _flags:=0;
-  _bone_or_part:=0;
-  _motion_id:=0;
-  _speed:=1;
-  _power:=1;
-  _accrue:=2;
-  _falloff:=2;
+  _data.name:='';
+  _data.flags:=0;
+  _data.bone_or_part:=0;
+  _data.motion_id:=0;
+  _data.speed:=1;
+  _data.power:=1;
+  _data.accrue:=2;
+  _data.falloff:=2;
 end;
 
 function TOgfMotionDef.Loaded(): boolean;
@@ -1069,45 +1119,45 @@ begin
 
   try
     initial_len:=length(rawdata);
-    if not DeserializeZStringAndSplit(rawdata, _name) then exit;
+    if not DeserializeZStringAndSplit(rawdata, _data.name) then exit;
 
     sz:=sizeof(cardinal);
     if length(rawdata)<sz then exit;
-    _flags:=PCardinal(PAnsiChar(rawdata))^;
+    _data.flags:=PCardinal(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     sz:=sizeof(word);
     if length(rawdata)<sz then exit;
-    _bone_or_part:=PWord(PAnsiChar(rawdata))^;
+    _data.bone_or_part:=PWord(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     sz:=sizeof(word);
     if length(rawdata)<sz then exit;
-    _motion_id:=PWord(PAnsiChar(rawdata))^;
+    _data.motion_id:=PWord(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     sz:=sizeof(single);
     if length(rawdata)<sz then exit;
-    _speed:=PSingle(PAnsiChar(rawdata))^;
+    _data.speed:=PSingle(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     sz:=sizeof(single);
     if length(rawdata)<sz then exit;
-    _power:=PSingle(PAnsiChar(rawdata))^;
+    _data.power:=PSingle(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     sz:=sizeof(single);
     if length(rawdata)<sz then exit;
-    _accrue:=PSingle(PAnsiChar(rawdata))^;
+    _data.accrue:=PSingle(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     sz:=sizeof(single);
     if length(rawdata)<sz then exit;
-    _falloff:=PSingle(PAnsiChar(rawdata))^;
+    _data.falloff:=PSingle(PAnsiChar(rawdata))^;
     if not AdvanceString(rawdata, sz) then exit;
 
     if version>=4 then begin
-      sz:=_marks.Deserialize(rawdata);
+      sz:=_data.marks.Deserialize(rawdata);
       if sz <=0 then exit;
       if not AdvanceString(rawdata, sz) then exit;
     end;
@@ -1126,16 +1176,35 @@ begin
   result:='';
   if not _loaded then exit;
 
-  result:=result+_name+chr(0);
-  result:=result+SerializeCardinal(_flags);
-  result:=result+SerializeWord(_bone_or_part);
-  result:=result+SerializeWord(_motion_id);
-  result:=result+SerializeFloat(_speed);
-  result:=result+SerializeFloat(_power);
-  result:=result+SerializeFloat(_accrue);
-  result:=result+SerializeFloat(_falloff);
-  result:=result+_marks.Serialize(); // for version <4 returns an empty string
+  result:=result+_data.name+chr(0);
+  result:=result+SerializeCardinal(_data.flags);
+  result:=result+SerializeWord(_data.bone_or_part);
+  result:=result+SerializeWord(_data.motion_id);
+  result:=result+SerializeFloat(_data.speed);
+  result:=result+SerializeFloat(_data.power);
+  result:=result+SerializeFloat(_data.accrue);
+  result:=result+SerializeFloat(_data.falloff);
+  result:=result+_data.marks.Serialize(); // for version <4 returns an empty string because not loaded
 
+end;
+
+function TOgfMotionDef.GetData(): TOgfMotionDefData;
+begin
+  result:=_data;
+end;
+
+procedure TOgfMotionDef.SetData(d: TOgfMotionDefData);
+var
+  my_marks:TOgfMotionMarks;
+begin
+  if d.marks<>_data.marks then begin
+    my_marks:=_data.marks;
+    my_marks.CopyFrom(d.marks);
+    _data:=d;
+    _data.marks:=my_marks;
+  end else begin
+    _data:=d
+  end;
 end;
 
 { TOgfMotionBoneParams }
@@ -1402,6 +1471,55 @@ begin
     result:=result+_defs[i].Serialize();
   end;
 
+end;
+
+function TOgfMotionParamsContainer.MotionsDefsCount(): integer;
+begin
+  result:=0;
+  if not _loaded then exit;
+
+  result:=length(_defs);
+end;
+
+function TOgfMotionParamsContainer.GetMotionDefByIdx(idx: integer): TOgfMotionDefData;
+begin
+  if (idx < 0) or (idx >= MotionsDefsCount()) then begin
+    result.motion_id:=$FFFF;
+    result.name:='';
+
+    result.accrue:=0;
+    result.falloff:=0;
+    result.speed:=0;
+    result.power:=0;
+    result.bone_or_part:=0;
+    result.flags:=0;
+    result.marks:=nil;
+  end else begin
+    result:=_defs[idx].GetData();
+  end;
+end;
+
+function TOgfMotionParamsContainer.UpdateMotionDefsForIdx(idx: integer; data: TOgfMotionDefData): boolean;
+begin
+  if (idx < 0) or (idx >= MotionsDefsCount()) then begin
+    result:=false;
+  end else begin
+    _defs[idx].SetData(data);
+    result:=true;
+  end;
+end;
+
+function TOgfMotionParamsContainer.GetMotionIdxForName(name: string): integer;
+var
+  i:integer;
+begin
+  result:=-1;
+  for i:=0 to length(_defs)-1 do begin
+    if _defs[i].GetData().name = name then begin
+      result:=i;
+      break;
+    end;
+  end;
 end;
 
 { TOgfMotionBoneTrack }
@@ -4246,6 +4364,8 @@ begin
     mem.LeaveSubChunk();
     if not r then exit;
 
+    Sanitize(nil);
+
     result:=true;
   finally
     mem.Free;
@@ -4275,12 +4395,27 @@ begin
 
 end;
 
-procedure TOgfAnimationsParser.Sanitize();
+procedure TOgfAnimationsParser.Sanitize(skeleton: TOgfSkeleton);
 begin
   // compare count of animations in tracks and defs, correct if needed
   // compare animation names in tracks and defs, correct (using values from defs)
   // check if bone count & names corresponds with bones in the model
   // check bones indices in anims
+end;
+
+function TOgfAnimationsParser.AnimationsCount(): integer;
+begin
+  result:=_params.MotionsDefsCount();
+end;
+
+function TOgfAnimationsParser.GetAnimationParams(idx: integer): TOgfMotionDefData;
+begin
+  result:=_params.GetMotionDefByIdx(idx);
+end;
+
+function TOgfAnimationsParser.UpdateAnimationParams(idx: integer; d: TOgfMotionDefData): boolean;
+begin
+  result:=_params.UpdateMotionDefsForIdx(idx, d);
 end;
 
 { TOgfParser }
@@ -4444,6 +4579,14 @@ begin
   if not Loaded() then exit;
 
   result:=_skeleton;
+end;
+
+function TOgfParser.Animations(): TOgfAnimationsParser;
+begin
+  result:=nil;
+  if not Loaded() then exit;
+
+  result:=_animations;
 end;
 
 

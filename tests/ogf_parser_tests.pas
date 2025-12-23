@@ -22,6 +22,8 @@ const
   TEST_OMF_IN_NAME:string='test_data\test_omf_in.omf';
   TEST_OMF_OUT_NAME:string='test_data\test_omf_out.omf';
 
+  TEST_OMF_MMARKS_IN_NAME:string='test_data\test_omf_mmarks_in.omf';
+  TEST_OMF_MMARKS_OUT_NAME:string='test_data\test_omf_mmarks_out.omf';
 
 procedure PrintTestResult(test_name:string; result:boolean);
 var
@@ -471,6 +473,52 @@ begin
   end;
 end;
 
+function OgfMotionsMmarksCopyTest():boolean;
+var
+  f:TChunkedMemory;
+  container:TOgfMotionParamsContainer;
+  data_old:string;
+  data_new:string;
+
+  motionid:integer;
+  mdef:TOgfMotionDefData;
+  mmarks:TOgfMotionMarks;
+const
+  CHUNK_PATH:string='15';
+begin
+  result:=false;
+  f:=TChunkedMemory.Create();
+  container:=TOgfMotionParamsContainer.Create();
+  mmarks:=TOgfMotionMarks.Create();
+  try
+    if not f.LoadFromFile(TEST_OMF_MMARKS_IN_NAME, 0) then exit;
+    if not f.NavigateToChunk(CHUNK_PATH) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+    if not container.Deserialize(data_old) then exit;
+
+    motionid:=container.GetMotionIdxForName('f1_throw_end');
+    if motionid <0 then exit;
+    mdef:=container.GetMotionDefByIdx(motionid);
+    if length(mdef.name)=0 then exit;
+    mmarks.CopyFrom(mdef.marks);
+    mdef.marks.CopyFrom(mmarks);
+    if not container.UpdateMotionDefsForIdx(motionid, mdef) then exit;
+
+    data_new:=container.Serialize();
+    if not f.ReplaceCurrentRawDataWithString(data_new) then exit;
+    if not f.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+    if data_new<>data_old then exit;
+    if data_new <> f.GetCurrentChunkRawDataAsString() then exit;
+    result:=true;
+  finally
+    container.Free;
+    mmarks.Free;
+    f.Free;
+    DeleteFile(TEST_OMF_OUT_NAME);
+    PrintTestResult('OgfMotionsMmarksCopyTest', result);
+  end;
+end;
+
 function OgfMotionsParserTest():boolean;
 var
   p:TOgfAnimationsParser;
@@ -515,6 +563,7 @@ begin
   if not OgfModelParserTest() then result:=false;
   if not OgfMotionTracksContainerTest() then result:=false;
   if not OgfMotionParamsContainerTest() then result:=false;
+  if not OgfMotionsMmarksCopyTest() then  result:=false;
   if not OgfMotionsParserTest() then  result:=false;
 
 end;
