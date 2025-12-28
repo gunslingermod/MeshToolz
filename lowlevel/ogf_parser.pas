@@ -542,12 +542,14 @@ type
     function _GetFrameData(idx:integer; var pqr:pointer; var pqt:pointer):boolean; //returns ptrs to internal data. CHECK IF QRs and QTs keys present before changing!
 
     procedure _GetCurrentTransLimits(var min_limit:FVector3; var max_limit:FVector3);
-    function _CheckTransWithinLimits(trans:FVector3; var new_min:FVector3; var new_max:FVector3):boolean;
+    function _CheckTransWithinLimits(trans:FVector3; var new_min:FVector3; var new_max:FVector3; use_internal_current_limits:boolean=true):boolean;
     function _RebuildTransKeysForNewLimits(min_limit:FVector3; max_limit:FVector3):boolean;
 
     function _CheckRKeySameWith(qr:pTOgfMotionKeyQR; q:pFquaternion):boolean;
     function _CheckT8KeySameWith(qt:pTOgfMotionKeyQT8; v:pFVector3):boolean;
     function _CheckT16KeySameWith(qt:pTOgfMotionKeyQT16; v:pFVector3):boolean;
+
+    procedure _CreateTransKeysFromInit();
   public
     // Common
     constructor Create; overload;
@@ -564,6 +566,9 @@ type
     function SetKey(idx:integer; key:TMotionKey):boolean;
 
     function ChangeFramesCount(new_frames_count:integer):boolean;
+
+    function Copy(from:TOgfMotionBoneTrack):boolean;
+    function MergeWithTrack(second:TOgfMotionBoneTrack):boolean;
   end;
 
   { TOgfMotionTrack }
@@ -586,9 +591,13 @@ type
     function RemoveBone(track_bone_idx:integer):boolean;
     function ChangeFramesCount(new_frames_count:integer):boolean;
     function GetFramesCount():integer;
+    procedure SetName(name:string);  // no getter by design - use names from MotionDefs!
 
     function GetBoneKey(track_bone_idx:integer; key_idx:integer; var k:TMotionKey):boolean;
     function SetBoneKey(track_bone_idx:integer; key_idx:integer; k:TMotionKey):boolean;
+
+    function Copy(from:TOgfMotionTrack):boolean;
+    function MergeWithTrack(second:TOgfMotionTrack):boolean;
 
   end;
 
@@ -609,6 +618,9 @@ type
 
     function MotionTracksCount():integer;
     function GetMotionTrack(idx:integer):TOgfMotionTrack;
+
+    function DuplicateTrack(idx:integer; new_name:string):integer;
+    function RemoveTrack(idx:integer):boolean;
   end;
 
    { TOgfMotionBoneParams }
@@ -740,6 +752,8 @@ type
     function GetMotionDefByIdx(idx:integer):TOgfMotionDefData;
     function UpdateMotionDefsForIdx(idx:integer; data:TOgfMotionDefData):boolean;
     function GetMotionIdxForName(name:string):integer;
+    function AddMotionDef(data:TOgfMotionDefData):integer;
+    function RemoveMotionDef(idx:integer):boolean;
 
     function GetBonePartsCount():integer;
     function GetBonePart(idx:integer):TOgfMotionBonePart;
@@ -811,6 +825,10 @@ type
 
     function GetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; var k:TMotionKey):boolean;
     function SetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; k:TMotionKey):boolean;
+
+    function DuplicateAnimation(old_name:string; new_name:string):boolean;
+    function MergeAnimations(name_of_new:string; name_of_first:string; name_of_second:string):boolean;
+    function DeleteAnimation(name:string):boolean;
   end;
 
  { TOgfParser }
@@ -1271,13 +1289,14 @@ procedure TOgfMotionDef.SetData(d: TOgfMotionDefData);
 var
   my_marks:TOgfMotionMarks;
 begin
+  _loaded:=true;
   if d.marks<>_data.marks then begin
     my_marks:=_data.marks;
     my_marks.CopyFrom(d.marks);
     _data:=d;
     _data.marks:=my_marks;
   end else begin
-    _data:=d
+    _data:=d;
   end;
 end;
 
@@ -1647,7 +1666,7 @@ var
   marks:TOgfMotionMarks;
 begin
   result:='';
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   version:=3;
   if MotionsDefsCount() = 0 then exit;
@@ -1676,7 +1695,7 @@ end;
 function TOgfMotionParamsContainer.MotionsDefsCount(): integer;
 begin
   result:=0;
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   result:=length(_defs);
 end;
@@ -1722,17 +1741,49 @@ begin
   end;
 end;
 
+function TOgfMotionParamsContainer.AddMotionDef(data: TOgfMotionDefData): integer;
+var
+  i:integer;
+begin
+  result:=-1;
+  if not Loaded() then exit;
+
+  i:=length(_defs);
+  setlength(_defs, i+1);
+
+  _defs[i]:=TOgfMotionDef.Create();
+  _defs[i].SetData(data);
+
+  result:=i;
+end;
+
+function TOgfMotionParamsContainer.RemoveMotionDef(idx: integer): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if (idx < 0) or (idx >= MotionsDefsCount()) then exit;
+
+  _defs[idx].Free;
+  for i:=idx to length(_defs)-2 do begin
+    _defs[idx]:=_defs[idx+1];
+  end;
+  setlength(_defs, length(_defs)-1);
+  result:=true;
+end;
+
 function TOgfMotionParamsContainer.GetBonePartsCount(): integer;
 begin
   result:=0;
-  if not _loaded then exit;
+  if not Loaded() then exit;
   result:=length(_bone_parts);
 end;
 
 function TOgfMotionParamsContainer.GetBonePart(idx: integer): TOgfMotionBonePart;
 begin
   result:=nil;
-  if not _loaded then exit;
+  if not Loaded() then exit;
   if (idx >= 0) and (idx < length(_bone_parts)) then begin
     result:=_bone_parts[idx];
   end;
@@ -1743,7 +1794,7 @@ var
   i:integer;
 begin
   result:=0;
-  if not _loaded then exit;
+  if not Loaded() then exit;
   for i:=0 to length(_bone_parts)-1 do begin
     result:=result+_bone_parts[i].GetBonesCount();
   end;
@@ -1754,7 +1805,7 @@ var
   i, idx:integer;
 begin
   result:=false;
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   for i:=0 to length(_bone_parts)-1 do begin
     idx:=_bone_parts[i].GetBoneLocalIndexByName(name);
@@ -1795,7 +1846,7 @@ end;
 function TOgfMotionParamsContainer.GetBone(bone_part_idx: integer; local_bone_idx_in_part: integer): TOgfMotionBoneParams;
 begin
   result:=nil;
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   if (bone_part_idx >= 0) and (bone_part_idx < length(_bone_parts)) then begin
     result:=_bone_parts[bone_part_idx].GetBoneByLocalIndex(local_bone_idx_in_part);
@@ -1805,7 +1856,7 @@ end;
 function TOgfMotionParamsContainer.RemoveBone(bone_part_idx: integer; local_bone_idx_in_part: integer): boolean;
 begin
   result:=false;
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   if (bone_part_idx >= 0) and (bone_part_idx < length(_bone_parts)) then begin
     result:=_bone_parts[bone_part_idx].RemoveBone(local_bone_idx_in_part);
@@ -1882,9 +1933,12 @@ begin
   end;
 end;
 
-function TOgfMotionBoneTrack._CheckTransWithinLimits(trans: FVector3; var new_min: FVector3; var new_max: FVector3): boolean;
+function TOgfMotionBoneTrack._CheckTransWithinLimits(trans: FVector3; var new_min: FVector3; var new_max: FVector3; use_internal_current_limits: boolean): boolean;
 begin
-  _GetCurrentTransLimits(new_min, new_max);
+  if use_internal_current_limits then begin
+    _GetCurrentTransLimits(new_min, new_max);
+  end;
+
   result:=true;
 
   if trans.x<new_min.x then begin
@@ -2035,6 +2089,31 @@ var
 begin
   v2:=Qt16ToT(qt, @_sizeT, @_initT);
   result:=(abs(v^.x-v2.x) < EPS) and (abs(v^.y-v2.y) < EPS) and (abs(v^.z-v2.z) < EPS);
+end;
+
+procedure TOgfMotionBoneTrack._CreateTransKeysFromInit();
+var
+  t_data:array of TOgfMotionKeyQT16;
+  qt:TOgfMotionKeyQT16;
+  i:integer;
+begin
+  if _trans_keys_present then exit;
+
+  // create array of keys same with initial, force 16-bit
+  setlength(t_data, _frames_count);
+  // the coordinate is same for all keys, so just set 0 to all QRs
+  qt.x1:=0;
+  qt.y1:=0;
+  qt.z1:=0;
+  for i:=0 to _frames_count-1 do begin
+    t_data[i]:=qt;
+  end;
+  setlength(_trans_keys_rawdata, _frames_count*sizeof(TOgfMotionKeyQT16));
+  Move(t_data[0], _trans_keys_rawdata[0], _frames_count*sizeof(TOgfMotionKeyQT16));
+  set_zero(_sizeT);
+  setlength(t_data, 0);
+  _trans_keys_present:=true;
+  _is16bittransform:=true;
 end;
 
 constructor TOgfMotionBoneTrack.Create;
@@ -2280,12 +2359,10 @@ end;
 
 function TOgfMotionBoneTrack.SetKey(idx: integer; key: TMotionKey): boolean;
 var
-  qt:TOgfMotionKeyQT16;
   pqr:pTOgfMotionKeyQR;
   pqt8:pTOgfMotionKeyQT8;
   pqt16:pTOgfMotionKeyQT16;
   r_data:array of TOgfMotionKeyQR;
-  t_data:array of TOgfMotionKeyQT16;
   i:integer;
 
   is_same:boolean;
@@ -2328,21 +2405,7 @@ begin
   if not _trans_keys_present then begin
     is_same:= (_is16bittransform and _CheckT16KeySameWith(@_trans_keys_rawdata[0], @key.T)) or (not _is16bittransform and _CheckT8KeySameWith(@_trans_keys_rawdata[0], @key.T));
     if not is_same then begin
-      // create array of keys same with initial, force 16-bit
-      setlength(t_data, _frames_count);
-      // the coordinate is same for all keys, so just set 0 to all QRs
-      qt.x1:=0;
-      qt.y1:=0;
-      qt.z1:=0;
-      for i:=0 to _frames_count-1 do begin
-        t_data[i]:=qt;
-      end;
-      setlength(_trans_keys_rawdata, _frames_count*sizeof(TOgfMotionKeyQT16));
-      Move(t_data[0], _trans_keys_rawdata[0], _frames_count*sizeof(TOgfMotionKeyQT16));
-      set_zero(_sizeT);
-      setlength(t_data, 0);
-      _trans_keys_present:=true;
-      _is16bittransform:=true;
+      _CreateTransKeysFromInit();
     end;
   end;
 
@@ -2459,6 +2522,71 @@ begin
 
 
   _frames_count:=new_frames_count;
+  result:=true;
+end;
+
+function TOgfMotionBoneTrack.Copy(from: TOgfMotionBoneTrack): boolean;
+begin
+  result:=false;
+  Reset();
+
+  _loaded:=from._loaded;
+  _rot_keys_present:=from._rot_keys_present;
+  _trans_keys_present:=from._trans_keys_present;
+  _is16bittransform:=from._is16bittransform;
+  _frames_count:=from._frames_count;
+  _sizeT:=from._sizeT;
+  _initT:=from._initT;
+
+  setlength(_rot_keys_rawdata, length(from._rot_keys_rawdata));
+  Move(from._rot_keys_rawdata[0], _rot_keys_rawdata[0], length(from._rot_keys_rawdata));
+
+  setlength(_trans_keys_rawdata, length(from._trans_keys_rawdata));
+  Move(from._trans_keys_rawdata[0], _trans_keys_rawdata[0], length(from._trans_keys_rawdata));
+
+  result:=true;
+end;
+
+function TOgfMotionBoneTrack.MergeWithTrack(second: TOgfMotionBoneTrack): boolean;
+var
+  i:integer;
+  min_limit, max_limit:FVector3;
+  k:TMotionKey;
+  within_limits:boolean;
+  old_frames_count:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if not second.Loaded() then exit;
+
+
+
+  // Determine new translation limits
+  _GetCurrentTransLimits(min_limit, max_limit);
+  within_limits:=true;
+  for i:=0 to second.FramesCount()-1 do begin
+    if not second.GetKey(i, k) then exit;
+    within_limits:=_CheckTransWithinLimits(k.T, min_limit, max_limit, false) and within_limits;
+  end;
+
+  // Recalculate QTs if limits are changed
+  if not within_limits then begin
+    // Automatically means there is a motion, so we definitely need keys
+    if not _trans_keys_present then begin
+      _CreateTransKeysFromInit();
+    end;
+    if not _RebuildTransKeysForNewLimits(min_limit, max_limit) then exit;
+  end;
+
+  old_frames_count:=FramesCount();
+  if not ChangeFramesCount(old_frames_count+second.FramesCount()) then exit;
+  for i:=0 to second.FramesCount()-1 do begin
+    if not second.GetKey(i, k) or not SetKey(old_frames_count+i, k) then begin
+      ChangeFramesCount(old_frames_count);
+      exit;
+    end;
+  end;
+
   result:=true;
 end;
 
@@ -2605,6 +2733,11 @@ begin
   result:=_frames_count;
 end;
 
+procedure TOgfMotionTrack.SetName(name: string);
+begin
+  _name:=name;
+end;
+
 function TOgfMotionTrack.GetBoneKey(track_bone_idx: integer; key_idx: integer; var k: TMotionKey): boolean;
 begin
   result:=false;
@@ -2621,6 +2754,50 @@ begin
 
   if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
     result:=_bone_tracks[track_bone_idx].SetKey(key_idx, k);
+  end;
+end;
+
+function TOgfMotionTrack.Copy(from: TOgfMotionTrack): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  Reset();
+
+  _name:=from._name;
+  _loaded:=from._loaded;
+  _frames_count:=from._frames_count;
+
+
+  setlength(_bone_tracks, length(from._bone_tracks));
+  for i:=0 to length(_bone_tracks)-1 do begin
+    _bone_tracks[i]:=nil;
+  end;
+
+  for i:=0 to length(_bone_tracks)-1 do begin
+    _bone_tracks[i]:=TOgfMotionBoneTrack.Create();
+    if not _bone_tracks[i].Copy(from._bone_tracks[i]) then begin
+      Reset();
+      exit;
+    end;
+  end;
+
+  result:=true;
+end;
+
+function TOgfMotionTrack.MergeWithTrack(second: TOgfMotionTrack): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if not second.Loaded() then exit;
+  if length(_bone_tracks)<>length(second._bone_tracks) then exit;
+
+  _frames_count:=_frames_count+second._frames_count;
+  result:=true;
+  for i:=0 to length(_bone_tracks)-1 do begin
+    result:= _bone_tracks[i].MergeWithTrack(second._bone_tracks[i]) and result;
   end;
 end;
 
@@ -2728,7 +2905,7 @@ end;
 function TOgfMotionTracksContainer.MotionTracksCount(): integer;
 begin
   result:=0;
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   result:=length(_motions);
 end;
@@ -2736,10 +2913,48 @@ end;
 function TOgfMotionTracksContainer.GetMotionTrack(idx: integer): TOgfMotionTrack;
 begin
   result:=nil;
-  if not _loaded then exit;
+  if not Loaded() then exit;
 
   if (idx >= 0) and (idx < length(_motions)) then begin
     result:=_motions[idx];
+  end;
+end;
+
+function TOgfMotionTracksContainer.DuplicateTrack(idx: integer; new_name: string): integer;
+var
+  i:integer;
+begin
+  result:=-1;
+  if not Loaded() then exit();
+  if (idx >= 0) and (idx < length(_motions)) then begin
+    i:=length(_motions);
+    setlength(_motions, i+1);
+    _motions[i]:=TOgfMotionTrack.Create();
+
+    if _motions[i].Copy(_motions[idx]) then begin
+      _motions[i].SetName(new_name);
+      result:=i;
+    end else begin
+      _motions[i].Free;
+      setlength(_motions, i);
+    end;
+  end;
+end;
+
+function TOgfMotionTracksContainer.RemoveTrack(idx: integer): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() then exit();
+  if (idx >= 0) and (idx < length(_motions)) then begin
+    _motions[idx].Free;
+    for i:=idx to length(_motions)-2 do begin
+      _motions[idx]:=_motions[idx+1];
+    end;
+    setlength(_motions, length(_motions)-1);
+
+    result:=true;
   end;
 end;
 
@@ -5294,8 +5509,10 @@ end;
 
 procedure TOgfAnimationsParser.Sanitize(skeleton: TOgfSkeleton);
 begin
-  // compare count of animations in tracks and defs, correct if needed
+  // compare count of animations in tracks and defs, correct if needed (use lower)
+  // check if there is no duplicate and missing motion ids if defs
   // compare animation names in tracks and defs, correct (using values from defs)
+
   // check if bone count & names corresponds with bones in the model
   // check bones indices in anims
 end;
@@ -5396,6 +5613,67 @@ begin
   end;
 end;
 
+function TOgfAnimationsParser.DuplicateAnimation(old_name: string; new_name: string): boolean;
+var
+  old_idx, new_idx, i:integer;
+  def:TOgfMotionDefData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  old_idx:=GetAnimationIdByName(old_name);
+  if old_idx < 0 then exit;
+
+  def:=_params.GetMotionDefByIdx(old_idx);
+  if def.name<>old_name then exit;
+
+  new_idx:=_tracks.DuplicateTrack(old_idx, new_name);
+  if new_idx < 0 then exit;
+
+  def.name:=new_name;
+  def.motion_id:=new_idx;
+  i:=_params.AddMotionDef(def);
+
+  if i < 0 then begin
+    _tracks.RemoveTrack(new_idx);
+  end else begin
+    result:=true;
+  end;
+end;
+
+function TOgfAnimationsParser.MergeAnimations(name_of_new: string; name_of_first: string; name_of_second: string): boolean;
+var
+  new_track, second_track:TOgfMotionTrack;
+begin
+  result:=false;
+
+  second_track:=_GetMotionTrackByName(name_of_second);
+  if second_track = nil then exit;
+
+  if not DuplicateAnimation(name_of_first, name_of_new) then exit;
+
+  new_track:=_GetMotionTrackByName(name_of_new);
+  if new_track = nil then exit;
+
+  result:=new_track.MergeWithTrack(second_track);
+  if not result then begin
+    DeleteAnimation(name_of_new);
+  end;
+end;
+
+function TOgfAnimationsParser.DeleteAnimation(name: string): boolean;
+var
+  idx:integer;
+begin
+  result:=false;
+  idx:=GetAnimationIdByName(name);
+  if idx < 0 then exit;
+
+  result:=true;
+  result:=_tracks.RemoveTrack(idx) and result;
+  result:=_params.RemoveMotionDef(idx) and result;
+end;
+
 function TOgfAnimationsParser.ChangeAnimationFramesCount(anim_name: string; new_frames_count: integer): boolean;
 var
   track:TOgfMotionTrack;
@@ -5416,7 +5694,7 @@ end;
 
 function TOgfAnimationsParser.GetAnimationParams(idx: integer): TOgfMotionDefData;
 begin
-  // if not loaded - will return default MotionDef
+  // if not loaded - returns default MotionDef
   result:=_params.GetMotionDefByIdx(idx);
 end;
 
