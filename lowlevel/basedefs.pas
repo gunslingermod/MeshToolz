@@ -46,6 +46,14 @@ type
   end;
   pFObb = ^FObb;
 
+  Fquaternion = packed record
+    x:single;
+    y:single;
+    z:single;
+    w:single;
+  end;
+  pFquaternion = ^Fquaternion;
+
   procedure set_zero(var v:FVector2); overload;
   procedure set_zero(var v:FVector3); overload;
   procedure set_zero(var s:FSphere); overload;
@@ -57,6 +65,10 @@ type
   procedure uniform_scale(var s:FSphere; k:single); overload;
   procedure uniform_scale(var c:FCylinder; k:single); overload;
   procedure uniform_scale(var o:FObb; k:single); overload;
+
+  function v_add(v1:pFVector3; v2:pFVector3):FVector3;
+  function v_sub(v1:pFVector3; v2:pFVector3):FVector3;
+  function v_mul(v:pFVector3; n:single):FVector3;
 
 implementation
 
@@ -125,6 +137,27 @@ procedure uniform_scale(var o: FObb; k: single);
 begin
   uniform_scale(o.m_halfsize, k);
   uniform_scale(o.m_translate, k);
+end;
+
+function v_add(v1:pFVector3; v2:pFVector3):FVector3;
+begin
+  result.x:=v1^.x+v2^.x;
+  result.y:=v1^.y+v2^.y;
+  result.z:=v1^.z+v2^.z;
+end;
+
+function v_sub(v1:pFVector3; v2:pFVector3):FVector3;
+begin
+  result.x:=v1^.x-v2^.x;
+  result.y:=v1^.y-v2^.y;
+  result.z:=v1^.z-v2^.z;
+end;
+
+function v_mul(v:pFVector3; n:single):FVector3;
+begin
+  result.x:=v^.x*n;
+  result.y:=v^.y*n;
+  result.z:=v^.z*n;
 end;
 
 end.
