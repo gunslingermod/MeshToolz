@@ -20,10 +20,11 @@ const
   TEST_OGF_OUT_NAME:string='test_data\test_out.ogf';
 
   TEST_OMF_IN_NAME:string='test_data\test_omf_in.omf';
-  TEST_OMF_OUT_NAME:string='test_data\test_omf_out.omf';
-
   TEST_OMF_MMARKS_IN_NAME:string='test_data\test_omf_mmarks_in.omf';
-  TEST_OMF_MMARKS_OUT_NAME:string='test_data\test_omf_mmarks_out.omf';
+  TEST_OMF_MERGE1_IN_NAME:string='test_data\test_merge1.omf';
+  TEST_OMF_MERGE2_IN_NAME:string='test_data\test_merge2.omf';
+
+  TEST_OMF_OUT_NAME:string='test_data\test_omf_out.omf';
 
 procedure PrintTestResult(test_name:string; result:boolean);
 var
@@ -544,7 +545,120 @@ begin
   finally
     p.Free;
     f.Free;
-    DeleteFile(TEST_OGF_OUT_NAME);
+    DeleteFile(TEST_OMF_OUT_NAME);
+    PrintTestResult('OgfMotionsParserTest', result);
+  end;
+end;
+
+function OgfMotionsDuplicateAddRemoveTest():boolean;
+var
+  p:TOgfAnimationsParser;
+  data_new, data_old:string;
+  f:TChunkedMemory;
+begin
+  result:=false;
+  p:=TOgfAnimationsParser.Create();
+  f:=TChunkedMemory.Create();
+  try
+    if not f.LoadFromFile(TEST_OMF_MMARKS_IN_NAME, 0) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+
+    if not p.LoadFromChunkedMem(f) then exit;
+
+    if not p.DuplicateAnimation('f1_throw_end', 'f1_throw_end_new')then exit;
+    if not p.MergeAnimations('f1_throw_end_merged', 'f1_throw_end', 'f1_throw_end_new') then exit; ;
+    if not p.DeleteAnimation('f1_throw_end_new') then exit;
+    if not p.DeleteAnimation('f1_throw_end_merged') then exit;
+
+    data_new:=p.Serialize();
+    if length(data_new) = 0 then exit;
+
+    if not f.LoadFromString(data_new) then exit;
+    if not f.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+    if data_new <> data_old then exit;
+
+    result:=true;
+  finally
+    p.Free;
+    f.Free;
+    DeleteFile(TEST_OMF_OUT_NAME);
+    PrintTestResult('OgfMotionsDuplicateAddRemoveTest', result);
+  end;
+end;
+
+function OgfMotionsContainerMergeTest():boolean;
+var
+  p1, p2, p:TOgfAnimationsParser;
+  n1, n2, n:integer;
+begin
+  result:=false;
+  p:=TOgfAnimationsParser.Create();
+
+  try
+    p1:=TOgfAnimationsParser.Create();
+    p2:=TOgfAnimationsParser.Create();
+
+    if not p1.LoadFromFile(TEST_OMF_MERGE1_IN_NAME) then exit;
+    if not p2.LoadFromFile(TEST_OMF_MERGE2_IN_NAME) then exit;
+    n1:=p1.AnimationsCount();
+    n2:=p2.AnimationsCount();
+
+    if not p1.MergeContainers(p2) then exit;
+    if not p1.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+
+    if not p.LoadFromFile(TEST_OMF_OUT_NAME) then exit;
+    n:=p.AnimationsCount();
+    if n <> n1+n2 then exit;
+
+
+    result:=true;
+  finally
+    p.Free;
+    p1.Free;
+    p2.Free;
+    DeleteFile(TEST_OMF_OUT_NAME);
+    PrintTestResult('OgfMotionsContainerMergeTest', result);
+  end;
+end;
+
+function OgfMotionsParserBonesTest():boolean;
+var
+  p:TOgfAnimationsParser;
+  data_new, data_old:string;
+  frames_count:integer;
+  f:TChunkedMemory;
+
+  k:TMotionKey;
+begin
+  result:=false;
+  p:=TOgfAnimationsParser.Create();
+  f:=TChunkedMemory.Create();
+  try
+    if not f.LoadFromFile(TEST_OMF_IN_NAME, 0) then exit;
+    data_old:=f.GetCurrentChunkRawDataAsString();
+
+    if not p.LoadFromChunkedMem(f) then exit;
+
+    if p.AddBone('bolt', k, 0) then exit; //this bone already exist, function should fail
+
+
+    if not p.GetAnimationKeyForBone('shoot', 'bolt', 0, k) then exit;
+    if not p.RemoveBone('bolt') then exit;
+    k.T.y:=k.T.y+0.1;
+    if not p.AddBone('bolt', k, 0) then exit;
+
+
+    data_new:=p.Serialize();
+    if length(data_new) = 0 then exit;
+
+    if not f.LoadFromString(data_new) then exit;
+    if not f.SaveToFile(TEST_OMF_OUT_NAME) then exit;
+
+    result:=true;
+  finally
+    p.Free;
+    f.Free;
+    DeleteFile(TEST_OMF_OUT_NAME);
     PrintTestResult('OgfMotionsParserTest', result);
   end;
 end;
@@ -565,6 +679,9 @@ begin
   if not OgfMotionParamsContainerTest() then result:=false;
   if not OgfMotionsMmarksCopyTest() then  result:=false;
   if not OgfMotionsParserTest() then  result:=false;
+  if not OgfMotionsDuplicateAddRemoveTest() then  result:=false;
+  if not OgfMotionsContainerMergeTest() then result:=false;
+  if not OgfMotionsParserBonesTest() then result:=false;
 
 end;
 

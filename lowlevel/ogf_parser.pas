@@ -578,6 +578,8 @@ type
     _name:string; // no need to expose - engine uses name from MotionDefs, so use it!
     _frames_count:cardinal;
     _bone_tracks:array of TOgfMotionBoneTrack;
+
+    function _SwapBones(idx1:integer; idx2:integer):boolean;
   public
     // Common
     constructor Create;
@@ -607,6 +609,8 @@ type
   TOgfMotionTracksContainer = class
     _loaded:boolean;
     _motions:array of TOgfMotionTrack;
+
+    function _CopyDataIntoNewTrack(track:TOgfMotionTrack; new_name:string):integer;
   public
     // Common
     constructor Create;
@@ -629,6 +633,7 @@ type
      _loaded:boolean;
      _name:string;
      _idx_in_track:cardinal;
+     procedure _SetIdxInTracks(new_idx_in_tracks:integer);
    public
      // Common
      constructor Create; overload;
@@ -641,7 +646,6 @@ type
 
      function GetName():string;
      function GetIdxInTracks():integer;
-     procedure SetIdxInTracks(new_idx_in_tracks:integer);
    end;
 
    { TOgfMotionBonePart }
@@ -738,6 +742,8 @@ type
     _bone_parts:array of TOgfMotionBonePart;
     _defs: array of TOgfMotionDef;
 
+
+    function _SwapTracksBonesIdx(idx1:integer; idx2:integer):boolean;
   public
     // Common
     constructor Create;
@@ -761,6 +767,7 @@ type
     function FindBoneIdxsByName(name:string; var bone_part_idx:integer; var local_bone_idx_in_part:integer):boolean;
     function AddBone(name:string; idx_in_tracks:integer; bone_part_idx:integer):boolean;
     function GetBone(bone_part_idx:integer; local_bone_idx_in_part:integer):TOgfMotionBoneParams;
+    function GetBoneByIdxInTrack(idx_in_tracks:integer):TOgfMotionBoneParams;
     function RemoveBone(bone_part_idx:integer; local_bone_idx_in_part:integer):boolean;
   end;
 
@@ -802,6 +809,8 @@ type
 
 
     function _GetMotionTrackByName(name:string):TOgfMotionTrack;
+    function _SwapIdxInTracksForBones(idx1:integer; idx2:integer):boolean;
+    function _GenerateAnimationName(target_name:string):string;
   public
     // Common
     constructor Create;
@@ -829,6 +838,8 @@ type
     function DuplicateAnimation(old_name:string; new_name:string):boolean;
     function MergeAnimations(name_of_new:string; name_of_first:string; name_of_second:string):boolean;
     function DeleteAnimation(name:string):boolean;
+
+    function MergeContainers(source_to_merge:TOgfAnimationsParser):boolean;
   end;
 
  { TOgfParser }
@@ -1383,7 +1394,7 @@ begin
   result:=_idx_in_track;
 end;
 
-procedure TOgfMotionBoneParams.SetIdxInTracks(new_idx_in_tracks: integer);
+procedure TOgfMotionBoneParams._SetIdxInTracks(new_idx_in_tracks: integer);
 begin
   _idx_in_track:=new_idx_in_tracks;
 end;
@@ -1564,6 +1575,25 @@ end;
 
 
 { TOgfMotionParamsContainer }
+
+function TOgfMotionParamsContainer._SwapTracksBonesIdx(idx1: integer; idx2: integer): boolean;
+var
+  bone1, bone2:TOgfMotionBoneParams;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  bone1:=GetBoneByIdxInTrack(idx1);
+  if (bone1 = nil) or (bone1.GetIdxInTracks()<>idx1) then exit;
+
+  bone2:=GetBoneByIdxInTrack(idx2);
+  if (bone2 = nil) or (bone1.GetIdxInTracks()<>idx2) then exit;
+
+  bone2._SetIdxInTracks(idx1);
+  bone1._SetIdxInTracks(idx2);
+
+  result:=true;
+end;
 
 constructor TOgfMotionParamsContainer.Create;
 begin
@@ -1851,6 +1881,28 @@ begin
   if (bone_part_idx >= 0) and (bone_part_idx < length(_bone_parts)) then begin
     result:=_bone_parts[bone_part_idx].GetBoneByLocalIndex(local_bone_idx_in_part);
   end;
+end;
+
+function TOgfMotionParamsContainer.GetBoneByIdxInTrack(idx_in_tracks: integer): TOgfMotionBoneParams;
+var
+  i,j:integer;
+  part:TOgfMotionBonePart;
+  bone:TOgfMotionBoneParams;
+begin
+  result:=nil;
+  if not Loaded() then exit;
+
+  for i:=0 to GetBonePartsCount()-1 do begin
+    part:=GetBonePart(i);
+    for j:=0 to part.GetBonesCount()-1 do begin
+      bone:=part.GetBoneByLocalIndex(j);
+      if (bone<>nil) and (bone.GetIdxInTracks() = idx_in_tracks) then begin
+        result:=bone;
+        exit;
+      end;
+    end;
+  end;
+
 end;
 
 function TOgfMotionParamsContainer.RemoveBone(bone_part_idx: integer; local_bone_idx_in_part: integer): boolean;
@@ -2592,6 +2644,22 @@ end;
 
 { TOgfMotionTrack }
 
+function TOgfMotionTrack._SwapBones(idx1: integer; idx2: integer): boolean;
+var
+  tmp:TOgfMotionBoneTrack;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if (idx1<0) or (idx1>=length(_bone_tracks)) then exit;
+  if (idx2<0) or (idx2>=length(_bone_tracks)) then exit;
+
+  tmp:=_bone_tracks[idx1];
+  _bone_tracks[idx1]:=_bone_tracks[idx2];
+  _bone_tracks[idx2]:=tmp;
+
+  result:=true;
+end;
+
 constructor TOgfMotionTrack.Create;
 begin
   setlength(_bone_tracks, 0);
@@ -2920,24 +2988,42 @@ begin
   end;
 end;
 
+function TOgfMotionTracksContainer._CopyDataIntoNewTrack(track: TOgfMotionTrack; new_name: string): integer;
+var
+  i:integer;
+  new_track:TOgfMotionTrack;
+begin
+  result:=-1;
+  if not Loaded() then exit();
+
+  new_track:=TOgfMotionTrack.Create();
+
+  try
+    if new_track.Copy(track) then begin
+      new_track.SetName(new_name);
+
+      i:=length(_motions);
+      setlength(_motions, i+1);
+      _motions[i]:=new_track;
+
+      result:=i;
+    end;
+  finally
+    if result < 0 then begin
+      FreeAndNil(new_track);
+    end;
+  end;
+end;
+
 function TOgfMotionTracksContainer.DuplicateTrack(idx: integer; new_name: string): integer;
 var
   i:integer;
 begin
   result:=-1;
   if not Loaded() then exit();
-  if (idx >= 0) and (idx < length(_motions)) then begin
-    i:=length(_motions);
-    setlength(_motions, i+1);
-    _motions[i]:=TOgfMotionTrack.Create();
 
-    if _motions[i].Copy(_motions[idx]) then begin
-      _motions[i].SetName(new_name);
-      result:=i;
-    end else begin
-      _motions[i].Free;
-      setlength(_motions, i);
-    end;
+  if (idx >= 0) and (idx < length(_motions)) then begin
+    result:=_CopyDataIntoNewTrack(_motions[idx], new_name);
   end;
 end;
 
@@ -5415,7 +5501,6 @@ begin
   end;
 end;
 
-
 { TOgfAnimationsParser }
 
 function TOgfAnimationsParser._GetMotionTrackByName(name: string): TOgfMotionTrack;
@@ -5429,6 +5514,51 @@ begin
   if anim_id < 0 then exit;
 
   result:=_tracks.GetMotionTrack(anim_id);
+end;
+
+function TOgfAnimationsParser._SwapIdxInTracksForBones(idx1: integer; idx2: integer): boolean;
+var
+  i,j:integer;
+  track:TOgfMotionTrack;
+begin
+  result:=false;
+  if _params._SwapTracksBonesIdx(idx1, idx2) then begin
+    for i:=0 to _tracks.MotionTracksCount()-1 do begin
+      track:=_tracks.GetMotionTrack(i);
+      if track<>nil then begin
+        if not track._SwapBones(idx1, idx2) then begin
+          //revert
+          for j:=0 to i-1 do begin
+            track:=_tracks.GetMotionTrack(j);
+            if track<>nil then begin
+              track._SwapBones(idx1, idx2)
+            end;
+          end;
+          _params._SwapTracksBonesIdx(idx1, idx2);
+          exit;
+        end;
+      end;
+    end;
+  end;
+  result:=true;
+end;
+
+function TOgfAnimationsParser._GenerateAnimationName(target_name: string): string;
+var
+  i:integer;
+  new_name:string;
+begin
+  i:=1;
+  new_name:=target_name;
+  while (true) do begin
+    if GetAnimationIdByName(new_name) < 0 then begin
+      result:=new_name;
+      exit;
+    end;
+    new_name:=target_name+inttostr(i);
+    i:=i+1;
+  end;
+
 end;
 
 constructor TOgfAnimationsParser.Create;
@@ -5509,11 +5639,13 @@ end;
 
 procedure TOgfAnimationsParser.Sanitize(skeleton: TOgfSkeleton);
 begin
+  // check if GetBoneByIdxInTrack returns bone for every id
   // compare count of animations in tracks and defs, correct if needed (use lower)
   // check if there is no duplicate and missing motion ids if defs
   // compare animation names in tracks and defs, correct (using values from defs)
 
   // check if bone count & names corresponds with bones in the model
+  //check if bonepart ids in motiondefs are valid (may be broken to prevent omf loading, correct them to 0)
   // check bones indices in anims
 end;
 
@@ -5552,7 +5684,7 @@ begin
              if (part_bone <> nil) then begin
                cur_idx:=part_bone.GetIdxInTracks();
                if (cur_idx > removed_idx) then begin
-                 part_bone.SetIdxInTracks(cur_idx-1);
+                 part_bone._SetIdxInTracks(cur_idx-1);
                end;
              end;
            end;
@@ -5672,6 +5804,125 @@ begin
   result:=true;
   result:=_tracks.RemoveTrack(idx) and result;
   result:=_params.RemoveMotionDef(idx) and result;
+end;
+
+type
+  TAnimationTrackBonesRemapInfo = record
+    target_idx:integer;
+    source_idx:integer;
+    bone_name:string;
+  end;
+
+function TOgfAnimationsParser.MergeContainers(source_to_merge: TOgfAnimationsParser): boolean;
+var
+  ap2:TOgfAnimationsParser;
+  remap:array of TAnimationTrackBonesRemapInfo;
+  i, j:integer;
+  bone, bone2:TOgfMotionBoneParams;
+
+  part_idx, bone_idx, idx:integer;
+  need_remap:boolean;
+  need_free_ap2:boolean;
+  data:string;
+  def:TOgfMotionDefData;
+  track:TOgfMotionTrack;
+
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if not source_to_merge.Loaded() then exit;
+
+  // Let's check if second container has all bones with appropriate indices
+  setlength(remap, _params.GetTotalBonesCount());
+  need_remap:=false;
+  need_free_ap2:=false;
+  try
+    for i:=0 to length(remap)-1 do begin
+      bone:=_params.GetBoneByIdxInTrack(i);
+      if bone = nil then exit;
+      if bone.GetIdxInTracks()<>i then exit;
+      remap[i].bone_name:=bone.GetName();
+      remap[i].target_idx:=bone.GetIdxInTracks();
+
+      if not source_to_merge._params.FindBoneIdxsByName(remap[i].bone_name, part_idx, bone_idx) then exit;
+      bone2:=source_to_merge._params.GetBone(part_idx, bone_idx);
+      if bone2 = nil then exit;
+
+      remap[i].source_idx:=bone2.GetIdxInTracks();
+      if remap[i].source_idx < 0 then exit;
+      if not need_remap and (remap[i].source_idx <> remap[i].target_idx) then begin
+        need_remap:=true;
+      end;
+    end;
+
+    if need_remap then begin
+      // Create duplicate for remap
+      ap2:=TOgfAnimationsParser.Create();
+      need_free_ap2:=true;
+      data:=source_to_merge.Serialize();
+      if not ap2.Deserialize(data) then exit;
+
+      for i:=0 to ap2._params.GetTotalBonesCount()-1 do begin
+        bone:=_params.GetBoneByIdxInTrack(i);
+        if bone = nil then exit;
+        idx:=bone.GetIdxInTracks();
+        if idx < 0 then exit;
+
+        // find new index in table
+        for j:=0 to length(remap)-1 do begin
+          if remap[j].source_idx = idx then begin
+            if remap[j].source_idx<>remap[j].target_idx then begin
+              ap2._SwapIdxInTracksForBones(remap[j].source_idx, remap[j].target_idx);
+            end;
+            break;
+          end;
+        end;
+      end;
+
+      // Check if all correct now
+      for i:=0 to length(remap)-1 do begin
+        if not ap2._params.FindBoneIdxsByName(remap[i].bone_name, part_idx, bone_idx) then exit;
+        bone:=_params.GetBone(part_idx, bone_idx);
+        if bone = nil then exit;
+
+        if bone.GetIdxInTracks() <> remap[i].target_idx then exit;
+      end;
+    end else if self = source_to_merge then begin
+      ap2:=TOgfAnimationsParser.Create();
+      need_free_ap2:=true;
+      data:=source_to_merge.Serialize();
+      if not ap2.Deserialize(data) then exit;
+    end else begin
+      ap2:=source_to_merge;
+    end;
+
+    // Merge tracks and info
+    for i:=0 to ap2._params.MotionsDefsCount()-1 do begin
+      def:=ap2._params.GetMotionDefByIdx(i);
+      if def.motion_id<>$FFFF then begin
+        track:=ap2._tracks.GetMotionTrack(def.motion_id);
+
+        if track<>nil then begin
+           def.name:=_GenerateAnimationName(def.name);
+           idx:=_tracks._CopyDataIntoNewTrack(track, def.name);
+           if idx >= 0 then begin
+             def.motion_id:=idx;
+
+             if _params.AddMotionDef(def) < 0 then begin
+               _tracks.RemoveTrack(idx);
+             end;
+           end;
+        end;
+      end;
+    end;
+
+    result:=true;
+  finally
+    setlength(remap, 0);
+    if need_free_ap2 then begin
+      FreeAndNil(ap2);
+    end;
+  end;
 end;
 
 function TOgfAnimationsParser.ChangeAnimationFramesCount(anim_name: string; new_frames_count: integer): boolean;
