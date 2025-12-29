@@ -5638,14 +5638,77 @@ begin
 end;
 
 procedure TOgfAnimationsParser.Sanitize(skeleton: TOgfSkeleton);
+var
+ i, j, n:integer;
+ is_broken:boolean;
+ used_motion_ids:array of word;
+ def:TOgfMotionDefData;
 begin
-  // check if GetBoneByIdxInTrack returns bone for every id
-  // compare count of animations in tracks and defs, correct if needed (use lower)
-  // check if there is no duplicate and missing motion ids if defs
-  // compare animation names in tracks and defs, correct (using values from defs)
+  // count of animations in tracks and defs should be equal
+  if _params.MotionsDefsCount() > _tracks.MotionTracksCount() then begin
+    // remove extra defs
+    for i:=_params.MotionsDefsCount()-1  downto _tracks.MotionTracksCount() do begin
+      _params.RemoveMotionDef(i);
+    end;
+  end else if _params.MotionsDefsCount() < _tracks.MotionTracksCount() then begin
+    // remove extra tracks
+    for i:=_tracks.MotionTracksCount()-1  downto _params.MotionsDefsCount() do begin
+      _tracks.RemoveTrack(i);
+    end;
+  end;
 
+  // Check if motion_ids in defs matches its indices
+  setlength(used_motion_ids, _params.MotionsDefsCount());
+  for i:=0 to length(used_motion_ids)-1 do begin
+    used_motion_ids[i]:=$FFFF;
+  end;
+
+  is_broken:=false;
+  for i:=0 to _params.MotionsDefsCount()-1 do begin
+    def:=_params.GetMotionDefByIdx(i);
+    if length(def.name) > 0 then begin
+      if def.motion_id >= _params.MotionsDefsCount() then begin
+        is_broken:=true;
+      end else begin
+        for j:=0 to i-1 do begin
+          if used_motion_ids[j]=def.motion_id then begin
+            is_broken:=true;
+            break;
+          end;
+        end;
+        used_motion_ids[i]:=def.motion_id;
+      end;
+
+      if is_broken then begin
+        break;
+      end;
+    end;
+  end;
+  setlength(used_motion_ids, 0);
+
+  if is_broken then begin
+    // motion indices in defs are broken, try to restore
+    for i:=0 to _params.MotionsDefsCount()-1 do begin
+      def:=_params.GetMotionDefByIdx(i);
+      if length(def.name) > 0 then begin
+        def.motion_id:=i;
+        _params.UpdateMotionDefsForIdx(i, def);
+      end;
+    end;
+  end;
+
+  // compare animation names in tracks and defs, correct using values from defs
+  for i:=0 to _params.MotionsDefsCount()-1 do begin
+    def:=_params.GetMotionDefByIdx(i);
+    if length(def.name) > 0 then begin
+      _tracks.GetMotionTrack(def.motion_id).SetName(def.name);
+    end;
+  end;
+
+
+
+  // check if GetBoneByIdxInTrack returns bone for every id ?
   // check if bone count & names corresponds with bones in the model
-  //check if bonepart ids in motiondefs are valid (may be broken to prevent omf loading, correct them to 0)
   // check bones indices in anims
 end;
 
