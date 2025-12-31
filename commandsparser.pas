@@ -87,6 +87,7 @@ TModelSlot = class
   function _CmdChildRebind(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildBonestats(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildFilterBone(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _cmdChildSaveToFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdSkeletonUniformScale(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
@@ -122,7 +123,7 @@ public
 end;
 
 implementation
-uses sysutils, strutils, CommandsHelpers;
+uses sysutils, strutils, CommandsHelpers, ChunkedFileParser;
 
 const
   BUFFER_TYPE_CHILDMESH:integer=100;
@@ -896,6 +897,42 @@ begin
   end;
 end;
 
+function TModelSlot._cmdChildSaveToFile(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  path:string;
+  s:string;
+  idx:integer;
+  m:TChunkedMemory;
+begin
+  result:=false;
+
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    path:=args;
+    if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
+      path:=rightstr(path, length(path)-1);
+    end;
+    if (length(path)>0) and ((path[length(path)] = '"') or (path[length(path)] = '''')) then begin
+      path:=leftstr(path, length(path)-1);
+    end;
+
+    m:=TChunkedMemory.Create();
+    try
+      s:=_data.Meshes().Get(idx).Serialize();
+      if m.LoadFromString(s) then begin
+        result:=m.SaveToFile(args);
+      end;
+    finally
+      FreeAndNil(m);
+    end;
+
+    if not result then begin
+      result_description.SetDescription('Can''t save child to "'+path+'"');
+    end;
+  end;
+end;
+
 function TModelSlot._CmdPropIkdata(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
 var
   res:TCommandResult;
@@ -944,6 +981,7 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind, 'bind child to selected bone'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_cmdChildSaveToFile, 'save selected child to file (expects file name)'), CommandItemTypeCall);
 
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton, expects a number (scaling factor, negative means scaling with mirroring)'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('bone', @_IsModelHasSkeletonPrecondition, @_CmdPropBones, 'access array of bones'), CommandItemTypeProperty);
