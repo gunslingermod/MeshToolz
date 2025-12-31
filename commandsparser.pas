@@ -70,6 +70,7 @@ TModelSlot = class
   function _CmdSaveToFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdUnload(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdClipboardMode(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdPasteMeshFromTempBuf(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdRemoveCollapsedMeshes(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
@@ -122,6 +123,10 @@ end;
 
 implementation
 uses sysutils, strutils, CommandsHelpers;
+
+const
+  BUFFER_TYPE_CHILDMESH:integer=100;
+  BUFFER_TYPE_BONEIKDATA:integer=101;
 
 { TSlotFilteringCommands }
 
@@ -368,6 +373,26 @@ begin
   result:=true;
 end;
 
+function TModelSlot._CmdClipboardMode(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  i:=strtointdef(trim(args), -1);
+  if (i<0) or (i>1) then begin
+    result_description.SetDescription('0 or 1 expected');
+  end else begin
+    if i = 0 then begin
+      result_description.SetDescription('clipboard mode disabled, copy and paste operations use internal storage');
+      _container.GetTempBuffer().SwitchClipboardMode(false);
+    end else if i = 1 then begin
+      result_description.SetDescription('clipboard mode enabled, copy and paste operations use system clipboard');
+      _container.GetTempBuffer().SwitchClipboardMode(true);
+    end;
+    result:=true;
+  end;
+end;
+
 function TModelSlot._CmdPropMesh(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
 var
   res:TCommandResult;
@@ -416,7 +441,7 @@ var
 begin
   s:='';
   result:=false;
-  if _container.GetTempBuffer().GetString(s) then begin
+  if _container.GetTempBuffer().GetData(s, BUFFER_TYPE_CHILDMESH) then begin
     meshid:=_data.Meshes().Append(s);
     if meshid < 0 then begin
       result_description.SetDescription('unable to append data from temp buffer as a mesh');
@@ -427,7 +452,7 @@ begin
       result:=true;
     end;
   end else begin
-    result_description.SetDescription('can''t extract data from temp buffer, unsupported format?');
+    result_description.SetDescription('invalid data in the temp buffer?');
   end;
 end;
 
@@ -522,7 +547,7 @@ begin
     if length(s)=0 then begin
       result_description.SetDescription('failed to serialize ikdata for bone #'+inttostr(idx));
     end else begin
-      _container.GetTempBuffer().SetString(s);
+      _container.GetTempBuffer().SetData(s, BUFFER_TYPE_BONEIKDATA);
       result_description.SetDescription('data successfully copied to temp buffer');
       result:=true;
     end;
@@ -538,8 +563,8 @@ begin
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
 
-    if not _container.GetTempBuffer().GetString(s) then begin
-      result_description.SetDescription('failed to extract data from temp buffer');
+    if not _container.GetTempBuffer().GetData(s, BUFFER_TYPE_BONEIKDATA) then begin
+      result_description.SetDescription('invalid data in the temp buffer');
     end else if not _data.Skeleton().DeserializeBoneIKData(idx, s) then begin
       result_description.SetDescription('failed to paste serialized data');
     end else begin
@@ -651,7 +676,7 @@ begin
       result_description.SetDescription('cannot serialize mesh #'+inttostr(idx)+' ('+texture+' : '+shader+'), buffer cleared');
       _container.GetTempBuffer().Clear();
     end else begin
-      _container.GetTempBuffer().SetString(s);
+      _container.GetTempBuffer().SetData(s, BUFFER_TYPE_CHILDMESH);
       result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully saved to temp buffer');
       result:=true;
     end;
@@ -670,10 +695,10 @@ begin
     idx:=(userdata as TCommandIndexArg).Get();
 
     s:='';
-    if _container.GetTempBuffer().GetString(s) then begin
+    if _container.GetTempBuffer().GetData(s, BUFFER_TYPE_CHILDMESH) then begin
       meshid:=_data.Meshes().Insert(s, idx);
       if (meshid < 0) or (meshid<>idx) then begin
-        result_description.SetDescription('unable to insert data from temp buffer as a mesh');
+        result_description.SetDescription('can''t paste data as a mesh');
       end else begin
         shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
         texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
@@ -681,7 +706,7 @@ begin
         result:=true;
       end;
     end else begin
-      result_description.SetDescription('can''t extract data from temp buffer, unsupported format?');
+      result_description.SetDescription('invalid data in the temp buffer');
     end;
   end;
 end;
@@ -902,6 +927,7 @@ begin
   _commands_upperlevel.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_CmdSaveToFile, 'save data from selected model slot to OGF, expects file path'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('unload', @_IsModelLoadedPrecondition, @_CmdUnload, 'clear selected model slot'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdInfo, 'display selected slot info'), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('setclipboardmode', nil, @_CmdClipboardMode, 'switches temp buffer between internal storage and system clipboard (globally for all slots)'), CommandItemTypeCall);
 
   _commands_mesh.DoRegister(TCommandSetup.Create('child', @_IsModelLoadedPrecondition, @_CmdPropChild, 'array of sub-meshes with different textures'), CommandItemTypeProperty);
   _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf, 'paste child previously copied into temp buffer'), CommandItemTypeCall);
