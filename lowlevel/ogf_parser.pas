@@ -487,8 +487,8 @@ type
     function GetParentBoneName(id:integer):string;
     function GetOgfShape(boneid:integer):TOgfBoneShape;
 
-    function CopySerializedBoneIKData(id:integer):string;
-    function PasteSerializedBoneIKData(id:integer; s:string):boolean;
+    function SerializeBoneIKData(id:integer):string;
+    function DeserializeBoneIKData(id:integer; s:string):boolean;
 
     function UniformScale(k:single):boolean;
   end;
@@ -3302,7 +3302,7 @@ begin
   end;
 end;
 
-function TOgfSkeleton.CopySerializedBoneIKData(id: integer): string;
+function TOgfSkeleton.SerializeBoneIKData(id: integer): string;
 var
   ikd:TOgfBoneIKData;
 begin
@@ -3313,7 +3313,7 @@ begin
   result:=ikd.Serialize();
 end;
 
-function TOgfSkeleton.PasteSerializedBoneIKData(id: integer; s: string): boolean;
+function TOgfSkeleton.DeserializeBoneIKData(id: integer; s: string): boolean;
 var
   ikd:TOgfBoneIKData;
 begin

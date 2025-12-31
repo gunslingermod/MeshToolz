@@ -1,6 +1,6 @@
 program MeshCommander;
 
-uses CommandsParser, sysutils;
+uses CommandsParser, sysutils, commandsstorage, CommandsHelpers, TempBuffer;
 
 var
   g_models_slots:TSlotsContainer;
@@ -9,6 +9,7 @@ function ExecuteCmd(cmd:string):string;
 var
   s:TModelSlot;
   tmpstr:string;
+  cmdres:TCommandResult;
 begin
   result:='';
   tmpstr:='';
@@ -17,12 +18,21 @@ begin
     result:='!slot not recognized';
     exit;
   end;
-  result:=s.ExecuteCmd(tmpstr);
+  cmdres:=s.ExecuteCmd(tmpstr);
+  result:=cmdres.GetDescription();
+  if not cmdres.IsSuccess() then begin
+    result:='!'+result;
+  end else if cmdres.IsWarning() then begin
+    result:='#'+result;
+  end;
 end;
 
 function TryLoadOgf(filename:string):boolean;
+var
+  cmdres:TCommandResult;
 begin
-  result:= length(g_models_slots.GetModelSlotById(0)._CmdLoadFromFile(filename)) = 0;
+  cmdres:=g_models_slots.GetModelSlotById(0).ExecuteCmd(':loadfromfile('+filename+')');
+  result:=cmdres.IsSuccess();
 end;
 
 procedure ProcessScriptFile(filename:string);

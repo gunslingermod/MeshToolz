@@ -5,29 +5,41 @@ unit CommandsParser;
 interface
 
 uses
-  ogf_parser, basedefs;
+  ogf_parser, basedefs, tempbuffer, commandsstorage;
 
 type
 TSlotsContainer = class;
 
 TSlotId = integer;
 
-TTempBufferType = (TTempTypeNone, TTempTypeString);
-
-{ TTempBuffer }
-
-TTempBuffer = class
-  _cur_type:TTempBufferType;
-  _buffer_string:string;
+{ TSlotFilteringCommands }
+TModelSlot = class;
+TSlotFilteringCommands = class(TFilteringCommands)
+  _slot:TModelSlot;
 public
-  constructor Create;
-  destructor Destroy; override;
-
-  procedure Clear();
-  function GetCurrentType():TTempBufferType;
-  function GetString(var outstr:string):boolean;
-  procedure SetString(s:string);
+  constructor Create(slot:TModelSlot);
 end;
+
+{ TChildrenCommands }
+
+TChildrenCommands = class(TSlotFilteringCommands)
+public
+  constructor Create(slot:TModelSlot);
+  function GetFilteringItemTypeName(item_id:integer):string; override;
+  function GetFilteringItemsCount():integer; override;
+  function CheckFiltersForItem(item_id:integer):boolean; override;
+end;
+
+{ TBonesCommands }
+
+TBonesCommands = class(TSlotFilteringCommands)
+public
+  constructor Create(slot:TModelSlot);
+  function GetFilteringItemTypeName(item_id:integer):string; override;
+  function GetFilteringItemsCount():integer; override;
+  function CheckFiltersForItem(item_id:integer):boolean; override;
+end;
+
 
 { TModelSlot }
 
@@ -36,47 +48,63 @@ TModelSlot = class
   _id:TSlotId;
   _container:TSlotsContainer;
 
-  function _CmdInfo():string;
-  function _CmdLoadFromFile(path:string):string;
-  function _CmdSaveToFile(path:string):string;
-  function _CmdUnload():string;
-  function _CmdPasteMeshFromTempBuf():string;
+  _commands_upperlevel:TCommandsStorage;
+  _commands_mesh:TCommandsStorage;
+  _commands_skeleton:TCommandsStorage;
 
-  function _CmdRemoveCollapsedMeshes():string;
-  function _CmdSkeletonUniformScale(cmd:string):string;
+  _commands_bones:TBonesCommands;
+  _commands_ikdata:TBonesCommands;
 
-  function _CmdPropChildMesh(cmd:string):string;
-  function _CmdPropSkeleton(cmd:string):string;
 
-  function _ProcessMeshesCommands(child_id:integer; cmd:string):string;
-  function _CmdMeshInfo(child_id:integer):string;
-  function _CmdMeshSetTexture(child_id:integer; args:string):string;
-  function _CmdMeshSetShader(child_id:integer; args:string):string;
-  function _CmdMeshCopy(child_id:integer):string;
-  function _CmdMeshInsert(child_id:integer):string;
-  function _CmdMeshRemove(child_id:integer):string;
-  function _CmdMeshMove(child_id:integer; cmd:string):string;
-  function _CmdMeshScale(child_id:integer; cmd:string):string;
-  function _CmdMeshRebind(child_id:integer; cmd:string):string;
-  function _CmdMeshBonestats(child_id:integer):string;
-  function _CmdMeshFilterBone(child_id:integer; cmd:string):string;
+  _commands_children:TChildrenCommands;
 
-  function _ProcessBonesCommands(bone_id:integer; cmd:string):string;
-  function _CmdBoneInfo(bone_id:integer):string;
 
-  function _ProcessIKDataCommands(bone_id:integer; cmd:string):string;
-  function _CmdIKDataInfo(bone_id:integer):string;
-  function _CmdIKDataCopy(bone_id:integer):string;
-  function _CmdIKDataPaste(bone_id:integer):string;
+  function _IsModelLoadedPrecondition(args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _IsModelNotLoadedPrecondition(args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _IsModelHasSkeletonPrecondition(args:string; result_description:TCommandResult; userdata:TObject):boolean;
 
+  function ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
+  function GetBoneNameById(boneid: TBoneId): string;
+
+  function _CmdLoadFromFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSaveToFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdUnload(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+
+  function _CmdPasteMeshFromTempBuf(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdRemoveCollapsedMeshes(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+
+
+  function _CmdChildInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildSetTexture(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildSetShader(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRemove(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildCopy(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildPasteData(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildMove(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildScale(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRebind(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildBonestats(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildFilterBone(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+
+  function _CmdSkeletonUniformScale(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKDataInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKDataCopy(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKDataPaste(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+
+  function _CmdPropMesh(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdPropChild(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdPropSkeleton(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdPropBones(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdPropIkdata(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
   function Id():TSlotId;
+  function Data():TOgfParser;
 
-  function ExecuteCmd(cmd:string):string;
-  function ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
-  function GetBoneNameById(boneid:TBoneId):string;
+  function ExecuteCmd(cmd:string):TCommandResult;
 end;
 
 { TSlotsContainer }
@@ -93,787 +121,118 @@ public
 end;
 
 implementation
-uses sysutils, strutils;
+uses sysutils, strutils, CommandsHelpers;
 
-const
-  OPCODE_CALL:char=':';
-  OPCODE_INDEX:char='.';
+{ TSlotFilteringCommands }
 
-  ARGUMENTS_SEPARATOR:char=',';
-  ARGUMENT_INVERSE:char='!';
-
-function IsNumberChar(chr:AnsiChar):boolean;
+constructor TSlotFilteringCommands.Create(slot: TModelSlot);
 begin
-  result:= (chr >= '0') and (chr <= '9');
+  inherited Create(true);
+  _slot:=slot;
 end;
 
-function IsAlphabeticChar(chr:AnsiChar):boolean;
+{ TChildrenCommands }
+
+constructor TChildrenCommands.Create(slot: TModelSlot);
 begin
-  result:= ((chr >= 'a') and (chr <= 'z')) or ((chr >= 'A') and (chr <= 'Z'));
+  inherited;
+
+  RegisterFilter('texture');
+  RegisterFilter('shader');
+
+  //TODO: Filter by ID - exact and in range
+  // RegisterFilter('id');
 end;
 
-function ExtractAlphabeticString(var inoutstr:string):string;
+function TChildrenCommands.GetFilteringItemTypeName(item_id: integer): string;
 begin
-  inoutstr:=TrimLeft(inoutstr);
-  result:='';
-  while (length(inoutstr) > 0) and (IsAlphabeticChar(inoutstr[1])) do begin
-    result:=result+inoutstr[1];
-    inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
-  end;
+  result:='child';
 end;
 
-function ExtractProcArgs(instr:string; var args:string):boolean;
+function TChildrenCommands.GetFilteringItemsCount(): integer;
 begin
-  result:=false;
-  instr:=trim(instr);
-  if (length(instr)<2) or (instr[1]<>'(') or (instr[length(instr)]<>')') then exit;
+  result:=0;
 
-  args:=midstr(instr, 2, length(instr)-2);
-  result:=true;
-end;
-
-function ExtractNumericString(var inoutstr:string; allow_negative:boolean):string;
-begin
-  inoutstr:=TrimLeft(inoutstr);
-  result:='';
-
-  if allow_negative and (length(inoutstr) > 0) and (inoutstr[1]='-') then begin
-    result:=result+'-';
-    inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
-  end;
-
-  while (length(inoutstr) > 0) and (IsNumberChar(inoutstr[1])) do begin
-    result:=result+inoutstr[1];
-    inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
-  end;
-end;
-
-function ExtractFloatFromString(var inoutstr:string; var fout:single):boolean;
-var
-  separator_found:boolean;
-  tmpstr, numstr:string;
-  sign:single;
-const
-  SEPARATOR:char='.';
-begin
-  result:=false;
-  tmpstr:=TrimLeft(inoutstr);
-  if length(tmpstr) = 0 then exit;
-
-  if tmpstr[1]='-' then begin
-    sign:=-1;
-    tmpstr:=TrimLeft(rightstr(tmpstr, length(tmpstr)-1));
-    if length(tmpstr) = 0 then exit;
-  end else begin
-    sign:=1;
-  end;
-  if length(tmpstr) = 0 then exit;
-
-  separator_found:=false;
-  numstr:='';
-  while (length(tmpstr) > 0) and (IsNumberChar(tmpstr[1]) or ((tmpstr[1] = SEPARATOR) and (separator_found = false)) ) do begin
-    if (tmpstr[1] = SEPARATOR) then begin
-      separator_found:=true;
-    end;
-    numstr:=numstr+tmpstr[1];
-    tmpstr:=rightstr(tmpstr, length(tmpstr)-1);
-  end;
-
-  try
-    fout:=sign*strtofloat(numstr);
-    inoutstr:=tmpstr;
-    result:=true;
-  except
-    result:=false;
-  end;
-end;
-
-function ExtractABNString(var inoutstr:string):string;
-begin
-  inoutstr:=TrimLeft(inoutstr);
-  result:='';
-  while (length(inoutstr) > 0) and (IsAlphabeticChar(inoutstr[1]) or IsNumberChar(inoutstr[1]) or (inoutstr[1]='_')) do begin
-    result:=result+inoutstr[1];
-    inoutstr:=rightstr(inoutstr, length(inoutstr)-1);
-  end;
-end;
-
-function SplitString(instr:string; var out_left:string; var out_right:string; sep:char):boolean;
-var
-  i:integer;
-begin
-  result:=false;
-  i:=Pos(sep, instr);
-  if i > 0 then begin
-    result:=true;
-    out_left:=leftstr(instr, i-1);
-    out_right:=rightstr(instr, length(instr)-i);
-  end;
-end;
-
-function ExtractFVector3(var inoutstr:string; var v:FVector3):boolean;
-var
-  tmpstr:string;
-  tmpv:FVector3;
-begin
-  result:=false;
-  set_zero(tmpv{%H-});
-  tmpstr:=trimleft(inoutstr);
-
-  if not ExtractFloatFromString(tmpstr, tmpv.x) then exit;
-  tmpstr:=trimleft(tmpstr);
-  if (length(tmpstr)=0) or (tmpstr[1]<>ARGUMENTS_SEPARATOR) then exit;
-  tmpstr:=rightstr(tmpstr, length(tmpstr)-1);
-
-  if not ExtractFloatFromString(tmpstr, tmpv.y) then exit;
-  tmpstr:=trimleft(tmpstr);
-  if (length(tmpstr)=0) or (tmpstr[1]<>ARGUMENTS_SEPARATOR) then exit;
-  tmpstr:=rightstr(tmpstr, length(tmpstr)-1);
-
-  if not ExtractFloatFromString(tmpstr, tmpv.z) then exit;
-
-  inoutstr:=tmpstr;
-  v:=tmpv;
-  result:=true;
-end;
-
-type
-TIndexFilter = packed record
-  name:string;
-  value:string;
-  inverse:boolean;
-end;
-
-TFilterMode = (FILTER_MODE_EXACT, FILTER_MODE_BEGINWITH);
-
-TIndexFilters = array of TIndexFilter;
-
-procedure InitFilters(var f:TIndexFilters);
-begin
-  setlength(f, 0);
-end;
-
-procedure PushFilter(var f:TIndexFilters; name:string; defval:string='');
-var
-  l:integer;
-begin
-  l:=length(f);
-  setlength(f, l+1);
-  f[l].name:=name;
-  f[l].value:=defval;
-end;
-
-function IsMatchFilter(str:string; filter:TIndexFilter; mode:TFilterMode):boolean;
-begin
-  result:=false;
-  case mode of
-    FILTER_MODE_EXACT: result:=(length(filter.value)=0) or (str = filter.value);
-    FILTER_MODE_BEGINWITH: result:=(length(filter.value)=0) or (leftstr(str, length(filter.value)) = filter.value);
-  end;
-  if filter.inverse then result:=not result;
-end;
-
-procedure ClearFilters(var f:TIndexFilters);
-begin
-  setlength(f, 0);
-end;
-
-function ExtractIndexFilter(var inoutstr:string; var filters:TIndexFilters; var filters_count:integer):boolean;
-var
-  filters_str:string;
-  rest_part:string;
-  filter_name, filter_value:string;
-  tmp, i:integer;
-  inverse:boolean;
-begin
-  result:=false;
-  inoutstr:=trim(inoutstr);
-  filters_str:='';
-  rest_part:='';
-  if (length(inoutstr) < 2) or (inoutstr[1]<>'[') or not SplitString(inoutstr, filters_str, rest_part, ']') then exit;
-  result:=true;
-  inoutstr:=rest_part;
-  filters_count:=0;
-  filters_str:=trimleft(rightstr(filters_str, length(filters_str)-1));
-  while (filters_count>=0) and (length(filters_str)>0) do begin
-    tmp:=filters_count;
-    filters_count:=-1;
-
-    // Extract filter name
-    filters_str:=TrimLeft(filters_str);
-    filter_name:=ExtractABNString(filters_str);
-    filters_str:=TrimLeft(filters_str);
-    if (length(filter_name) = 0) or (length(filters_str)=0) or ((filters_str[1]<>':') and (filters_str[1]<>ARGUMENT_INVERSE)) then break;
-
-    inverse:=(filters_str[1]=ARGUMENT_INVERSE);
-
-    // Get rid of ':'
-    filters_str:=trimleft(rightstr(filters_str, length(filters_str)-1));
-    if (length(filters_str) = 0) then break;
-
-    // Extract filter value
-    filter_value:='';
-    if not SplitString(filters_str, filter_value, rest_part, ',') then begin
-      filter_value:=filters_str;
-      filters_str:='';
-    end else begin
-      filters_str:=trimleft(rest_part);
-    end;
-
-    // Find filter by extracted name and set extracted value to filter
-    for i:=0 to length(filters)-1 do begin
-      if filters[i].name = filter_name then begin
-        filters[i].value:=filter_value;
-        filters[i].inverse:=inverse;
-        filter_name:='';
-        filter_value:='';
-      end;
-    end;
-
-    if length(filter_name) = 0 then begin
-      // All seems to be OK
-      filters_count:=tmp+1;
-    end else begin
-      // Filter not found, exiting
-      filters_count:=-1;
-      break;
+  if _slot.Data()<> nil then begin
+    if _slot.Data().Meshes()<>nil then begin
+      result:=_slot.Data().Meshes().Count();
     end;
   end;
 end;
 
-{ TTempBuffer }
-
-constructor TTempBuffer.Create;
+function TChildrenCommands.CheckFiltersForItem(item_id: integer): boolean;
 begin
-  Clear();
+  result:= IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().texture, _filters[0], FILTER_MODE_EXACT)
+       and IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().shader,  _filters[1], FILTER_MODE_EXACT)
 end;
 
-destructor TTempBuffer.Destroy;
+{ TBonesCommands }
+
+constructor TBonesCommands.Create(slot: TModelSlot);
 begin
-  inherited Destroy;
+  inherited;
+
+  RegisterFilter('bonename');
+  RegisterFilter('id');
 end;
 
-procedure TTempBuffer.Clear();
+function TBonesCommands.GetFilteringItemTypeName(item_id: integer): string;
 begin
-  _cur_type:=TTempTypeNone;
+  result:='bone';
 end;
 
-function TTempBuffer.GetCurrentType(): TTempBufferType;
+function TBonesCommands.GetFilteringItemsCount(): integer;
 begin
-  result:=_cur_type;
-end;
-
-function TTempBuffer.GetString(var outstr: string): boolean;
-begin
-  if _cur_type = TTempTypeString then begin
-    result:=true;
-    outstr:=_buffer_string;
-  end else begin
-    result:=false;
+  result:=0;
+  if _slot.Data()<>nil then begin
+    if _slot.Data().Skeleton()<>nil then begin
+      result:=_slot.Data().Skeleton().GetBonesCount();
+    end;
   end;
 end;
 
-procedure TTempBuffer.SetString(s: string);
+function TBonesCommands.CheckFiltersForItem(item_id: integer): boolean;
 begin
-  _cur_type:=TTempTypeString;
-  _buffer_string:=s;
+  result:=IsMatchFilter(_slot.Data().Skeleton().GetBoneName(item_id), _filters[0], FILTER_MODE_EXACT)
+       and IsMatchFilter(inttostr(item_id), _filters[1], FILTER_MODE_EXACT)
 end;
+
 
 { TModelSlot }
 
-/////////////////////////////////// COMMON /////////////////////////////////////
 
-function TModelSlot._CmdInfo(): string;
+//////////////////////////////////////////////////////// Preconditions ////////////////////////////////////////////////////
+function TModelSlot._IsModelLoadedPrecondition(args: string; result_description: TCommandResult; userdata: TObject): boolean;
 begin
-  if not _data.Loaded then begin
-    result:='slot doesn''t contain loaded data';
-  end else begin
-    result:='slot is in use';
+  result:=true;
+  if not _data.Loaded() then begin
+    result_description.SetDescription('Slot is empty. Load data first');
+    result:=false;
   end;
 end;
 
-function TModelSlot._CmdLoadFromFile(path: string): string;
+function TModelSlot._IsModelNotLoadedPrecondition(args: string; result_description: TCommandResult; userdata: TObject): boolean;
 begin
+  result:=true;
   if _data.Loaded() then begin
-    result:='!Slot is not empty. Unload data first';
-    exit;
-  end;
-
-  if _data.LoadFromFile(path) then begin
-    result:='';
-  end else begin
-    result:='!Can''t load model from file "'+path+'"';
+    result_description.SetDescription('Slot is not empty. Unload data first');
+    result:=false;
   end;
 end;
 
-function TModelSlot._CmdSaveToFile(path: string): string;
+function TModelSlot._IsModelHasSkeletonPrecondition(args: string; result_description: TCommandResult; userdata: TObject): boolean;
 begin
-  result:='';
-
+  result:=true;
   if not _data.Loaded() then begin
-    result:='!Slot is empty';
-    exit;
-  end;
-
-  if not _data.SaveToFile(path) then begin
-    result:='!Can''t save model to "'+path+'"';
-  end;
-end;
-
-function TModelSlot._CmdUnload(): string;
-begin
-  if not _data.Loaded() then begin
-    result:='!Slot is empty';
-    exit;
-  end;
-
-  _data.Reset;
-  result:='';
-end;
-
-/////////////////////////////////// MESHES /////////////////////////////////////
-
-function TModelSlot._ProcessMeshesCommands(child_id: integer; cmd: string): string;
-var
-  opcode:char;
-  args:string;
-  proccode:string;
-const
-  PROC_INFO:string='info';
-  PROC_SETTEXTURE:string='settexture';
-  PROC_SETSHADER:string='setshader';
-  PROC_REMOVE:string='remove';
-  PROC_COPY:string='copy';
-  PROC_PASTE:string='paste';
-  PROC_MOVE:string='move';
-  PROC_SCALE:string='scale'; //mirror if negative
-  PROC_REBIND:string='rebind';
-  PROC_BONESTATS:string='bonestats';
-  PROC_FILTERBONE:string='filterbone';
-  PROC_CHANGELINK:string='changelinktype';
-  PROC_GETOPTIMALLINKTYPE:string='getoptimallinktype';
-begin
-  if (not _data.Loaded()) or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if abs(child_id) >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    if child_id < 0 then begin
-      child_id:=_data.Meshes().Count() - child_id;
-    end;
-
-    if length(trim(cmd))=0 then begin
-      result:=_CmdMeshInfo(child_id);
-    end else begin
-      args:='';
-      opcode:=cmd[1];
-      cmd:=rightstr(cmd, length(cmd)-1);
-
-      if opcode = OPCODE_CALL then begin
-        proccode:=ExtractAlphabeticString(cmd);
-        if not ExtractProcArgs(cmd, args) then begin
-          result:='!can''t parse arguments to call procedure "'+proccode+'"';
-        end else if lowercase(proccode)=PROC_INFO then begin
-          result:=_CmdMeshInfo(child_id);
-        end else if lowercase(proccode)=PROC_SETTEXTURE then begin
-          result:=_CmdMeshSetTexture(child_id, args);
-        end else if lowercase(proccode)=PROC_SETSHADER then begin
-          result:=_CmdMeshSetShader(child_id, args);
-        end else if lowercase(proccode)=PROC_REMOVE then begin
-          result:=_CmdMeshRemove(child_id);
-        end else if lowercase(proccode)=PROC_COPY then begin
-          result:=_CmdMeshCopy(child_id);
-        end else if lowercase(proccode)=PROC_PASTE then begin
-          result:=_CmdMeshInsert(child_id);
-        end else if lowercase(proccode)=PROC_MOVE then begin
-          result:=_CmdMeshMove(child_id, args);
-        end else if lowercase(proccode)=PROC_SCALE then begin
-          result:=_CmdMeshScale(child_id, args);
-        end else if lowercase(proccode)=PROC_REBIND then begin
-          result:=_CmdMeshRebind(child_id, args);
-        end else if lowercase(proccode)=PROC_BONESTATS then begin
-          result:=_CmdMeshBonestats(child_id);
-        end else if lowercase(proccode)=PROC_FILTERBONE then begin
-          result:=_CmdMeshFilterBone(child_id, args);
-        end else begin
-          result:='!unknown procedure "'+proccode+'"';
-        end;
-      end else begin
-        result:='!unsupported opcode "'+opcode+'"';
-      end;
-    end;
+    result_description.SetDescription('Slot is empty. Load data first');
+    result:=false;
+  end else if _data.Skeleton()=nil then begin
+    result_description.SetDescription('Loaded model has no skeleton');
+    result:=false;
   end;
 end;
 
-function TModelSlot._CmdMeshInfo(child_id: integer): string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    result:='Info for child mesh #'+inttostr(child_id)+':'+chr($0d)+chr($0a);
-    result:=result+'- Texture: '+_data.Meshes.Get(child_id).GetTextureData().texture+chr($0d)+chr($0a);
-    result:=result+'- Shader: '+_data.Meshes.Get(child_id).GetTextureData().shader+chr($0d)+chr($0a);
-    result:=result+'- Vertices count:'+inttostr(_data.Meshes.Get(child_id).GetVerticesCount())+chr($0d)+chr($0a);
-    result:=result+'- Tris count:'+inttostr(_data.Meshes.Get(child_id).GetTrisCountTotal())+chr($0d)+chr($0a);
-    result:=result+'- Current link type:'+inttostr(_data.Meshes.Get(child_id).GetCurrentLinkType())+chr($0d)+chr($0a);
-  end;
-end;
-
-function TModelSlot._CmdMeshSetTexture(child_id: integer; args: string): string;
-var
-  texdata:TOgfTextureData;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-    texdata:=_data.Meshes().Get(child_id).GetTextureData();
-    texdata.texture:=trim(args);
-    if _data.Meshes().Get(child_id).SetTextureData(texdata) then begin
-      result:='texture successfully updated for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-    end else begin
-      result:='!can''t update texture for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshSetShader(child_id: integer; args: string): string;
-var
-  texdata:TOgfTextureData;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-    texdata:=_data.Meshes().Get(child_id).GetTextureData();
-    texdata.shader:=trim(args);
-    if _data.Meshes().Get(child_id).SetTextureData(texdata) then begin
-      result:='shader successfully updated for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-    end else begin
-      result:='!can''t update shader for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshCopy(child_id: integer): string;
-var
-  shader, texture:string;
-  s:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-    s:=_data.Meshes().Get(child_id).Serialize();
-    if length(s) = 0 then begin
-      result:='!cannot serialize mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+'), buffer cleared';
-      _container.GetTempBuffer().Clear();
-    end else begin
-      _container.GetTempBuffer().SetString(s);
-      result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') successfully saved to temp buffer';
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshInsert(child_id: integer): string;
-var
-  s:string;
-  meshid:integer;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count()+1 then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    s:='';
-    if _container.GetTempBuffer().GetString(s) then begin
-      meshid:=_data.Meshes().Insert(s, child_id);
-      if (meshid < 0) or (meshid<>child_id) then begin
-        result:='!unable to insert data from temp buffer as a mesh';
-      end else begin
-        shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
-        texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
-        result:='mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully inserted';
-      end;
-    end else begin
-      result:='!can''t extract data from temp buffer, unsupported format?';
-    end;
-  end;
-end;
-
-function TModelSlot._CmdPasteMeshFromTempBuf(): string;
-var
-  s:string;
-  meshid:integer;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else begin
-    s:='';
-    if _container.GetTempBuffer().GetString(s) then begin
-      meshid:=_data.Meshes().Append(s);
-      if meshid < 0 then begin
-        result:='!unable to append data from temp buffer as a mesh';
-      end else begin
-        shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
-        texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
-        result:='mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully appended';
-      end;
-    end else begin
-      result:='!can''t extract data from temp buffer, unsupported format?';
-    end;
-  end;
-end;
-
-function TModelSlot._CmdRemoveCollapsedMeshes(): string;
-var
-  i:integer;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else begin
-    result:='';
-    for i:=_data.Meshes().Count()-1 downto 0 do begin
-      shader:=_data.Meshes().Get(i).GetTextureData().shader;
-      texture:=_data.Meshes().Get(i).GetTextureData().texture;
-
-      if _data.Meshes().Get(i).GetVerticesCount() = 0 then begin;
-        if not _data.Meshes().Remove(i) then begin
-          result:='!'+result+'Failed to remove mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
-        end else begin
-          result:=result+'Removed collapses mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
-        end;
-      end;
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshRemove(child_id: integer): string;
-var
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-    texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-    if not _data.Meshes().Remove(child_id) then begin
-      result:='!remove operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-    end else begin
-      result:='successfully removed mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshMove(child_id: integer; cmd: string): string;
-var
-  v:FVector3;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    set_zero(v{%H-});
-    if not ExtractFVector3(cmd, v) then begin
-      result:='!cannot extract vector argument';
-    end else begin
-      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-      cmd:=TrimLeft(cmd);
-      if length(cmd)>0 then begin
-        result:='!invalid arguments count, expected 3 floats';
-      end else begin
-        if not _data.Meshes().Get(child_id).Move(v) then begin
-          result:='!move operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-        end else begin
-          result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') successfully moved';
-        end;
-      end;
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshScale(child_id: integer; cmd: string): string;
-var
-  v:FVector3;
-  shader, texture:string;
-begin
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    set_zero(v{%H-});
-    if not ExtractFVector3(cmd, v) then begin
-      result:='!cannot extract vector argument';
-    end else begin
-      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-      cmd:=TrimLeft(cmd);
-      if length(cmd)>0 then begin
-        result:='!invalid arguments count, expected 3 floats';
-      end else begin
-        if not _data.Meshes().Get(child_id).Scale(v) then begin
-          result:='!scale operation failed for mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+')';
-        end else begin
-          result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') successfully scaled';
-        end;
-      end;
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshRebind(child_id: integer; cmd: string): string;
-var
-  dest_boneid,  src_boneid:TBoneID;
-  shader, texture:string;
-  flag:boolean;
-  vcnt:integer;
-begin
-  result:='';
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    src_boneid:=INVALID_BONE_ID;
-    dest_boneid:=INVALID_BONE_ID;
-    if not ExtractBoneIdFromString(cmd, dest_boneid) then begin
-      result:='!can''t extract target bone id';
-    end else begin
-      cmd:=TrimLeft(cmd);
-      if (length(cmd) > 0) and (cmd[1]=ARGUMENTS_SEPARATOR) then begin
-        cmd:=TrimLeft(rightstr(cmd, length(cmd)-1));
-        flag:=ExtractBoneIdFromString(cmd, src_boneid);
-        cmd:=TrimLeft(cmd);
-        if (not flag) then begin
-          result:='!can''t extract source bone id';
-        end else if (length(cmd)>0) then begin
-          result:='!the procedure expects 1 or 2 argument(s)';
-        end;
-      end;
-
-      if (length(result) = 0) then begin
-        shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-        texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-        vcnt:= _data.Meshes().Get(child_id).GetVerticesCountForBoneID(src_boneid);
-        if vcnt = 0 then begin
-          result:='#mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') contains no vertices binded with '+GetBoneNameById(src_boneid);
-        end else if not _data.Meshes().Get(child_id).RebindVertices(dest_boneid, src_boneid) then begin
-          result:='!failed to rebind vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid);
-        end else begin
-          result:=inttostr(vcnt)+' vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') are successfully rebinded from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid);
-        end;
-      end;
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshBonestats(child_id: integer): string;
-var
-  i, vcnt:integer;
-  shader, texture:string;
-  found:boolean;
-  s:TOgfSkeleton;
-begin
-  result:='';
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    s:=_data.Skeleton();
-    if s = nil then begin
-      result:='!model has no skeleton';
-    end else begin
-      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-      result:='mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') is assigned to the following bones:'+chr($0d)+chr($0a);
-      found:=false;
-      for i:=0 to s.GetBonesCount()-1 do begin
-        vcnt:= _data.Meshes().Get(child_id).GetVerticesCountForBoneID(i);
-        if vcnt > 0 then begin
-          found:=true;
-          result:=result+'- '+GetBoneNameById(i)+' (vertices: '+inttostr(vcnt)+')'+chr($0d)+chr($0a);
-        end;
-      end;
-
-      if not found then begin
-        result:='#mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') is NOT assigned to any valid bone';
-      end;
-    end;
-  end;
-end;
-
-function TModelSlot._CmdMeshFilterBone(child_id: integer; cmd: string): string;
-var
-  boneid:TBoneID;
-  shader, texture:string;
-  inverse:boolean;
-begin
-  result:='';
-  if not _data.Loaded() or (_data.Meshes()=nil) then begin
-    result:='!please load model first';
-  end else if child_id >= _data.Meshes().Count() then begin
-    result:='!child id #'+inttostr(child_id)+' out of bounds, total children count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    boneid:=INVALID_BONE_ID;
-
-    inverse:=false;
-    cmd:=trimleft(cmd);
-    if (length(cmd)>0) and (cmd[1]=ARGUMENT_INVERSE) then begin
-      inverse:=true;
-      cmd:=trimleft(rightstr(cmd, length(cmd)-1));
-    end;
-
-    if ExtractBoneIdFromString(cmd, boneid) then begin
-      shader:=_data.Meshes().Get(child_id).GetTextureData().shader;
-      texture:=_data.Meshes().Get(child_id).GetTextureData().texture;
-
-      if length(trimleft(cmd))>0 then begin
-        result:='!procedure expects 1 argument';
-      end else begin
-        if not inverse and (_data.Meshes().Get(child_id).GetVerticesCountForBoneID(boneid) = 0) then begin
-          result:='#no vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') are assigned to bone '+GetBoneNameById(boneid);
-        end;
-
-        if _data.Meshes().Get(child_id).RemoveVerticesForBoneId(boneid, inverse) then begin
-          if _data.Meshes().Get(child_id).GetVerticesCount() = 0 then begin
-            result:='#mesh is fully collapsed (no vertices found), please remove it'+chr($0d)+chr($0a);
-          end;
-          result:=result+'successfully removed vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
-        end else begin
-          result:='!error filtering vertices of mesh #'+inttostr(child_id)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid);
-        end;
-
-      end;
-    end else begin
-      result:='!can''t extract bone id';
-    end;
-  end;
-end;
-
-/////////////////////////////////// BONES //////////////////////////////////////
+//////////////////////////////////////////////////////// Helper functions ////////////////////////////////////////////////////
 function TModelSlot.ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
 var
   tmpid, tmpstr:string;
@@ -933,115 +292,6 @@ begin
   end;
 end;
 
-function TModelSlot._ProcessBonesCommands(bone_id: integer; cmd: string): string;
-var
-  opcode:char;
-  args:string;
-  proccode:string;
-  propname:string;
-const
-  PROC_INFO:string='info';
-
-  PROP_IKDATA:string='ikdata';
-begin
-  if (not _data.Loaded()) or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
-  end else if abs(bone_id) >= _data.Skeleton().GetBonesCount() then begin
-    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Meshes().Count());
-  end else begin
-    if bone_id < 0 then begin
-      bone_id:=_data.Skeleton().GetBonesCount() - bone_id;
-    end;
-
-    if length(trim(cmd))=0 then begin
-      result:=_CmdBoneInfo(bone_id);
-    end else begin
-      args:='';
-      opcode:=cmd[1];
-      cmd:=rightstr(cmd, length(cmd)-1);
-      if opcode = OPCODE_CALL then begin
-        proccode:=ExtractAlphabeticString(cmd);
-        if not ExtractProcArgs(cmd, args) then begin
-          result:='!can''t parse arguments to call procedure "'+proccode+'"';
-        end else if lowercase(proccode)=PROC_INFO then begin
-          result:=_CmdBoneInfo(bone_id);
-        end else begin
-          result:='!unknown procedure "'+proccode+'"';
-        end;
-      end else if opcode = OPCODE_INDEX then begin
-        propname:=ExtractAlphabeticString(cmd);
-        if not _data.Loaded() then begin
-          result:='!please load model first';
-        end else if propname = PROP_IKDATA then begin
-          result:=_ProcessIKDataCommands(bone_id, cmd)
-        end else begin
-          result:='!unknown property "'+propname+'"';
-        end;
-      end else begin
-        result:='!unsupported opcode "'+opcode+'"';
-      end;
-    end;
-  end;
-end;
-
-function TModelSlot._CmdBoneInfo(bone_id: integer): string;
-begin
-  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
-  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
-    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
-  end else begin
-    result:='Info for bone #'+inttostr(bone_id)+':'+chr($0d)+chr($0a);
-    result:=result+'- Name: '+_data.Skeleton().GetBoneName(bone_id)+chr($0d)+chr($0a);
-    result:=result+'- Parent: '+_data.Skeleton().GetParentBoneName(bone_id);
-  end;
-end;
-
-function TModelSlot._ProcessIKDataCommands(bone_id: integer; cmd: string): string;
-var
-  opcode:char;
-  args:string;
-  proccode:string;
-const
-  PROC_INFO:string='info';
-  PROC_COPYIKDATA:string='copy';
-  PROC_PASTEIKDATA:string='paste';
-begin
-  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
-  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
-    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
-  end else begin
-    if bone_id < 0 then begin
-      bone_id:=_data.Skeleton().GetBonesCount() - bone_id;
-    end;
-
-    if length(trim(cmd))=0 then begin
-      result:=_CmdIKDataInfo(bone_id);
-    end else begin
-      args:='';
-      opcode:=cmd[1];
-      cmd:=rightstr(cmd, length(cmd)-1);
-          if opcode = OPCODE_CALL then begin
-        proccode:=ExtractAlphabeticString(cmd);
-        if not ExtractProcArgs(cmd, args) then begin
-          result:='!can''t parse arguments to call procedure "'+proccode+'"';
-        end else if lowercase(proccode)=PROC_INFO then begin
-          result:=_CmdIKDataInfo(bone_id);
-        end else if lowercase(proccode)=PROC_COPYIKDATA then begin
-          result:=_CmdIKDataCopy(bone_id);
-        end else if lowercase(proccode)=PROC_PASTEIKDATA then begin
-          result:=_CmdIKDataPaste(bone_id);
-        end else begin
-          result:='!unknown procedure "'+proccode+'"';
-        end;
-      end else begin
-        result:='!unsupported opcode "'+opcode+'"';
-      end;
-    end;
-  end;
-end;
-
 function ShapeTypeById(shape:word):string;
 begin
   if shape = OGF_SHAPE_TYPE_BOX then begin
@@ -1059,87 +309,637 @@ begin
   end;
 end;
 
-function TModelSlot._CmdIKDataInfo(bone_id: integer): string;
+//////////////////////////////////////////////////////// Actions////// ////////////////////////////////////////////////////
+function TModelSlot._CmdLoadFromFile(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  path:string;
 begin
-  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
-  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
-    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
-  end else begin
-    result:='IKData info for bone #'+inttostr(bone_id)+' ('+_data.Skeleton().GetBoneName(bone_id)+'):'+chr($0d)+chr($0a);
-    result:=result+'- Shape type: '+ShapeTypeById(_data.Skeleton().GetOgfShape(bone_id).shape_type);
+  result:=false;
+
+  path:=args;
+  if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
+    path:=rightstr(path, length(path)-1);
+  end;
+  if (length(path)>0) and ((path[length(path)] = '"') or (path[length(path)] = '''')) then begin
+    path:=leftstr(path, length(path)-1);
+  end;
+
+  result:=_data.LoadFromFile(path);
+  if not result then begin
+    result_description.SetDescription('Can''t load model from file "'+path+'"');
   end;
 end;
 
-function TModelSlot._CmdIKDataCopy(bone_id: integer): string;
+function TModelSlot._CmdSaveToFile(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  path:string;
+begin
+  result:=false;
+
+  path:=args;
+  if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
+    path:=rightstr(path, length(path)-1);
+  end;
+  if (length(path)>0) and ((path[length(path)] = '"') or (path[length(path)] = '''')) then begin
+    path:=leftstr(path, length(path)-1);
+  end;
+
+  result:=_data.SaveToFile(path);
+  if not result then begin
+    result_description.SetDescription('Can''t save model to "'+path+'"');
+  end;
+end;
+
+function TModelSlot._CmdUnload(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=false;
+
+  _data.Reset;
+  result:=true;
+end;
+
+function TModelSlot._CmdInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  if not _data.Loaded then begin
+    result_description.SetDescription('slot doesn''t contain loaded data');
+  end else begin
+    result_description.SetDescription('slot is in use');
+  end;
+  result:=true;
+end;
+
+function TModelSlot._CmdPropMesh(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  res:TCommandResult;
+begin
+  res:=_commands_mesh.Execute(args, userdata);
+  result:=res.IsSuccess();
+  result_description.SetWarningFlag(res.IsWarning());
+  result_description.SetDescription(res.GetDescription());
+end;
+
+function TModelSlot._CmdPropSkeleton(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  res:TCommandResult;
+begin
+  res:=_commands_skeleton.Execute(args, userdata);
+  result:=res.IsSuccess();
+  result_description.SetWarningFlag(res.IsWarning());
+  result_description.SetDescription(res.GetDescription());
+end;
+
+function TModelSlot._CmdPropBones(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  res:TCommandResult;
+begin
+  res:=_commands_bones.FilteringExecute(args, userdata);
+  result:=res.IsSuccess();
+  result_description.SetWarningFlag(res.IsWarning());
+  result_description.SetDescription(res.GetDescription());
+end;
+
+function TModelSlot._CmdPropChild(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  res:TCommandResult;
+begin
+  res:=_commands_children.FilteringExecute(args, userdata);
+  result:=res.IsSuccess();
+  result_description.SetWarningFlag(res.IsWarning());
+  result_description.SetDescription(res.GetDescription());
+end;
+
+function TModelSlot._CmdPasteMeshFromTempBuf(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
 var
   s:string;
+  meshid:integer;
+  shader, texture:string;
 begin
-  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
-  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
-    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
-  end else begin
-    s:=_data.Skeleton().CopySerializedBoneIKData(bone_id);
-    if length(s)=0 then begin
-      result:='!failed to serialize data';
+  s:='';
+  result:=false;
+  if _container.GetTempBuffer().GetString(s) then begin
+    meshid:=_data.Meshes().Append(s);
+    if meshid < 0 then begin
+      result_description.SetDescription('unable to append data from temp buffer as a mesh');
     end else begin
-      _container.GetTempBuffer().SetString(s);
-      result:='data successfully copied to temp buffer';
+      shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
+      texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
+      result_description.SetDescription('mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully appended');
+      result:=true;
     end;
+  end else begin
+    result_description.SetDescription('can''t extract data from temp buffer, unsupported format?');
   end;
 end;
 
-function TModelSlot._CmdIKDataPaste(bone_id: integer): string;
+function TModelSlot._CmdRemoveCollapsedMeshes(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
 var
-  s:string;
+  i:integer;
+  shader, texture:string;
+  r:string;
 begin
-  if not _data.Loaded() or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
-  end else if bone_id >= _data.Skeleton().GetBonesCount() then begin
-    result:='!bone id #'+inttostr(bone_id)+' out of bounds, total bones count: '+inttostr(_data.Skeleton().GetBonesCount());
-  end else begin
-    if not _container.GetTempBuffer().GetString(s) then begin
-      result:='!failed to extract data from temp buffer';
-    end else if not _data.Skeleton().PasteSerializedBoneIKData(bone_id, s) then begin
-      result:='!failed to paste serialized data';
-    end else begin
-      result:='data successfully pasted';
+  result:=true;
+  r:='';
+  for i:=_data.Meshes().Count()-1 downto 0 do begin
+    shader:=_data.Meshes().Get(i).GetTextureData().shader;
+    texture:=_data.Meshes().Get(i).GetTextureData().texture;
+
+    if _data.Meshes().Get(i).GetVerticesCount() = 0 then begin;
+      if not _data.Meshes().Remove(i) then begin
+        r:=r+'Failed to remove collapsed mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
+        result:=false;
+      end else begin
+        r:=r+'Removed collapsed mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
+      end;
     end;
   end;
+  result_description.SetDescription(r);
 end;
 
-function TModelSlot._CmdSkeletonUniformScale(cmd: string): string;
+function TModelSlot._CmdSkeletonUniformScale(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
 var
   k:single;
 begin
-  if not ExtractFloatFromString(cmd, k) then begin
-    result:='!procedure expects a floating-point argument';
-  end else if length(trim(cmd)) > 0 then begin
-    result:='!procedure expects 1 argument';
-  end else if not _data.Loaded() or (_data.Skeleton()=nil) then begin
-    result:='!please load model first';
+  result:=false;
+  if not ExtractFloatFromString(args, k) then begin
+    result_description.SetDescription('procedure expects a floating-point argument');
+  end else if length(trim(args)) > 0 then begin
+    result_description.SetDescription('procedure expects 1 argument');
   end else begin
     if not _data.Skeleton().UniformScale(k) then begin
-      result:='!error scaling skeleton';
+      result_description.SetDescription('error scaling skeleton');
     end else begin
-      result:='skeleton successfully scaled';
+      result_description.SetDescription('skeleton successfully scaled');
+      result:=true;
     end;
   end;
 end;
 
-/////////////////////////////////// CORE ///////////////////////////////////////
+function TModelSlot._CmdBoneInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  r:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    r:='Info for bone #'+inttostr(idx)+':'+chr($0d)+chr($0a);
+    r:=r+'- Name: '+_data.Skeleton().GetBoneName(idx)+chr($0d)+chr($0a);
+    r:=r+'- Parent: '+_data.Skeleton().GetParentBoneName(idx);
+    result_description.SetDescription(r);
+    result:=true;
+  end;
+end;
+
+function TModelSlot._CmdIKDataInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  r:string;
+  shape_type_id:word;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    r:='IKData info for bone #'+inttostr(idx)+' ('+_data.Skeleton().GetBoneName(idx)+'):'+chr($0d)+chr($0a);
+
+    shape_type_id:=_data.Skeleton().GetOgfShape(idx).shape_type;
+    r:=r+'- Shape type: '+inttostr(shape_type_id)+' ('+ShapeTypeById(shape_type_id)+')';
+
+    result_description.SetDescription(r);
+    result:=true;
+  end;
+end;
+
+function TModelSlot._CmdIKDataCopy(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  s:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    s:=_data.Skeleton().SerializeBoneIKData(idx);
+    if length(s)=0 then begin
+      result_description.SetDescription('failed to serialize ikdata for bone #'+inttostr(idx));
+    end else begin
+      _container.GetTempBuffer().SetString(s);
+      result_description.SetDescription('data successfully copied to temp buffer');
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdIKDataPaste(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  s:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    if not _container.GetTempBuffer().GetString(s) then begin
+      result_description.SetDescription('failed to extract data from temp buffer');
+    end else if not _data.Skeleton().DeserializeBoneIKData(idx, s) then begin
+      result_description.SetDescription('failed to paste serialized data');
+    end else begin
+      result_description.SetDescription('ikdata successfully pasted');
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  r:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    if (id >=0) and (id < _data.Meshes.Count()) then begin
+      r:='Child mesh #'+inttostr(idx)+':'+chr($0d)+chr($0a);
+      r:=r+'- Texture: '+_data.Meshes.Get(idx).GetTextureData().texture+chr($0d)+chr($0a);
+      r:=r+'- Shader: '+_data.Meshes.Get(idx).GetTextureData().shader+chr($0d)+chr($0a);
+      r:=r+'- Vertices count:'+inttostr(_data.Meshes.Get(idx).GetVerticesCount())+chr($0d)+chr($0a);
+      r:=r+'- Tris count:'+inttostr(_data.Meshes.Get(idx).GetTrisCountTotal())+chr($0d)+chr($0a);
+      r:=r+'- Current link type:'+inttostr(_data.Meshes.Get(idx).GetCurrentLinkType())+chr($0d)+chr($0a);
+
+      result_description.SetDescription(r);
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildSetTexture(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  texdata:TOgfTextureData;
+  shader, texture:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+    texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+    texdata:=_data.Meshes().Get(idx).GetTextureData();
+    texdata.texture:=trim(args);
+    if _data.Meshes().Get(idx).SetTextureData(texdata) then begin
+      result_description.SetDescription('texture successfully updated for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result:=true;
+    end else begin
+      result_description.SetDescription('can''t update texture for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildSetShader(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  texdata:TOgfTextureData;
+  shader, texture:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+    texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+    texdata:=_data.Meshes().Get(idx).GetTextureData();
+    texdata.shader:=trim(args);
+    if _data.Meshes().Get(idx).SetTextureData(texdata) then begin
+      result_description.SetDescription('texture shader updated for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result:=true;
+    end else begin
+      result_description.SetDescription('can''t update shader for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildRemove(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  shader, texture:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+    texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+    if not _data.Meshes().Remove(idx) then begin
+      result_description.SetDescription('remove operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+    end else begin
+      result_description.SetDescription('successfully removed mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildCopy(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  shader, texture:string;
+  s:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+    texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+    s:=_data.Meshes().Get(idx).Serialize();
+    if length(s) = 0 then begin
+      result_description.SetDescription('cannot serialize mesh #'+inttostr(idx)+' ('+texture+' : '+shader+'), buffer cleared');
+      _container.GetTempBuffer().Clear();
+    end else begin
+      _container.GetTempBuffer().SetString(s);
+      result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully saved to temp buffer');
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildPasteData(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  shader, texture:string;
+  s:string;
+  meshid:integer;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    s:='';
+    if _container.GetTempBuffer().GetString(s) then begin
+      meshid:=_data.Meshes().Insert(s, idx);
+      if (meshid < 0) or (meshid<>idx) then begin
+        result_description.SetDescription('unable to insert data from temp buffer as a mesh');
+      end else begin
+        shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
+        texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
+        result_description.SetDescription('mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully inserted');
+        result:=true;
+      end;
+    end else begin
+      result_description.SetDescription('can''t extract data from temp buffer, unsupported format?');
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildMove(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  v:FVector3;
+  shader, texture:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    set_zero(v{%H-});
+     if not ExtractFVector3(args, v) then begin
+       result_description.SetDescription('cannot parse vector components from argument');
+     end else begin
+       shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+       texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+       args:=TrimLeft(args);
+       if length(args)>0 then begin
+         result_description.SetDescription('invalid arguments count, expected 3 numbers')
+       end else begin
+         if not _data.Meshes().Get(idx).Move(v) then begin
+           result_description.SetDescription('move operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+         end else begin
+           result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
+           result:=true;
+         end;
+       end;
+     end;
+  end;
+end;
+
+function TModelSlot._CmdChildScale(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  v:FVector3;
+  shader, texture:string;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    set_zero(v{%H-});
+     if not ExtractFVector3(args, v) then begin
+       result_description.SetDescription('cannot parse vector components from argument');
+     end else begin
+       shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+       texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+       args:=TrimLeft(args);
+       if length(args)>0 then begin
+         result_description.SetDescription('invalid arguments count, expected 3 floats');
+       end else begin
+         if not _data.Meshes().Get(idx).Scale(v) then begin
+           result_description.SetDescription('scale operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+         end else begin
+           result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
+           result:=true;
+         end;
+       end;
+     end;
+  end;
+end;
+
+function TModelSlot._CmdChildRebind(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  dest_boneid,  src_boneid:TBoneID;
+  shader, texture:string;
+  flag:boolean;
+  vcnt:integer;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    src_boneid:=INVALID_BONE_ID;
+    dest_boneid:=INVALID_BONE_ID;
+    if not ExtractBoneIdFromString(args, dest_boneid) then begin
+      result_description.SetDescription('can''t extract target bone id');
+    end else begin
+      args:=TrimLeft(args);
+      if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
+        args:=TrimLeft(rightstr(args, length(args)-1));
+        flag:=ExtractBoneIdFromString(args, src_boneid);
+        args:=TrimLeft(args);
+        if (not flag) then begin
+          result_description.SetDescription('can''t extract source bone id');
+        end else if (length(args)>0) then begin
+          result_description.SetDescription('the procedure expects 1 or 2 argument(s)');
+        end;
+      end;
+
+      if (length(result_description.GetDescription()) = 0) then begin
+        shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+        texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+        vcnt:= _data.Meshes().Get(idx).GetVerticesCountForBoneID(src_boneid);
+        if vcnt = 0 then begin
+          result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') contains no vertices binded with '+GetBoneNameById(src_boneid));
+        end else if not _data.Meshes().Get(idx).RebindVertices(dest_boneid, src_boneid) then begin
+          result_description.SetDescription('failed to rebind vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
+        end else begin
+          result_description.SetDescription(inttostr(vcnt)+' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') are successfully rebinded from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
+          result:=true;
+        end;
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdChildBonestats(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  i, vcnt:integer;
+  shader, texture:string;
+  found:boolean;
+  s:TOgfSkeleton;
+  idx:integer;
+  r:string;
+begin
+  result:=true;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+    texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+    r:='mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') is assigned to the following bones:'+chr($0d)+chr($0a);
+    found:=false;
+    for i:=0 to s.GetBonesCount()-1 do begin
+      vcnt:= _data.Meshes().Get(idx).GetVerticesCountForBoneID(i);
+      if vcnt > 0 then begin
+        found:=true;
+        r:=r+'- '+GetBoneNameById(i)+' (vertices: '+inttostr(vcnt)+')'+chr($0d)+chr($0a);
+      end;
+    end;
+
+    result_description.SetDescription(r);
+    if not found then begin
+      result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') is NOT assigned to any valid bone');
+    end;
+
+  end;
+end;
+
+function TModelSlot._CmdChildFilterBone(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  boneid:TBoneID;
+  shader, texture:string;
+  inverse:boolean;
+  idx:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    boneid:=INVALID_BONE_ID;
+
+    inverse:=false;
+    args:=trimleft(args);
+    if (length(args)>0) and (args[1]=COMMANDS_ARGUMENT_INVERSE) then begin
+      inverse:=true;
+      args:=trimleft(rightstr(args, length(args)-1));
+    end;
+
+    if ExtractBoneIdFromString(args, boneid) then begin
+      shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+      texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+      if length(trimleft(args))>0 then begin
+        result_description.SetDescription('procedure expects 1 argument');
+      end else begin
+        if not inverse and (_data.Meshes().Get(idx).GetVerticesCountForBoneID(boneid) = 0) then begin
+          result_description.SetDescription('no vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') are assigned to bone '+GetBoneNameById(boneid));
+        end;
+        if _data.Meshes().Get(idx).RemoveVerticesForBoneId(boneid, inverse) then begin
+          if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
+            result_description.SetDescription('mesh is fully collapsed (no vertices found), please remove it'+chr($0d)+chr($0a));
+          end;
+          result_description.SetDescription('successfully removed vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid));
+        end else begin
+          result_description.SetDescription('error filtering vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid));
+        end;
+           end;
+    end else begin
+      result_description.SetDescription('can''t extract bone id');
+    end;
+  end;
+end;
+
+function TModelSlot._CmdPropIkdata(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  res:TCommandResult;
+begin
+  res:=_commands_ikdata.FilteringExecute(args, userdata);
+  result:=res.IsSuccess();
+  result_description.SetWarningFlag(res.IsWarning());
+  result_description.SetDescription(res.GetDescription());
+end;
 
 constructor TModelSlot.Create(id: TSlotId; container: TSlotsContainer);
 begin
   _id:=id;
   _data:=TOgfParser.Create();
   _container:=container;
+
+  _commands_upperlevel:=TCommandsStorage.Create(true);
+    _commands_mesh:=TCommandsStorage.Create(true);
+      _commands_children:=TChildrenCommands.Create(self);
+    _commands_skeleton:=TCommandsStorage.Create(true);
+      _commands_bones:=TBonesCommands.Create(self);
+      _commands_ikdata:=TBonesCommands.Create(self);
+
+
+
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('mesh', @_IsModelLoadedPrecondition, @_CmdPropMesh), CommandItemTypeProperty);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('skeleton', @_IsModelLoadedPrecondition, @_CmdPropSkeleton), CommandItemTypeProperty);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('loadfromfile', @_IsModelNotLoadedPrecondition, @_CmdLoadFromFile), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_CmdSaveToFile), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('unload', @_IsModelLoadedPrecondition, @_CmdUnload), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdInfo), CommandItemTypeCall);
+
+  _commands_mesh.DoRegister(TCommandSetup.Create('child', @_IsModelLoadedPrecondition, @_CmdPropChild), CommandItemTypeProperty);
+  _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf), CommandItemTypeCall);
+  _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes), CommandItemTypeCall);
+
+  _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('settexture', @_IsModelLoadedPrecondition, @_CmdChildSetTexture), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('setshader', @_IsModelLoadedPrecondition, @_CmdChildSetShader), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMove), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelLoadedPrecondition, @_CmdChildScale), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone), CommandItemTypeCall);
+
+  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('bone', @_IsModelHasSkeletonPrecondition, @_CmdPropBones), CommandItemTypeProperty);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('ikdata', @_IsModelHasSkeletonPrecondition, @_CmdPropIkdata), CommandItemTypeProperty);
+
+  _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo), CommandItemTypeCall);
+
+  _commands_ikdata.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdIKDataInfo), CommandItemTypeCall);
+  _commands_ikdata.DoRegister(TCommandSetup.Create('copy', @_IsModelHasSkeletonPrecondition, @_CmdIKDataCopy), CommandItemTypeCall);
+  _commands_ikdata.DoRegister(TCommandSetup.Create('paste', @_IsModelHasSkeletonPrecondition, @_CmdIKDataPaste), CommandItemTypeCall);
+
 end;
 
 destructor TModelSlot.Destroy;
 begin
-  _data.Free();
+
+  FreeAndNil(_commands_ikdata);
+  FreeAndNil(_commands_children);
+  FreeAndNil(_commands_skeleton);
+  FreeAndNil(_commands_mesh);
+  FreeAndNil(_commands_upperlevel);
+  FreeAndNil(_data);
   inherited Destroy;
 end;
 
@@ -1148,186 +948,15 @@ begin
   result:=_id;
 end;
 
-/////////////////////////// COMMAND PROCESSORS /////////////////////////////////
-
-function TModelSlot._CmdPropChildMesh(cmd: string): string;
-var
-  filters:TIndexFilters;
-  i:integer;
-  tmpstr:string;
-  args:string;
-const
-  FILTER_TEXTURE_NAME='texture';
-  FILTER_SHADER_NAME='shader';
+function TModelSlot.Data(): TOgfParser;
 begin
-  result:='';
-
-  InitFilters(filters{%H-});
-  PushFilter(filters, FILTER_TEXTURE_NAME);
-  PushFilter(filters, FILTER_SHADER_NAME);
-  i:=0;
-  if ExtractIndexFilter(cmd,filters,i) then begin
-    if i < 0 then begin
-      result:='!invalid filter rule';
-    end else begin
-      result:='';
-
-      // We use reverse order because current child could disappear or new child in the end could appear while executing command
-      for i:=_data.Meshes().Count()-1 downto 0 do begin
-        if IsMatchFilter(_data.Meshes().Get(i).GetTextureData().texture, filters[0], FILTER_MODE_EXACT) and IsMatchFilter(_data.Meshes().Get(i).GetTextureData().shader, filters[1], FILTER_MODE_EXACT) then begin
-          tmpstr:=_ProcessMeshesCommands(i, cmd);
-          if (length(tmpstr)>0) then begin
-            if tmpstr[1]='!' then begin
-              result:=result+'!mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-            end else if tmpstr[1]='#' then begin
-              result:=result+'#mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-            end else begin
-              result:=result+'mesh'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-            end;
-          end;
-        end;
-      end;
-
-      if length(result) = 0 then begin
-        result:='#the specified filter doesn''t match any item, no action performed';
-      end;
-    end;
-  end else begin
-    args:=ExtractNumericString(cmd, false);
-    i:=strtointdef(args, -1);
-    if i<0 then begin
-      result:='!invalid child id "'+args+'"';
-    end else begin
-      result:=_ProcessMeshesCommands(i, cmd);
-    end;
-  end;
-
-  ClearFilters(filters);
+  result:=_data;
 end;
 
-function TModelSlot._CmdPropSkeleton(cmd: string): string;
-var
-  filters:TIndexFilters;
-  i:integer;
-  tmpstr:string;
-  args:string;
-const
-  FILTER_BONE_NAME='bonename';
-  FILTER_BONE_ID='boneid';
+
+function TModelSlot.ExecuteCmd(cmd: string): TCommandResult;
 begin
-  result:='';
-
-  InitFilters(filters{%H-});
-  PushFilter(filters, FILTER_BONE_NAME);
-  PushFilter(filters, FILTER_BONE_ID);
-  i:=0;
-  if ExtractIndexFilter(cmd,filters,i) then begin
-    if i < 0 then begin
-      result:='!invalid filter rule';
-    end else begin
-      result:='';
-
-      // We use reverse order because current child could disappear or new child in the end could appear while executing command
-      for i:=_data.Skeleton().GetBonesCount()-1 downto 0 do begin
-        if IsMatchFilter(_data.Skeleton().GetBoneName(i), filters[0], FILTER_MODE_EXACT) and IsMatchFilter(inttostr(i), filters[1], FILTER_MODE_EXACT) then begin
-          tmpstr:=_ProcessBonesCommands(i, cmd);
-          if (length(tmpstr)>0) then begin
-            if tmpstr[1]='!' then begin
-              result:=result+'!bone'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-            end else if tmpstr[1]='#' then begin
-              result:=result+'bone'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-            end else begin
-              result:=result+'bone'+inttostr(i)+': '+tmpstr+chr($0d)+chr($0a);
-            end;
-          end;
-        end;
-      end;
-
-      if length(result) = 0 then begin
-        result:='#the specified filter doesn''t match any item, no action performed';
-      end;
-    end;
-  end else begin
-    args:=ExtractNumericString(cmd, false);
-    i:=strtointdef(args, -1);
-    if i<0 then begin
-      result:='!invalid bone id "'+args+'"';
-    end else begin
-      result:=_ProcessBonesCommands(i, cmd);
-    end;
-  end;
-
-  ClearFilters(filters);
-end;
-
-function TModelSlot.ExecuteCmd(cmd: string): string;
-const
-  PROC_LOADFROMFILE:string='loadfromfile';
-  PROC_SAVETOFILE:string='savetofile';
-  PROC_UNLOAD:string='unload';
-  PROC_INFO:string='info';
-  PROC_PASTEMESH:string='pastemesh';
-  PROC_REMCOLLAPSED:string='removecollapsedmeshes';
-  PROC_UNIFORMSCALE:string='uniformscaleskeleton';
-
-  PROP_CHILD:string='mesh';
-  PROP_BONE:string='bone';
-  PROP_SKELETON:string='skeleton';
-
-var
-  args:string;
-  opcode:char;
-  proccode, propname:string;
-
-begin
-  cmd:=TrimLeft(cmd);
-  if length(trim(cmd))=0 then begin
-    result:=_CmdInfo();
-    exit;
-  end;
-
-  args:='';
-  opcode:=cmd[1];
-  cmd:=rightstr(cmd, length(cmd)-1);
-
-  if opcode = OPCODE_CALL then begin
-    proccode:=ExtractAlphabeticString(cmd);
-    if not ExtractProcArgs(cmd, args) then begin
-      result:='!can''t parse arguments to call procedure "'+proccode+'"';
-    end else if lowercase(proccode)=PROC_LOADFROMFILE then begin
-      result:=_CmdLoadFromFile(args);
-    end else if not _data.Loaded() then begin
-      result:='!please load model first';
-    end else if lowercase(proccode)=PROC_SAVETOFILE then begin
-      result:=_CmdSaveToFile(args);
-    end else if lowercase(proccode)=PROC_UNLOAD then begin
-      result:=_CmdUnload();
-    end else if lowercase(proccode)=PROC_INFO then begin
-      result:=_CmdInfo();
-    end else if lowercase(proccode)=PROC_PASTEMESH then begin
-      result:=_CmdPasteMeshFromTempBuf();
-    end else if lowercase(proccode)=PROC_REMCOLLAPSED then begin
-      result:=_CmdRemoveCollapsedMeshes();
-    end else if lowercase(proccode)=PROC_UNIFORMSCALE then begin
-      result:=_CmdSkeletonUniformScale(args);
-    end else begin
-      result:='!unknown procedure "'+proccode+'"';
-    end;
-  end else if opcode = OPCODE_INDEX then begin
-    propname:=ExtractAlphabeticString(cmd);
-
-    if not _data.Loaded() then begin
-      result:='!please load model first';
-    end else if lowercase(propname)=PROP_CHILD then begin
-      result:=_CmdPropChildMesh(cmd);
-    end else if (lowercase(propname)=PROP_SKELETON) or (lowercase(propname)=PROP_BONE) then begin
-      result:=_CmdPropSkeleton(cmd);
-    end else begin
-      result:='!unknown property "'+propname+'"';
-    end;
-  end else begin
-    result:='!unsupported opcode "'+opcode+'"';
-  end;
+  result:=_commands_upperlevel.Execute(cmd, nil);
 end;
 
 { TSlotsContainer }
