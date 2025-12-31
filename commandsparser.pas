@@ -896,38 +896,38 @@ begin
 
 
 
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('mesh', @_IsModelLoadedPrecondition, @_CmdPropMesh), CommandItemTypeProperty);
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('skeleton', @_IsModelLoadedPrecondition, @_CmdPropSkeleton), CommandItemTypeProperty);
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('loadfromfile', @_IsModelNotLoadedPrecondition, @_CmdLoadFromFile), CommandItemTypeCall);
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_CmdSaveToFile), CommandItemTypeCall);
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('unload', @_IsModelLoadedPrecondition, @_CmdUnload), CommandItemTypeCall);
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdInfo), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('mesh', @_IsModelLoadedPrecondition, @_CmdPropMesh, 'access group of properties and procedures associated with model''s mesh'), CommandItemTypeProperty);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('skeleton', @_IsModelLoadedPrecondition, @_CmdPropSkeleton, 'access group of properties and procedures associated with model''s mesh'), CommandItemTypeProperty);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('loadfromfile', @_IsModelNotLoadedPrecondition, @_CmdLoadFromFile, 'load OGF data to selected model slot, expects file path'), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_CmdSaveToFile, 'save data from selected model slot to OGF, expects file path'), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('unload', @_IsModelLoadedPrecondition, @_CmdUnload, 'clear selected model slot'), CommandItemTypeCall);
+  _commands_upperlevel.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdInfo, 'display selected slot info'), CommandItemTypeCall);
 
-  _commands_mesh.DoRegister(TCommandSetup.Create('child', @_IsModelLoadedPrecondition, @_CmdPropChild), CommandItemTypeProperty);
-  _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf), CommandItemTypeCall);
-  _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes), CommandItemTypeCall);
+  _commands_mesh.DoRegister(TCommandSetup.Create('child', @_IsModelLoadedPrecondition, @_CmdPropChild, 'array of sub-meshes with different textures'), CommandItemTypeProperty);
+  _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf, 'paste child previously copied into temp buffer'), CommandItemTypeCall);
+  _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes, 'remove all children without real mesh (without vertices)'), CommandItemTypeCall);
 
-  _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('settexture', @_IsModelLoadedPrecondition, @_CmdChildSetTexture), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('setshader', @_IsModelLoadedPrecondition, @_CmdChildSetShader), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMove), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelLoadedPrecondition, @_CmdChildScale), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo, 'show info'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('settexture', @_IsModelLoadedPrecondition, @_CmdChildSetTexture, 'change assigned shader, expects string argument'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('setshader', @_IsModelLoadedPrecondition, @_CmdChildSetShader, 'change assigned shader, expects string argument'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove, 'remove the selected child'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy, 'copy child into temp buffer'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData, 'replace the selected child with data from the temp buffer'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMove, 'move child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelLoadedPrecondition, @_CmdChildScale, 'scale child, expects a number (scaling factor, negative means scaling with mirroring)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind, 'bind child to selected bone'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);
 
-  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale), CommandItemTypeCall);
-  _commands_skeleton.DoRegister(TCommandSetup.Create('bone', @_IsModelHasSkeletonPrecondition, @_CmdPropBones), CommandItemTypeProperty);
-  _commands_skeleton.DoRegister(TCommandSetup.Create('ikdata', @_IsModelHasSkeletonPrecondition, @_CmdPropIkdata), CommandItemTypeProperty);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton, expects a number (scaling factor, negative means scaling with mirroring)'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('bone', @_IsModelHasSkeletonPrecondition, @_CmdPropBones, 'access array of bones'), CommandItemTypeProperty);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('ikdata', @_IsModelHasSkeletonPrecondition, @_CmdPropIkdata, 'access array of bones'' IK Data'), CommandItemTypeProperty);
 
-  _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
 
-  _commands_ikdata.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdIKDataInfo), CommandItemTypeCall);
-  _commands_ikdata.DoRegister(TCommandSetup.Create('copy', @_IsModelHasSkeletonPrecondition, @_CmdIKDataCopy), CommandItemTypeCall);
-  _commands_ikdata.DoRegister(TCommandSetup.Create('paste', @_IsModelHasSkeletonPrecondition, @_CmdIKDataPaste), CommandItemTypeCall);
+  _commands_ikdata.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdIKDataInfo, 'display IK data info associated with the selected bone'), CommandItemTypeCall);
+  _commands_ikdata.DoRegister(TCommandSetup.Create('copy', @_IsModelHasSkeletonPrecondition, @_CmdIKDataCopy, 'copy IK data info of the selected bone to temp buffer'), CommandItemTypeCall);
+  _commands_ikdata.DoRegister(TCommandSetup.Create('paste', @_IsModelHasSkeletonPrecondition, @_CmdIKDataPaste, 'replace IK data of the selected bone with data from temp buffer' ), CommandItemTypeCall);
 
 end;
 

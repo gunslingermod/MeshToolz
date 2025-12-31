@@ -38,9 +38,11 @@ TCommandSetup = class
   _name:string;
   _precondition:TCommandPrecondition;
   _action:TCommandAction;
+  _description:string;
 public
-  constructor Create(name:string; precondition:TCommandPrecondition; action:TCommandAction);
+  constructor Create(name:string; precondition:TCommandPrecondition; action:TCommandAction; description:string='');
   function GetName():string;
+  function GetDescription():string;
   function Execute(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
 end;
 
@@ -126,16 +128,24 @@ end;
 
 { TCommandSetup }
 
-constructor TCommandSetup.Create(name: string; precondition: TCommandPrecondition; action: TCommandAction);
+constructor TCommandSetup.Create(name: string;
+  precondition: TCommandPrecondition; action: TCommandAction;
+  description: string);
 begin
  _name:=name;
  _precondition:=precondition;
  _action:=action;
+ _description:=description;
 end;
 
 function TCommandSetup.GetName(): string;
 begin
   result:=_name;
+end;
+
+function TCommandSetup.GetDescription(): string;
+begin
+  result:=_description;
 end;
 
 function TCommandSetup.Execute(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
@@ -223,13 +233,20 @@ function TCommandsStorage._CmdEnumerateCalls(var args: string; result_descriptio
 var
   i:integer;
   r:string;
+  s:string;
 begin
   r:='';
 
   if length(_calls)>0 then begin
     r:=r+'Registered procedures:'+chr($0d)+chr($0a);
     for i:=0 to length(_calls)-1 do begin
-      r:=r+'  '+_calls[i].GetName()+chr($0d)+chr($0a);
+      s:=_calls[i].GetDescription();
+      if length(s)>0 then begin
+        s:= _calls[i].GetName()+' - '+s;
+      end else begin
+        s:= _calls[i].GetName();
+      end;
+      r:=r+'  '+s+chr($0d)+chr($0a);
     end;
   end;
 
@@ -241,13 +258,20 @@ function TCommandsStorage._CmdEnumerateProps(var args: string; result_descriptio
 var
   i:integer;
   r:string;
+  s:string;
 begin
   r:='';
 
   if length(_properties)>0 then begin
     r:=r+'Registered properties:'+chr($0d)+chr($0a);
     for i:=0 to length(_properties)-1 do begin
-      r:=r+'  '+_properties[i].GetName()+chr($0d)+chr($0a);
+        s:=_properties[i].GetDescription();
+        if length(s)>0 then begin
+          s:= _properties[i].GetName()+' - '+s;
+        end else begin
+          s:= _properties[i].GetName();
+        end;
+        r:=r+'  '+s+chr($0d)+chr($0a);
     end;
   end;
 
