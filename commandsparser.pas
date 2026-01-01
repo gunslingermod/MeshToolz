@@ -997,9 +997,34 @@ begin
   end;
 end;
 
+
+type
+  TChildVertexFilterCallbackData = record
+    boneid:TBoneID;
+    inverse_flag:boolean;
+    flagged_vertices_count:integer;
+  end;
+  pTChildVertexFilterCallbackData = ^TChildVertexFilterCallbackData;
+
+function ChildRemoveVerticesForBoneIdCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTChildVertexFilterCallbackData;
+begin
+  cbdata:=pTChildVertexFilterCallbackData(userdata);
+  result:=(links.GetWeightForBoneId(cbdata^.boneid)>0);
+  if cbdata^.inverse_flag then begin
+    result:=not result;
+  end;
+
+  if result then begin
+    cbdata^.flagged_vertices_count:=cbdata^.flagged_vertices_count+1;
+  end;
+end;
+
 function TModelSlot._CmdChildFilterBone(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   boneid:TBoneID;
+  cbdata:TChildVertexFilterCallbackData;
   shader, texture:string;
   inverse:boolean;
   idx:integer;
@@ -1023,18 +1048,23 @@ begin
       if length(trimleft(args))>0 then begin
         result_description.SetDescription('procedure expects 1 argument');
       end else begin
-        if not inverse and (_data.Meshes().Get(idx).GetVerticesCountForBoneID(boneid) = 0) then begin
-          result_description.SetDescription('no vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') are assigned to bone '+GetBoneNameById(boneid));
-        end;
-        if _data.Meshes().Get(idx).RemoveVerticesForBoneId(boneid, inverse) then begin
-          if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
-            result_description.SetDescription('mesh is fully collapsed (no vertices found), please remove it'+chr($0d)+chr($0a));
-          end;
-          result_description.SetDescription('successfully removed vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid));
+        cbdata.boneid:=boneid;
+        cbdata.flagged_vertices_count:=0;
+        cbdata.inverse_flag:=inverse;
+        if not _data.Meshes().Get(idx).RemoveVertices(@ChildRemoveVerticesForBoneIdCallback, @cbdata) then begin
+          result_description.SetDescription('error filtering vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+        end else if cbdata.flagged_vertices_count = 0 then begin
+          result_description.SetDescription('no vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') were removed');
+          result_description.SetWarningFlag(true);
+          result:=true;
         end else begin
-          result_description.SetDescription('error filtering vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') assigned to bone '+GetBoneNameById(boneid));
+          result_description.SetDescription('successfully removed '+inttostr(cbdata.flagged_vertices_count)+' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+          if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
+            result_description.SetDescription(result_description.GetDescription()+chr($0d)+chr($0a)+'mesh is fully collapsed (no vertices left), please remove it'+chr($0d)+chr($0a));
+          end;
+          result:=true;
         end;
-           end;
+      end;
     end else begin
       result_description.SetDescription('can''t extract bone id');
     end;

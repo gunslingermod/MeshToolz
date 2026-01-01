@@ -9,6 +9,7 @@ uses
 
 type
   TBoneID = word;
+  pTBoneID = ^TBoneID;
 
   TOgfVertexCommonData = packed record
     pos:FVector3;
@@ -140,6 +141,7 @@ type
   end;
   TVertexFilterItems = array of TVertexFilterItem;
 
+  TVerticesIterationCallback = function (vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
   TOgfVertsContainer = class
   private
     _link_type:cardinal;
@@ -171,6 +173,7 @@ type
     function ChangeLinkType(new_link_type:cardinal):boolean;
 
     function FilterVertices(var filter:TVertexFilterItems):boolean;
+    procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
   end;
 
   TOgfSlideWindowItem = packed record
@@ -298,7 +301,9 @@ type
     function GetVerticesCountForBoneId(boneid:TBoneID):integer;
 
     function FilterVertices(var filter:TVertexFilterItems):boolean;
-    function RemoveVerticesForBoneId(boneid:TBoneID; remove_all_except_selected:boolean):boolean;
+
+    procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
+    function RemoveVertices(cb:TVerticesIterationCallback; userdata:pointer):boolean; // return true from cb will mark the vertex to be removed
 
     function Scale(v:FVector3; pivot_point:FVector3):boolean;
     function Move(v:FVector3):boolean;
@@ -4327,6 +4332,7 @@ begin
       bone.weight:=bone.weight+_bones[i].weight;
     end;
   end;
+  result:=bone.weight<>0;
 end;
 
 function TVertexBones.GetWeightForBoneId(bone_id: TBoneID): single;
@@ -4717,25 +4723,50 @@ begin
   result:=true;
 end;
 
-function TOgfChild.RemoveVerticesForBoneId(boneid: TBoneID; remove_all_except_selected: boolean): boolean;
+procedure TOgfChild.IterateVertices(cb: TVerticesIterationCallback; userdata: pointer);
+begin
+  if not Loaded() or (_verts.GetVerticesCount() = 0) then exit;
+  _verts.IterateVertices(cb, userdata);
+end;
+
+type
+ TRemovingVerticesIterationCbData = record
+   usercb:TVerticesIterationCallback;
+   userdata:pointer;
+   filter:TVertexFilterItems;
+ end;
+ pTRemovingVerticesIterationCbData = ^TRemovingVerticesIterationCbData;
+
+function RemovingVerticesIterationCb(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTRemovingVerticesIterationCbData;
+begin
+  cbdata:=pTRemovingVerticesIterationCbData(userdata);
+  if cbdata^.usercb<>nil then begin
+   cbdata^.filter[vertex_id].need_remove:=cbdata^.usercb(vertex_id, data, uv, links, cbdata^.userdata);
+  end else begin
+    cbdata^.filter[vertex_id].need_remove:=true;
+  end;
+  result:=true;
+end;
+
+function TOgfChild.RemoveVertices(cb: TVerticesIterationCallback; userdata: pointer): boolean;
 var
   filter:TVertexFilterItems;
-  i:integer;
+  cbdata:TRemovingVerticesIterationCbData;
 begin
   result:=false;
   if not Loaded() or (_verts.GetVerticesCount() = 0) then exit;
+  setlength(filter,_verts.GetVerticesCount());
 
-  filter:=nil;
   try
-    setlength(filter, _verts.GetVerticesCount());
-    for i:=0 to _verts.GetVerticesCount()-1 do begin
-      if remove_all_except_selected then begin
-        filter[i].need_remove:=not _verts.IsVertexAssignedToBoneID(i, boneid, true);
-      end else begin
-        filter[i].need_remove:=_verts.IsVertexAssignedToBoneID(i, boneid, true);
-      end;
-    end;
+    // Iterate over all vertices and execute callback to decide which vertices are to remove
+    cbdata.filter:=filter;
+    cbdata.usercb:=cb;
+    cbdata.userdata:=userdata;
+    _verts.IterateVertices(@RemovingVerticesIterationCb, @cbdata);
 
+    // Perform filtering
     result:=FilterVertices(filter);
   finally
     setlength(filter, 0);
@@ -5397,6 +5428,53 @@ begin
 
   setlength(new_data, 0);
   result:=true;
+end;
+
+procedure TOgfVertsContainer.IterateVertices(cb: TVerticesIterationCallback; userdata: pointer);
+var
+  pvertex:pbyte;
+  i:integer;
+
+  puv:pFVector2;
+  pdata:pTOgfVertexCommonData;
+  links:cardinal;
+  b:TVertexBones;
+begin
+  if not Loaded() or (_verts_count=0) then exit;
+  links:=GetCurrentLinkType();
+  if (links<>OGF_LINK_TYPE_1) and (links<>OGF_LINK_TYPE_2) and (links<>OGF_LINK_TYPE_3) and (links<>OGF_LINK_TYPE_4) then exit;
+
+  b:=TVertexBones.Create();
+  try
+    for i:=0 to _verts_count-1 do begin
+      b.Reset();
+      if not _GetVertexBindings(i, b) then continue;
+
+      if (links=OGF_LINK_TYPE_1) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex1link)];
+        pdata:=@pTOgfVertex1link(pvertex)^.spatial;
+        puv:=@pTOgfVertex1link(pvertex)^.uv;
+        if not cb(i, pdata, puv, b, userdata) then break;
+      end else if (links=OGF_LINK_TYPE_2) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex2link)];
+        pdata:=@pTOgfVertex2link(pvertex)^.spatial;
+        puv:=@pTOgfVertex2link(pvertex)^.uv;
+        if not cb(i, pdata, puv, b, userdata) then break;
+      end else if (links=OGF_LINK_TYPE_3) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex3link)];
+        pdata:=@pTOgfVertex3link(pvertex)^.spatial;
+        puv:=@pTOgfVertex3link(pvertex)^.uv;
+        if not cb(i, pdata, puv, b, userdata) then break;
+      end else if (links=OGF_LINK_TYPE_4) then begin
+        pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex4link)];
+        pdata:=@pTOgfVertex4link(pvertex)^.spatial;
+        puv:=@pTOgfVertex4link(pvertex)^.uv;
+        if not cb(i, pdata, puv, b, userdata) then break;
+      end;
+    end;
+  finally
+    FreeAndNil(b);
+  end;
 end;
 
 function TOgfVertsContainer.Deserialize(rawdata: string): boolean;
