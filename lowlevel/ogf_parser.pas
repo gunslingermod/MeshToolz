@@ -189,6 +189,8 @@ type
   private
     _selected_level:integer;
     _lods:array of TOgfSlideWindowItem;
+
+    procedure _ResetWithSingleReplacement(w:TOgfSlideWindowItem);
   public
     // Common
     constructor Create;
@@ -221,6 +223,7 @@ type
     _current_lod_params:TOgfSlideWindowItem;
 
     function _GetTriangleIdByOffset(offset:integer):integer;
+    procedure _RemoveAllTrisNotInCurrentLod();
   public
     // Common
     constructor Create;
@@ -236,6 +239,7 @@ type
     function AssignedLodParams():TOgfSlideWindowItem;
     function TrisCountTotal():integer;
     function TrisCountInCurrentLod():integer;
+    function GetTriangle(idx:integer; for_current_lod:boolean; var t:TOgfTriangle):boolean;
 
     function FilterVertices(var filter:TVertexFilterItems):boolean;
   end;
@@ -294,6 +298,10 @@ type
     function GetVerticesCount():cardinal;
     function GetTrisCountTotal():cardinal;
     function GetTrisCountInCurrentLod():cardinal;
+
+    function GetLodLevels():integer;
+    function AssignLodLevel(level:integer):boolean;
+    function RemoveUnactiveLodsData():boolean;
 
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
@@ -927,6 +935,9 @@ const
   MOTION_FLAG_T_KEY_PRESENT:byte = 1;
   MOTION_FLAG_R_KEY_ABSENT:byte = 2;
   MOTION_FLAG_T_KEY_16BIT:byte = 4;
+
+  MT_SKELETON_GEOMDEF_PM = 4;
+  MT_SKELETON_GEOMDEF_ST = 5;
 
 implementation
 uses sysutils, FastCrc, math;
@@ -3992,6 +4003,23 @@ begin
   end;
 end;
 
+procedure TOgfTrisContainer._RemoveAllTrisNotInCurrentLod();
+var
+  i, start:integer;
+begin
+  if IsLodAssigned() then begin
+    start:=_GetTriangleIdByOffset(_current_lod_params.offset);
+
+    for i:=0 to _current_lod_params.num_tris-1 do begin
+      _tris[i]:=_tris[start+i];
+    end;
+    setlength(_tris, _current_lod_params.num_tris);
+    _current_lod_params.offset:=0;
+    _current_lod_params.num_tris:=0;
+    _current_lod_params.num_verts:=0;
+  end;
+end;
+
 constructor TOgfTrisContainer.Create;
 begin
   Reset();
@@ -4069,10 +4097,18 @@ var
 begin
   result:=false;
   if not Loaded() then exit;
-  tri_id:=_GetTriangleIdByOffset(params.offset);
-  if (tri_id < 0) or (tri_id+params.num_tris > length(_tris)) then exit;
-  _current_lod_params:=params;
-  result:=true;
+
+  if (params.offset = 0) and (params.num_tris = TrisCountTotal()) then begin
+    // This "lod level" consists from the full model, so we can assume there is no "lod" at all
+    _current_lod_params.num_tris:=0;
+    _current_lod_params.num_verts:=0;
+    _current_lod_params.offset:=0;
+  end else begin
+    tri_id:=_GetTriangleIdByOffset(params.offset);
+    if (tri_id < 0) or (tri_id+params.num_tris > length(_tris)) then exit;
+    _current_lod_params:=params;
+    result:=true;
+  end;
 end;
 
 function TOgfTrisContainer.AssignedLodParams(): TOgfSlideWindowItem;
@@ -4096,6 +4132,25 @@ begin
   end;
 end;
 
+function TOgfTrisContainer.GetTriangle(idx: integer; for_current_lod: boolean; var t: TOgfTriangle): boolean;
+var
+  lod_start_idx:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if not for_current_lod or not IsLodAssigned() then begin
+    if (idx<0) or (idx>=length(_tris)) then exit;
+    t:=_tris[idx];
+    result:=true;
+  end else begin
+    if (idx<0) or (idx>=_current_lod_params.num_tris) then exit;
+    lod_start_idx:=_GetTriangleIdByOffset(_current_lod_params.offset);
+    t:=_tris[idx+lod_start_idx];
+    result:=true;
+  end;
+end;
+
 function TOgfTrisContainer.FilterVertices(var filter: TVertexFilterItems): boolean;
 var
   i, newi:integer;
@@ -4103,9 +4158,6 @@ begin
   result:=false;
 
   if not Loaded() then exit;
-
-  // Filtering vertices is prohibited for models with SWR - we will need to edit all sliding windows
-  if IsLodAssigned() then exit;
 
   newi:=0;
   for i:=0 to length(_tris)-1 do begin
@@ -4122,6 +4174,13 @@ begin
 end;
 
 { TOgfSwiContainer }
+
+procedure TOgfSwiContainer._ResetWithSingleReplacement(w: TOgfSlideWindowItem);
+begin
+  _selected_level:=0;
+  SetLength(_lods, 1);
+  _lods[0]:=w;
+end;
 
 constructor TOgfSwiContainer.Create;
 begin
@@ -4668,6 +4727,75 @@ begin
     result:=0;
   end else begin
     result:=_tris.TrisCountInCurrentLod();
+  end;
+end;
+
+function TOgfChild.GetLodLevels(): integer;
+begin
+  result:=0;
+
+  if Loaded() and _swr.Loaded() then begin
+    result:=_swr.GetLodLevelsCount();
+  end;
+end;
+
+function TOgfChild.AssignLodLevel(level: integer): boolean;
+begin
+  result:=false;
+  if not Loaded then exit;
+  if not _swr.Loaded() then exit;
+  if (level<0) or (level>=_swr.GetLodLevelsCount()) then exit;
+  result:=_tris.AssignLod(_swr.GetLodLevelParams(level));
+end;
+
+function TOgfChild.RemoveUnactiveLodsData(): boolean;
+var
+  filters:TVertexFilterItems;
+  i:integer;
+  t:TOgfTriangle;
+  w:TOgfSlideWindowItem;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  result:=true;
+  if not _swr.Loaded() then exit;
+  if not _tris.IsLodAssigned() then exit;
+
+  result:=false;
+  w:=_tris.AssignedLodParams();
+  setlength(filters, GetVerticesCount());
+  try
+    // iterate over all tris from the selected lod level, create filter map of used vertices
+    for i:=0 to length(filters)-1 do begin
+      filters[i].need_remove:=true;
+    end;
+
+    for i:=0 to GetTrisCountInCurrentLod()-1 do begin
+      if not _tris.GetTriangle(i, true, t) then exit;
+      filters[t.v1].need_remove:=false;
+      filters[t.v2].need_remove:=false;
+      filters[t.v3].need_remove:=false;
+    end;
+
+    // execute filter vertices using filter map
+    if not _verts.FilterVertices(filters) then exit;
+    // kill unused tris outside sliding window
+    _tris._RemoveAllTrisNotInCurrentLod();
+    //remap vertices indices in tris
+    if not _tris.FilterVertices(filters) then exit;
+
+    // modify swr data
+    if _hdr.ogf_type = MT_SKELETON_GEOMDEF_PM then begin
+      _hdr.ogf_type:=MT_SKELETON_GEOMDEF_ST;
+      _swr.Reset;
+    end else begin
+      w.offset:=0;
+      _swr._ResetWithSingleReplacement(w);
+    end;
+    result:=true;
+  finally
+    setlength(filters, 0)
   end;
 end;
 
