@@ -825,7 +825,7 @@ begin
        if length(args)>0 then begin
          result_description.SetDescription('invalid arguments count, expected 3 numbers')
        end else begin
-         if not _data.Meshes().Get(idx).Move(v) then begin
+         if not _data.Meshes().Get(idx).Move(v, nil, nil) then begin
            result_description.SetDescription('move operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else begin
            result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
@@ -877,7 +877,7 @@ begin
     end;
 
     amount:=amount*pi/180;
-    if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot()) then begin
+    if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), nil, nil) then begin
       result_description.SetDescription('rotate operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
     end else begin
       shader:=_data.Meshes().Get(idx).GetTextureData().shader;
@@ -909,7 +909,7 @@ begin
        if length(args)>0 then begin
          result_description.SetDescription('invalid arguments count, expected 3 floats');
        end else begin
-         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot()) then begin
+         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), nil, nil) then begin
            result_description.SetDescription('scale operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else begin
            result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');

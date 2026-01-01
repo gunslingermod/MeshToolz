@@ -161,9 +161,9 @@ type
     function Deserialize(rawdata:string):boolean;
     function Serialize():string;
     // Specific
-    function MoveVertices(offset:FVector3):boolean;
-    function ScaleVertices(factors:pFVector3; pivot_point:pFVector3):boolean;
-    function RotateVertices(m:pFMatrix3x3; pivot_point:pFVector3):boolean;
+    function MoveVertices(offset:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
+    function ScaleVertices(factors:pFVector3; pivot_point:pFVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
+    function RotateVertices(m:pFMatrix3x3; pivot_point:pFVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
     function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
     function GetVerticesCountForBoneID(boneid:TBoneID; ignorezeroweights:boolean):integer;
     function IsVertexAssignedToBoneID(vertexid:cardinal; boneid:TBoneID; ignorezeroweights:boolean):boolean;
@@ -312,9 +312,9 @@ type
     procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
     function RemoveVertices(cb:TVerticesIterationCallback; userdata:pointer):boolean; // true returned from cb will mark the vertex to be removed
 
-    function Scale(v:FVector3; pivot_point:FVector3):boolean;
-    function Move(v:FVector3):boolean;
-    function RotateUsingStandartAxis(amount_radians:single; rotation_axis:TOgfRotationAxis; pivot_point:FVector3):boolean;
+    function Scale(v:FVector3; pivot_point:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
+    function Move(v:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
+    function RotateUsingStandartAxis(amount_radians:single; rotation_axis:TOgfRotationAxis; pivot_point:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
 
   end;
 
@@ -4974,25 +4974,25 @@ begin
   end;
 end;
 
-function TOgfChild.Scale(v: FVector3; pivot_point: FVector3): boolean;
+function TOgfChild.Scale(v: FVector3; pivot_point: FVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
 begin
   if not Loaded() then begin
     result:=false;
   end else begin
-    result:=_verts.ScaleVertices(@v, @pivot_point);
+    result:=_verts.ScaleVertices(@v, @pivot_point, selection_callback, userdata);
   end;
 end;
 
-function TOgfChild.Move(v: FVector3): boolean;
+function TOgfChild.Move(v: FVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
 begin
   if not Loaded() then begin
     result:=false;
   end else begin
-    result:=_verts.MoveVertices(v);
+    result:=_verts.MoveVertices(v, selection_callback, userdata);
   end;
 end;
 
-function TOgfChild.RotateUsingStandartAxis(amount_radians: single; rotation_axis: TOgfRotationAxis; pivot_point: FVector3): boolean;
+function TOgfChild.RotateUsingStandartAxis(amount_radians: single; rotation_axis: TOgfRotationAxis; pivot_point: FVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
 var
   m:FMatrix3x3;
   c,s:single;
@@ -5027,7 +5027,7 @@ begin
         m.k.z:=1;
       end;
     end;
-    result:=_verts.RotateVertices(@m, @pivot_point);
+    result:=_verts.RotateVertices(@m, @pivot_point, selection_callback, userdata);
   end;
 end;
 
@@ -5266,71 +5266,125 @@ begin
   end;
 end;
 
-function TOgfVertsContainer.MoveVertices(offset: FVector3): boolean;
+function TOgfVertsContainer.MoveVertices(offset: FVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
 var
   i:integer;
   v:pTOgfVertexCommonData;
+  puv:pFVector2;
+  b:TVertexBones;
 begin
   result:=false;
   if not Loaded() then exit;
 
   result:=true;
-  for i:=0 to _verts_count-1 do begin
-    v:=_GetVertexDataPtr(i);
-    if v = nil then begin
-      result:=false;
-      break;
+  b:=TVertexBones.Create();
+  try
+    for i:=0 to _verts_count-1 do begin
+      v:=_GetVertexDataPtr(i);
+      if v = nil then begin
+        result:=false;
+        continue;
+      end;
+
+      if selection_callback<>nil then begin
+        puv:=_GetVertexUvDataPtr(i);
+        if (puv = nil) or not _GetVertexBindings(i, b) then begin
+          result:=false;
+          continue;
+        end;
+
+        if not selection_callback(i, v, puv, b, userdata) then continue;
+      end;
+
+      v^.pos.x:=v^.pos.x+offset.x;
+      v^.pos.y:=v^.pos.y+offset.y;
+      v^.pos.z:=v^.pos.z+offset.z;
     end;
-    v^.pos.x:=v^.pos.x+offset.x;
-    v^.pos.y:=v^.pos.y+offset.y;
-    v^.pos.z:=v^.pos.z+offset.z;
+
+  finally
+    FreeAndNil(b);
   end;
 end;
 
-function TOgfVertsContainer.ScaleVertices(factors: pFVector3; pivot_point: pFVector3): boolean;
+function TOgfVertsContainer.ScaleVertices(factors: pFVector3; pivot_point: pFVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
 var
   i:integer;
   v:pTOgfVertexCommonData;
+  puv:pFVector2;
+  b:TVertexBones;
 begin
   result:=false;
   if not Loaded() then exit;
 
   result:=true;
-  for i:=0 to _verts_count-1 do begin
-    v:=_GetVertexDataPtr(i);
-    if v = nil then begin
-      result:=false;
-    end else begin
-      v_sub(@v^.pos, pivot_point);
+  b:=TVertexBones.Create();
+  try
+    for i:=0 to _verts_count-1 do begin
+      v:=_GetVertexDataPtr(i);
+      if v = nil then begin
+        result:=false;
+        continue;
+      end;
 
+      if selection_callback<>nil then begin
+        puv:=_GetVertexUvDataPtr(i);
+        if (puv = nil) or not _GetVertexBindings(i, b) then begin
+          result:=false;
+          continue;
+        end;
+
+        if not selection_callback(i, v, puv, b, userdata) then continue;
+      end;
+
+      v_sub(@v^.pos, pivot_point);
       v^.pos.x:=v^.pos.x*factors^.x;
       v^.pos.y:=v^.pos.y*factors^.y;
       v^.pos.z:=v^.pos.z*factors^.z;
-
       v_add(@v^.pos, pivot_point)
     end;
+
+  finally
+    FreeAndNil(b);
   end;
 end;
 
-function TOgfVertsContainer.RotateVertices(m: pFMatrix3x3; pivot_point: pFVector3): boolean;
+function TOgfVertsContainer.RotateVertices(m: pFMatrix3x3; pivot_point: pFVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
 var
   i:integer;
   v:pTOgfVertexCommonData;
+  puv:pFVector2;
+  b:TVertexBones;
 begin
   result:=false;
   if not Loaded() then exit;
 
   result:=true;
-  for i:=0 to _verts_count-1 do begin
-    v:=_GetVertexDataPtr(i);
-    if v = nil then begin
-      result:=false;
-      break;
-    end else begin
+  b:=TVertexBones.Create();
+  try
+    for i:=0 to _verts_count-1 do begin
+      v:=_GetVertexDataPtr(i);
+      if v = nil then begin
+        result:=false;
+        continue;
+      end;
+
+      if selection_callback<>nil then begin
+        puv:=_GetVertexUvDataPtr(i);
+        if (puv = nil) or not _GetVertexBindings(i, b) then begin
+          result:=false;
+          continue;
+        end;
+
+        if not selection_callback(i, v, puv, b, userdata) then continue;
+      end;
+
       v^.pos:=v_sub(@v^.pos, pivot_point);
       v^.pos:=m_mul(m, @v^.pos);
       v^.pos:=v_add(@v^.pos, pivot_point)
-     end;
+    end;
+
+  finally
+    FreeAndNil(b);
   end;
 end;
 
