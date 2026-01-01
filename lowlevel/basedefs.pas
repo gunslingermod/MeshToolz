@@ -176,10 +176,10 @@ var
   dx, dy, dz:single;
 begin
   dx:=point2^.x-point1^.x;
-  dy:=point2^.y-point1^.z;
+  dy:=point2^.y-point1^.y;
   dz:=point2^.z-point1^.z;
 
-  result:=dx*dx+dy*dy+dz*dz
+  result:=sqrt(dx*dx+dy*dy+dz*dz);
 end;
 
 end.

@@ -89,9 +89,12 @@ TModelSlot = class
   function _CmdChildRemove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildPasteData(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildRotate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildMoveAll(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRotateAll(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildScaleAll(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildMoveSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRotateSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildScaleSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildRebind(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildBonestats(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildFilterBone(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -805,11 +808,80 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildMove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildMoveAll(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  original_sa:TSelectionArea;
+begin
+  original_sa:=_selectionarea;
+  _selectionarea:=TSelectionArea.Create();
+  try
+    _selectionarea.SetPivot(original_sa.GetPivot());
+    _selectionarea.ResetSelectionArea();
+    _selectionarea.InverseSelectedArea();
+    result:=_CmdChildMoveSelected(args, cmd, result_description, userdata);
+  finally
+    FreeAndNil(_selectionarea);
+    _selectionarea:=original_sa;
+  end;
+end;
+
+function TModelSlot._CmdChildRotateAll(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  original_sa:TSelectionArea;
+begin
+  original_sa:=_selectionarea;
+  _selectionarea:=TSelectionArea.Create();
+  try
+    _selectionarea.SetPivot(original_sa.GetPivot());
+    _selectionarea.ResetSelectionArea();
+    _selectionarea.InverseSelectedArea();
+    result:=_CmdChildRotateSelected(args, cmd, result_description, userdata);
+  finally
+    FreeAndNil(_selectionarea);
+    _selectionarea:=original_sa;
+  end;
+end;
+
+function TModelSlot._CmdChildScaleAll(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  original_sa:TSelectionArea;
+begin
+  original_sa:=_selectionarea;
+  _selectionarea:=TSelectionArea.Create();
+  try
+    _selectionarea.SetPivot(original_sa.GetPivot());
+    _selectionarea.ResetSelectionArea();
+    _selectionarea.InverseSelectedArea();
+    result:=_CmdChildScaleSelected(args, cmd, result_description, userdata);
+  finally
+    FreeAndNil(_selectionarea);
+    _selectionarea:=original_sa;
+  end;
+end;
+
+
+type
+  TVertexSelectionCallbackData = record
+    selection_area:TSelectionArea;
+  end;
+  pTVertexSelectionCallbackData = ^TVertexSelectionCallbackData;
+
+function VertexSelectionCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:TVertexSelectionCallbackData;
+begin
+  result:=false;
+  if (userdata = nil) or (data = nil) then exit;
+  cbdata:=pTVertexSelectionCallbackData(userdata)^;
+  result:=cbdata.selection_area.IsPointInSelection(data^.pos);
+end;
+
+function TModelSlot._CmdChildMoveSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   v:FVector3;
   shader, texture:string;
   idx:integer;
+  cbdata:TVertexSelectionCallbackData;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -825,7 +897,8 @@ begin
        if length(args)>0 then begin
          result_description.SetDescription('invalid arguments count, expected 3 numbers')
        end else begin
-         if not _data.Meshes().Get(idx).Move(v, nil, nil) then begin
+         cbdata.selection_area:=_selectionarea;
+         if not _data.Meshes().Get(idx).Move(v, @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('move operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else begin
            result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
@@ -836,12 +909,13 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildRotate(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildRotateSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
   amount:single;
   axis:TOgfRotationAxis;
   shader, texture:string;
+  cbdata:TVertexSelectionCallbackData;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -877,7 +951,8 @@ begin
     end;
 
     amount:=amount*pi/180;
-    if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), nil, nil) then begin
+    cbdata.selection_area:=_selectionarea;
+    if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
       result_description.SetDescription('rotate operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
     end else begin
       shader:=_data.Meshes().Get(idx).GetTextureData().shader;
@@ -889,11 +964,12 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildScale(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildScaleSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   v:FVector3;
   shader, texture:string;
   idx:integer;
+  cbdata:TVertexSelectionCallbackData;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -909,7 +985,8 @@ begin
        if length(args)>0 then begin
          result_description.SetDescription('invalid arguments count, expected 3 floats');
        end else begin
-         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), nil, nil) then begin
+         cbdata.selection_area:=_selectionarea;
+         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('scale operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else begin
            result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
@@ -919,6 +996,7 @@ begin
      end;
   end;
 end;
+
 
 function TModelSlot._CmdChildRebind(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
@@ -1193,9 +1271,12 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove, 'remove the selected child'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy, 'copy child into temp buffer'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData, 'insert new child with data from the temp buffer, expects index for new child'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMove, 'move child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rotate', @_IsModelLoadedPrecondition, @_CmdChildRotate, 'rotate child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('scale', @_IsModelLoadedPrecondition, @_CmdChildScale, 'scale child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMoveAll, 'move the entire child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rotate', @_IsModelLoadedPrecondition, @_CmdChildRotateAll, 'rotate the entire child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('scale', @_IsModelLoadedPrecondition, @_CmdChildScaleAll, 'scale the entire child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('moveselected', @_IsModelLoadedPrecondition, @_CmdChildMoveSelected, 'move selected part of the child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rotateselected', @_IsModelLoadedPrecondition, @_CmdChildRotateSelected, 'rotate selected part of the child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('scaleselected', @_IsModelLoadedPrecondition, @_CmdChildScaleSelected, 'scale selected part of the child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind, 'bind child to selected bone'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);

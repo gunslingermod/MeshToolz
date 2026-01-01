@@ -102,6 +102,8 @@ begin
         and (point.y>=min(_p1.y, _p2.y))
         and (point.z<=max(_p1.z, _p2.z))
         and (point.z>=min(_p1.z, _p2.z));
+  end else if _selectiontype = SelectionTypeNone then begin
+    result:=false;
   end else begin
     exit;
   end;
