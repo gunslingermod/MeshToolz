@@ -159,7 +159,8 @@ type
     function Serialize():string;
     // Specific
     function MoveVertices(offset:FVector3):boolean;
-    function ScaleVertices(factors:FVector3):boolean;
+    function ScaleVertices(factors:pFVector3; pivot_point:pFVector3):boolean;
+    function RotateVertices(m:pFMatrix3x3; pivot_point:pFVector3):boolean;
     function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
     function GetVerticesCountForBoneID(boneid:TBoneID; ignorezeroweights:boolean):integer;
     function IsVertexAssignedToBoneID(vertexid:cardinal; boneid:TBoneID; ignorezeroweights:boolean):boolean;
@@ -263,6 +264,8 @@ type
 
   { TOgfChild }
 
+  TOgfRotationAxis = (OgfRotationAxisX, OgfRotationAxisY, OgfRotationAxisZ);
+
   TOgfChild = class
   private
     _loaded:boolean;
@@ -297,8 +300,9 @@ type
     function FilterVertices(var filter:TVertexFilterItems):boolean;
     function RemoveVerticesForBoneId(boneid:TBoneID; remove_all_except_selected:boolean):boolean;
 
-    function Scale(v:FVector3):boolean;
+    function Scale(v:FVector3; pivot_point:FVector3):boolean;
     function Move(v:FVector3):boolean;
+    function RotateUsingStandartAxis(amount_radians:single; rotation_axis:TOgfRotationAxis; pivot_point:FVector3):boolean;
 
   end;
 
@@ -4738,12 +4742,12 @@ begin
   end;
 end;
 
-function TOgfChild.Scale(v: FVector3): boolean;
+function TOgfChild.Scale(v: FVector3; pivot_point: FVector3): boolean;
 begin
   if not Loaded() then begin
     result:=false;
   end else begin
-    result:=_verts.ScaleVertices(v);
+    result:=_verts.ScaleVertices(@v, @pivot_point);
   end;
 end;
 
@@ -4753,6 +4757,45 @@ begin
     result:=false;
   end else begin
     result:=_verts.MoveVertices(v);
+  end;
+end;
+
+function TOgfChild.RotateUsingStandartAxis(amount_radians: single; rotation_axis: TOgfRotationAxis; pivot_point: FVector3): boolean;
+var
+  m:FMatrix3x3;
+  c,s:single;
+begin
+  if not Loaded() then begin
+    result:=false;
+  end else begin
+    set_zero(m);
+    c:=cos(amount_radians);
+    s:=sin(amount_radians);
+
+    case rotation_axis of
+      OgfRotationAxisX: begin
+        m.i.x:=1;
+        m.j.y:=c;
+        m.j.z:=-s;
+        m.k.y:=s;
+        m.k.z:=c;
+      end;
+      OgfRotationAxisY: begin
+        m.i.x:=c;
+        m.i.z:=s;
+        m.j.y:=1;
+        m.k.x:=-s;
+        m.k.z:=c;
+      end;
+      OgfRotationAxisZ: begin
+        m.i.x:=c;
+        m.i.y:=-s;
+        m.j.x:=s;
+        m.j.y:=c;
+        m.k.z:=1;
+      end;
+    end;
+    result:=_verts.RotateVertices(@m, @pivot_point);
   end;
 end;
 
@@ -5012,7 +5055,32 @@ begin
   end;
 end;
 
-function TOgfVertsContainer.ScaleVertices(factors:FVector3): boolean;
+function TOgfVertsContainer.ScaleVertices(factors: pFVector3; pivot_point: pFVector3): boolean;
+var
+  i:integer;
+  v:pTOgfVertexCommonData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  result:=true;
+  for i:=0 to _verts_count-1 do begin
+    v:=_GetVertexDataPtr(i);
+    if v = nil then begin
+      result:=false;
+    end else begin
+      v_sub(@v^.pos, pivot_point);
+
+      v^.pos.x:=v^.pos.x*factors^.x;
+      v^.pos.y:=v^.pos.y*factors^.y;
+      v^.pos.z:=v^.pos.z*factors^.z;
+
+      v_add(@v^.pos, pivot_point)
+    end;
+  end;
+end;
+
+function TOgfVertsContainer.RotateVertices(m: pFMatrix3x3; pivot_point: pFVector3): boolean;
 var
   i:integer;
   v:pTOgfVertexCommonData;
@@ -5026,12 +5094,14 @@ begin
     if v = nil then begin
       result:=false;
       break;
-    end;
-    v^.pos.x:=v^.pos.x*factors.x;
-    v^.pos.y:=v^.pos.y*factors.y;
-    v^.pos.z:=v^.pos.z*factors.z;
+    end else begin
+      v^.pos:=v_sub(@v^.pos, pivot_point);
+      v^.pos:=m_mul(m, @v^.pos);
+      v^.pos:=v_add(@v^.pos, pivot_point)
+     end;
   end;
 end;
+
 
 function TOgfVertsContainer.RebindVerticesToNewBone(new_bone_index: TBoneID; old_bone_index: TBoneID): boolean;
 var

@@ -94,7 +94,7 @@
         <PackageName Value="LCL"/>
       </Item1>
     </RequiredPackages>
-    <Units Count="8">
+    <Units Count="9">
       <Unit0>
         <Filename Value="MeshCommander.lpr"/>
         <IsPartOfProject Value="True"/>
@@ -131,6 +131,11 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="TempBuffer"/>
       </Unit7>
+      <Unit8>
+        <Filename Value="selectionarea.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="SelectionArea"/>
+      </Unit8>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

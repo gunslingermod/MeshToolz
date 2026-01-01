@@ -70,6 +70,10 @@ type
   function v_sub(v1:pFVector3; v2:pFVector3):FVector3;
   function v_mul(v:pFVector3; n:single):FVector3;
 
+  function m_mul(m:pFMatrix3x3; v:pFVector3):FVector3;
+
+  function distance_between(point1:pFVector3; point2:pFVector3):single;
+
 implementation
 
 procedure set_zero(var v: FVector2);
@@ -158,6 +162,24 @@ begin
   result.x:=v^.x*n;
   result.y:=v^.y*n;
   result.z:=v^.z*n;
+end;
+
+function m_mul(m: pFMatrix3x3; v: pFVector3): FVector3;
+begin
+  result.x:=m^.i.x*v^.x+m^.i.y*v^.y+m^.i.z*v^.z;
+  result.y:=m^.j.x*v^.x+m^.j.y*v^.y+m^.j.z*v^.z;
+  result.z:=m^.k.x*v^.x+m^.k.y*v^.y+m^.k.z*v^.z;
+end;
+
+function distance_between(point1: pFVector3; point2: pFVector3): single;
+var
+  dx, dy, dz:single;
+begin
+  dx:=point2^.x-point1^.x;
+  dy:=point2^.y-point1^.z;
+  dz:=point2^.z-point1^.z;
+
+  result:=dx*dx+dy*dy+dz*dz
 end;
 
 end.

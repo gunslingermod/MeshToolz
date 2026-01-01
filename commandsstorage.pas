@@ -28,8 +28,9 @@ public
   function GetResultObject():TObject;
 end;
 
-TCommandPrecondition = function (args:string; result_description:TCommandResult; userdata:TObject):boolean of object;
-TCommandAction = function (var args:string; result_description:TCommandResult; userdata:TObject):boolean of object;
+TCommandSetup = class;
+TCommandPrecondition = function (args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean of object;
+TCommandAction = function (var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean of object;
 
 
 { TCommandSetup }
@@ -46,29 +47,43 @@ public
   function Execute(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
 end;
 
+{ TPropertyWithSubcommandsSetup }
+TCommandsStorage = class;
+
+TPropertyWithSubcommandsSetup = class(TCommandSetup)
+  _subcommands:TCommandsStorage;
+public
+  constructor Create(name:string; precondition:TCommandPrecondition; subcommands:TCommandsStorage; description:string='');
+end;
+
 
 TCommandItemType = (CommandItemTypeCall, CommandItemTypeProperty);
 
 { TCommandsStorage }
 
 TCommandsStorage = class
-  _default_action:TCommandAction;
+  _default_action:TCommandSetup;
   _calls:array of TCommandSetup;
   _properties:array of TCommandSetup;
 
   _result_desc:TCommandResult;
 
-  function _CmdEnumerateCalls(var args:string; result_description:TCommandResult; userdata:TObject):boolean; virtual;
-  function _CmdEnumerateProps(var args:string; result_description:TCommandResult; userdata:TObject):boolean; virtual;
-  function _CmdEnumerateAll(var args:string; result_description:TCommandResult; userdata:TObject):boolean; virtual;
+  function _EnumerateCalls():string; virtual;
+  function _EnumerateProps():string; virtual;
+  function _EnumerateAll(userdata:TObject):string; virtual;
+
+  function _CmdDefaultHelp(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+
+  function _CmdEnumerateSubcommand(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 public
   constructor Create(default_help:boolean);
   destructor Destroy();override;
 
-  procedure SetDefaultAction(act:TCommandAction);
+  procedure SetDefaultAction(act:TCommandSetup);
   function Find(name:string; itemtype:TCommandItemType):TCommandSetup;
   function DoRegister(act:TCommandSetup; itemtype:TCommandItemType):boolean;
-  function Execute(var args:string; userdata:TObject):TCommandResult;
+  function DoRegisterPropertyWithSubcommand(act:TPropertyWithSubcommandsSetup):boolean;
+  function Execute(var args:string; userdata:TObject):TCommandResult; virtual;
 end;
 
 { TCommandArg }
@@ -94,13 +109,13 @@ end;
 TFilteringCommands = class(TCommandsStorage)
   _filters:TIndexFilters;
 
-  function _CmdEnumerateFilters(var args:string; result_description:TCommandResult; userdata:TObject):boolean; virtual;
-  function _CmdEnumerateAll(var args:string; result_description:TCommandResult; userdata:TObject):boolean; override;
+  function _EnumerateFilters():string;
+  function _EnumerateAll(userdata:TObject):string; override;
 public
   constructor Create(default_help:boolean);
   destructor Destroy(); override;
   procedure RegisterFilter(name:string; defval:string='');
-  function FilteringExecute(var args:string; userdata:TObject):TCommandResult;
+  function Execute(var args:string; userdata:TObject):TCommandResult; override;
 
   function GetFilteringItemTypeName(item_id:integer):string; virtual; abstract;
   function GetFilteringItemsCount():integer; virtual; abstract;
@@ -113,6 +128,14 @@ uses strutils, sysutils;
 const
   OPCODE_CALL:char=':';
   OPCODE_INDEX:char='.';
+
+{ TPropertyWithSubcommandsSetup }
+
+constructor TPropertyWithSubcommandsSetup.Create(name: string; precondition: TCommandPrecondition; subcommands: TCommandsStorage; description: string);
+begin
+  inherited Create(name, precondition, nil, description);
+  _subcommands:=subcommands;
+end;
 
 { TCommandArg }
 
@@ -154,7 +177,7 @@ var
 begin
   result:=true;
   if _precondition<>nil then begin
-    result:=_precondition(args, result_description, userdata);
+    result:=_precondition(args, self, result_description, userdata);
   end;
 
   if not result then begin
@@ -162,7 +185,7 @@ begin
       result_description.SetDescription('precondition failed for "'+_name+'"');
     end;
   end else begin
-    result:=_action(args, result_description, userdata);
+    result:=_action(args, self, result_description, userdata);
 
     if not result and (length(result_description.GetDescription()) = 0) then begin
       result_description.SetDescription('action execution failed for "'+_name+'"');
@@ -229,14 +252,12 @@ end;
 
 { TCommandsStorage }
 
-function TCommandsStorage._CmdEnumerateCalls(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TCommandsStorage._EnumerateCalls(): string;
 var
+  r,s:string;
   i:integer;
-  r:string;
-  s:string;
 begin
   r:='';
-
   if length(_calls)>0 then begin
     r:=r+'Registered procedures:'+chr($0d)+chr($0a);
     for i:=0 to length(_calls)-1 do begin
@@ -249,19 +270,15 @@ begin
       r:=r+'  '+s+chr($0d)+chr($0a);
     end;
   end;
-
-  result_description.SetDescription(r);
-  result:=true;
+  result:=r;
 end;
 
-function TCommandsStorage._CmdEnumerateProps(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TCommandsStorage._EnumerateProps(): string;
 var
+  r,s:string;
   i:integer;
-  r:string;
-  s:string;
 begin
   r:='';
-
   if length(_properties)>0 then begin
     r:=r+'Registered properties:'+chr($0d)+chr($0a);
     for i:=0 to length(_properties)-1 do begin
@@ -274,23 +291,33 @@ begin
         r:=r+'  '+s+chr($0d)+chr($0a);
     end;
   end;
+  result:=r;
+end;
 
-  result_description.SetDescription(r);
+function TCommandsStorage._EnumerateAll(userdata: TObject): string;
+begin
+  result:=chr($0d)+chr($0a);
+  result:=result+_EnumerateProps();
+  result:=result+_EnumerateCalls()
+end;
+
+function TCommandsStorage._CmdDefaultHelp(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result_description.SetDescription(_EnumerateAll(userdata));
   result:=true;
 end;
 
-function TCommandsStorage._CmdEnumerateAll(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TCommandsStorage._CmdEnumerateSubcommand(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
-  r:string;
+  res:TCommandResult;
 begin
-  r:=chr($0d)+chr($0a);
-  _CmdEnumerateProps(args, result_description, userdata);
-  r:=r+result_description.GetDescription();
-  _CmdEnumerateCalls(args, result_description, userdata);
-  r:=r+result_description.GetDescription();
-
-  result_description.SetDescription(r);
-  result:=true;
+  result:=false;
+  if cmd is TPropertyWithSubcommandsSetup then begin
+    res:=(cmd as TPropertyWithSubcommandsSetup)._subcommands.Execute(args, userdata);
+    result:=res.IsSuccess();
+    result_description.SetWarningFlag(res.IsWarning());
+    result_description.SetDescription(res.GetDescription());
+  end;
 end;
 
 constructor TCommandsStorage.Create(default_help: boolean);
@@ -301,9 +328,7 @@ begin
   _result_desc:=TCommandResult.Create();
 
   if default_help then begin
-//    DoRegister(TCommandSetup.Create('help', nil, @_CmdEnumerateProps), CommandItemTypeProperty);
-//    DoRegister(TCommandSetup.Create('help', nil, @_CmdEnumerateCalls), CommandItemTypeCall);
-    _default_action:=@_CmdEnumerateAll;
+    _default_action:=TCommandSetup.Create('defaulthelp', nil, @_CmdDefaultHelp, 'show default help');
   end;
 end;
 
@@ -323,7 +348,7 @@ begin
   inherited Destroy();
 end;
 
-procedure TCommandsStorage.SetDefaultAction(act: TCommandAction);
+procedure TCommandsStorage.SetDefaultAction(act: TCommandSetup);
 begin
   FreeAndNil(_default_action);
   _default_action:=act;
@@ -370,6 +395,14 @@ begin
   end;
 end;
 
+function TCommandsStorage.DoRegisterPropertyWithSubcommand(act: TPropertyWithSubcommandsSetup): boolean;
+begin
+  if act._action = nil then begin
+    act._action:=@_CmdEnumerateSubcommand;
+  end;
+  if not DoRegister(act, CommandItemTypeProperty) then exit;
+end;
+
 function TCommandsStorage.Execute(var args: string; userdata: TObject): TCommandResult;
 var
   opcode:char;
@@ -385,7 +418,7 @@ begin
   if length(args)=0 then begin
     if _default_action<>nil then begin
       _result_desc.SetSuccess(true);
-      _default_action(args, _result_desc, userdata);
+      _default_action.Execute(args, _result_desc, userdata);
     end;
 
   end else begin
@@ -398,7 +431,7 @@ begin
         _result_desc.SetDescription('can''t parse call arguments');
       end else begin
         if length(name) = 0 then begin
-          _CmdEnumerateCalls(args, _result_desc, nil);
+          _default_action.Execute(args, _result_desc, nil);
           _result_desc.SetSuccess(false);
         end else begin
           args:=extracted_args;
@@ -413,7 +446,7 @@ begin
     end else if opcode = OPCODE_INDEX then begin
       name:=ExtractAlphabeticString(args);
       if length(name) = 0 then begin
-        _CmdEnumerateProps(args, _result_desc, nil);
+        _default_action.Execute(args, _result_desc, nil);
         _result_desc.SetSuccess(false);
       end else begin
         cmd:=Find(name, CommandItemTypeProperty);
@@ -446,10 +479,10 @@ end;
 
 { TFilteringCommands }
 
-function TFilteringCommands._CmdEnumerateFilters(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TFilteringCommands._EnumerateFilters(): string;
 var
-  i:integer;
   r:string;
+  i:integer;
 begin
   r:='';
 
@@ -460,25 +493,20 @@ begin
     end;
   end;
 
-  result_description.SetDescription(r);
-  result:=true;
+  result:=r;
 end;
 
-function TFilteringCommands._CmdEnumerateAll(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TFilteringCommands._EnumerateAll(userdata: TObject): string;
 var
   r:string;
 begin
   if userdata is TCommandIndexArg then begin
-    result:=inherited _CmdEnumerateAll(args, result_description, userdata);
+    result:=inherited _EnumerateAll(userdata);
   end else begin
     r:='Multi-value property, use index for direct access to single value or [] to apply filters and process a group of values'+chr($0d)+chr($0a);
-
-    inherited _CmdEnumerateAll(args, result_description, userdata);
-    r:=r+result_description.GetDescription();
-    _CmdEnumerateFilters(args, result_description, userdata);
-    r:=r+result_description.GetDescription();
-    result_description.SetDescription(r);
-    result:=true;
+    r:=r+inherited _EnumerateAll(userdata);
+    r:=r+_EnumerateFilters();
+    result:=r;
   end;
 end;
 
@@ -499,13 +527,12 @@ begin
   PushFilter(_filters, name, defval);
 end;
 
-function TFilteringCommands.FilteringExecute(var args: string; userdata: TObject): TCommandResult;
+function TFilteringCommands.Execute(var args: string; userdata: TObject): TCommandResult;
 var
   i:integer;
   tmpstr, r:string;
   cnt:integer;
   indexarg:TCommandIndexArg;
-
 begin
   result:=TCommandResult.Create();
 
@@ -528,7 +555,7 @@ begin
             indexarg:=TCommandIndexArg.Create(i, userdata);
             tmpstr:=args;
             try
-              Execute(tmpstr, indexarg);
+              inherited Execute(tmpstr, indexarg);
             finally
               FreeAndNil(indexarg);
             end;
@@ -560,13 +587,13 @@ begin
       tmpstr:=ExtractNumericString(args, false);
       if length(tmpstr)=0 then begin
         if _default_action<>nil then begin
-          _default_action(args, result, userdata);
+          _default_action.Execute(args, result, userdata);
         end;
 
         if length(trim(args)) = 0 then begin
           result.SetSuccess(true);
         end else begin
-          result.SetDescription('invalid syntax.'+chr($0d)+chr($0a)+result.GetDescription());
+          result.SetDescription('invalid syntax'+chr($0d)+chr($0a)+result.GetDescription());
           result.SetSuccess(false);
         end;
 
@@ -582,7 +609,7 @@ begin
         end else begin
           indexarg:=TCommandIndexArg.Create(i, userdata);
           try
-            Execute(args, indexarg);
+            inherited Execute(args, indexarg);
           finally
             FreeAndNil(indexarg);
           end;

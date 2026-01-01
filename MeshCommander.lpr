@@ -1,6 +1,7 @@
 program MeshCommander;
 
-uses CommandsParser, sysutils, commandsstorage, CommandsHelpers, TempBuffer, interfaces;
+uses CommandsParser, sysutils, commandsstorage, CommandsHelpers, TempBuffer,
+  interfaces, selectionarea;
 
 var
   g_models_slots:TSlotsContainer;

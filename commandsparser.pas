@@ -5,7 +5,7 @@ unit CommandsParser;
 interface
 
 uses
-  ogf_parser, basedefs, tempbuffer, commandsstorage;
+  ogf_parser, basedefs, tempbuffer, commandsstorage, SelectionArea;
 
 type
 TSlotsContainer = class;
@@ -47,59 +47,62 @@ TModelSlot = class
   _data:TOgfParser;
   _id:TSlotId;
   _container:TSlotsContainer;
+  _selectionarea:TSelectionArea;
 
+  _commands_selection:TCommandsStorage;
   _commands_upperlevel:TCommandsStorage;
   _commands_mesh:TCommandsStorage;
+  _commands_children:TChildrenCommands;
   _commands_skeleton:TCommandsStorage;
-
   _commands_bones:TBonesCommands;
   _commands_ikdata:TBonesCommands;
 
+  function _CmdSetPivot(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionSphere(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionBox(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionClear(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionTestPoint(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionInverse(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
-  _commands_children:TChildrenCommands;
 
-
-  function _IsModelLoadedPrecondition(args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _IsModelNotLoadedPrecondition(args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _IsModelHasSkeletonPrecondition(args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _IsModelLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _IsModelNotLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _IsModelHasSkeletonPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
   function GetBoneNameById(boneid: TBoneId): string;
 
-  function _CmdLoadFromFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdSaveToFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdUnload(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdClipboardMode(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdLoadFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdUnload(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdClipboardMode(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
-  function _CmdPasteMeshFromTempBuf(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdRemoveCollapsedMeshes(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdPasteMeshFromTempBuf(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdRemoveCollapsedMeshes(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 
-  function _CmdChildInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildSetTexture(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildSetShader(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildRemove(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildCopy(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildPasteData(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildMove(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildScale(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildRebind(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildBonestats(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildFilterBone(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _cmdChildSaveToFile(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildSetTexture(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildSetShader(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRemove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildPasteData(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRotate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRebind(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildBonestats(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildFilterBone(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _cmdChildSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
-  function _CmdSkeletonUniformScale(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdBoneInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdIKDataInfo(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdIKDataCopy(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdIKDataPaste(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKDataInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKDataCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKDataPaste(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
-  function _CmdPropMesh(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdPropChild(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdPropSkeleton(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdPropBones(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdPropIkdata(var args:string; result_description:TCommandResult; userdata:TObject):boolean;
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
@@ -206,9 +209,8 @@ end;
 
 { TModelSlot }
 
-
 //////////////////////////////////////////////////////// Preconditions ////////////////////////////////////////////////////
-function TModelSlot._IsModelLoadedPrecondition(args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._IsModelLoadedPrecondition(args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=true;
   if not _data.Loaded() then begin
@@ -217,7 +219,7 @@ begin
   end;
 end;
 
-function TModelSlot._IsModelNotLoadedPrecondition(args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._IsModelNotLoadedPrecondition(args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=true;
   if _data.Loaded() then begin
@@ -226,7 +228,7 @@ begin
   end;
 end;
 
-function TModelSlot._IsModelHasSkeletonPrecondition(args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._IsModelHasSkeletonPrecondition(args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=true;
   if not _data.Loaded() then begin
@@ -315,8 +317,136 @@ begin
   end;
 end;
 
-//////////////////////////////////////////////////////// Actions////// ////////////////////////////////////////////////////
-function TModelSlot._CmdLoadFromFile(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+//////////////////////////////////////////////////////// Selection //////////////////////////////////////////////////////////
+
+function TModelSlot._CmdSetPivot(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  v:FVector3;
+begin
+  result:=false;
+  set_zero(v{%H-});
+  if not ExtractFVector3(args, v) then begin
+    result_description.SetDescription('can''t extract vector from argument');
+  end else begin
+    args:=TrimLeft(args);
+    if length(args)>0 then begin
+      result_description.SetDescription('invalid arguments count, expected 3 numbers')
+    end else begin
+      _selectionarea.SetPivot(v);
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdSelectionSphere(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  v:FVector3;
+  r:single;
+begin
+  result:=false;
+  set_zero(v{%H-});
+  if not ExtractFVector3(args, v) then begin
+    result_description.SetDescription('can''t extract center point vector from arguments');
+    exit;
+  end;
+  args:=TrimLeft(args);
+  if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
+    result_description.SetDescription('procedure expects 4 numbers as arguments');
+    exit;
+  end;
+
+  args:=trim(rightstr(args, length(args)-1));
+  if not ExtractFloatFromString(args, r) then begin
+    result_description.SetDescription('can''t extract radius from arguments');
+    exit;
+  end;
+
+  args:=TrimLeft(args);
+  if length(args)<>0 then begin
+    result_description.SetDescription('invalid arguments count, expected 4 numbers')
+  end else begin
+    _selectionarea.SetSelectionAreaAsSphere(v, r);
+    result:=true;
+  end;
+end;
+
+function TModelSlot._CmdSelectionBox(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  p1, p2:FVector3;
+begin
+  result:=false;
+  set_zero(p1);
+  set_zero(p2);
+  if not ExtractFVector3(args, p1) then begin
+    result_description.SetDescription('can''t extract 1st point vector from arguments');
+    exit;
+  end;
+  args:=TrimLeft(args);
+  if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
+    result_description.SetDescription('procedure expects 6 numbers as arguments');
+    exit;
+  end;
+
+  args:=trim(rightstr(args, length(args)-1));
+  if not ExtractFVector3(args, p2) then begin
+    result_description.SetDescription('can''t extract 2nd point vector from arguments');
+    exit;
+  end;
+
+  args:=TrimLeft(args);
+  if length(args)<>0 then begin
+    result_description.SetDescription('invalid arguments count, expected 6 numbers')
+  end else begin
+    _selectionarea.SetSelectionAreaAsBox(p1, p2);
+    result:=true;
+  end;
+end;
+
+function TModelSlot._CmdSelectionClear(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  _selectionarea.ResetSelectionArea();
+  result:=true;
+end;
+
+function TModelSlot._CmdSelectionInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result_description.SetDescription(_selectionarea.Info());
+  result:=true;
+end;
+
+function TModelSlot._CmdSelectionTestPoint(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  v:FVector3;
+begin
+  result:=false;
+  set_zero(v);
+  if not ExtractFVector3(args, v) then begin
+    result_description.SetDescription('can''t extract point coordinates from arguments');
+    exit;
+  end;
+
+  args:=TrimLeft(args);
+  if length(args)<>0 then begin
+    result_description.SetDescription('invalid arguments count, expected 3 numbers')
+  end else begin
+    if _selectionarea.IsPointInSelection(v) then begin
+      result_description.SetDescription('Point is inside the selected area');
+    end else begin
+      result_description.SetDescription('Point is outside the selected area');
+    end;
+    result:=true;
+  end;
+
+end;
+
+function TModelSlot._CmdSelectionInverse(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=true;
+  _selectionarea.InverseSelectedArea();
+end;
+
+//////////////////////////////////////////////////////// Actions //////////////////////////////////////////////////////////
+function TModelSlot._CmdLoadFromFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   path:string;
 begin
@@ -336,7 +466,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdSaveToFile(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdSaveToFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   path:string;
 begin
@@ -356,7 +486,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdUnload(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdUnload(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=false;
 
@@ -364,7 +494,7 @@ begin
   result:=true;
 end;
 
-function TModelSlot._CmdInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   if not _data.Loaded then begin
     result_description.SetDescription('slot doesn''t contain loaded data');
@@ -374,7 +504,7 @@ begin
   result:=true;
 end;
 
-function TModelSlot._CmdClipboardMode(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdClipboardMode(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   i:integer;
 begin
@@ -394,47 +524,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdPropMesh(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  res:TCommandResult;
-begin
-  res:=_commands_mesh.Execute(args, userdata);
-  result:=res.IsSuccess();
-  result_description.SetWarningFlag(res.IsWarning());
-  result_description.SetDescription(res.GetDescription());
-end;
-
-function TModelSlot._CmdPropSkeleton(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  res:TCommandResult;
-begin
-  res:=_commands_skeleton.Execute(args, userdata);
-  result:=res.IsSuccess();
-  result_description.SetWarningFlag(res.IsWarning());
-  result_description.SetDescription(res.GetDescription());
-end;
-
-function TModelSlot._CmdPropBones(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  res:TCommandResult;
-begin
-  res:=_commands_bones.FilteringExecute(args, userdata);
-  result:=res.IsSuccess();
-  result_description.SetWarningFlag(res.IsWarning());
-  result_description.SetDescription(res.GetDescription());
-end;
-
-function TModelSlot._CmdPropChild(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  res:TCommandResult;
-begin
-  res:=_commands_children.FilteringExecute(args, userdata);
-  result:=res.IsSuccess();
-  result_description.SetWarningFlag(res.IsWarning());
-  result_description.SetDescription(res.GetDescription());
-end;
-
-function TModelSlot._CmdPasteMeshFromTempBuf(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdPasteMeshFromTempBuf(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject ): boolean;
 var
   s:string;
   meshid:integer;
@@ -457,7 +547,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdRemoveCollapsedMeshes(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdRemoveCollapsedMeshes(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   i:integer;
   shader, texture:string;
@@ -481,7 +571,7 @@ begin
   result_description.SetDescription(r);
 end;
 
-function TModelSlot._CmdSkeletonUniformScale(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdSkeletonUniformScale(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject ): boolean;
 var
   k:single;
 begin
@@ -500,7 +590,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdBoneInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdBoneInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
   r:string;
@@ -516,7 +606,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdIKDataInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdIKDataInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
   r:string;
@@ -536,7 +626,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdIKDataCopy(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdIKDataCopy(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   s:string;
   idx:integer;
@@ -555,7 +645,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdIKDataPaste(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdIKDataPaste(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   s:string;
   idx:integer;
@@ -575,7 +665,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildInfo(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
   r:string;
@@ -597,7 +687,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildSetTexture(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildSetTexture(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   texdata:TOgfTextureData;
   shader, texture:string;
@@ -619,7 +709,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildSetShader(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildSetShader(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   texdata:TOgfTextureData;
   shader, texture:string;
@@ -641,7 +731,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildRemove(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildRemove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   shader, texture:string;
   idx:integer;
@@ -661,7 +751,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildCopy(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildCopy(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   shader, texture:string;
   s:string;
@@ -684,7 +774,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildPasteData(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildPasteData(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   shader, texture:string;
   s:string;
@@ -712,7 +802,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildMove(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildMove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   v:FVector3;
   shader, texture:string;
@@ -743,7 +833,60 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildScale(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildRotate(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  amount:single;
+  axis:TOgfRotationAxis;
+  shader, texture:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    if not ExtractFloatFromString(args, amount) then begin
+      result_description.SetDescription('cannot extract argument #1 (rotation angle in degrees)');
+      exit;
+    end;
+
+    args:=trimleft(args);
+    if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      result_description.SetDescription('procedure expects 2 arguments');
+      exit;
+    end;
+
+
+    args:=trim(rightstr(args, length(args)-1));
+    if (length(args)=0) then begin
+      result_description.SetDescription('cannot extract argument #2 (rotation axis)');
+      exit;
+    end;
+
+    if (args[1]='x') or (args[1]='X') then begin
+      axis:=OgfRotationAxisX;
+    end else if (args[1]='y') or (args[1]='Y') then begin
+      axis:=OgfRotationAxisY;
+    end else if (args[1]='z') or (args[1]='Z') then begin
+      axis:=OgfRotationAxisZ;
+    end else begin
+      result_description.SetDescription('rotation axis must be a letter (X, Y or Z)');
+      exit;
+    end;
+
+    amount:=amount*pi/180;
+    if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot()) then begin
+      result_description.SetDescription('rotate operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+    end else begin
+      shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+      texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+      result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully rotated');
+      result:=true;
+    end;
+
+  end;
+end;
+
+function TModelSlot._CmdChildScale(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   v:FVector3;
   shader, texture:string;
@@ -763,7 +906,7 @@ begin
        if length(args)>0 then begin
          result_description.SetDescription('invalid arguments count, expected 3 floats');
        end else begin
-         if not _data.Meshes().Get(idx).Scale(v) then begin
+         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot()) then begin
            result_description.SetDescription('scale operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else begin
            result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
@@ -774,7 +917,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildRebind(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildRebind(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   dest_boneid,  src_boneid:TBoneID;
   shader, texture:string;
@@ -820,7 +963,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildBonestats(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildBonestats(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   i, vcnt:integer;
   shader, texture:string;
@@ -837,6 +980,7 @@ begin
     texture:=_data.Meshes().Get(idx).GetTextureData().texture;
     r:='mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') is assigned to the following bones:'+chr($0d)+chr($0a);
     found:=false;
+    s:=_data.Skeleton();
     for i:=0 to s.GetBonesCount()-1 do begin
       vcnt:= _data.Meshes().Get(idx).GetVerticesCountForBoneID(i);
       if vcnt > 0 then begin
@@ -853,7 +997,7 @@ begin
   end;
 end;
 
-function TModelSlot._CmdChildFilterBone(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdChildFilterBone(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   boneid:TBoneID;
   shader, texture:string;
@@ -897,7 +1041,7 @@ begin
   end;
 end;
 
-function TModelSlot._cmdChildSaveToFile(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._cmdChildSaveToFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   path:string;
   s:string;
@@ -933,21 +1077,21 @@ begin
   end;
 end;
 
-function TModelSlot._CmdPropIkdata(var args: string; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  res:TCommandResult;
-begin
-  res:=_commands_ikdata.FilteringExecute(args, userdata);
-  result:=res.IsSuccess();
-  result_description.SetWarningFlag(res.IsWarning());
-  result_description.SetDescription(res.GetDescription());
-end;
-
 constructor TModelSlot.Create(id: TSlotId; container: TSlotsContainer);
 begin
   _id:=id;
   _data:=TOgfParser.Create();
   _container:=container;
+  _selectionarea:=TSelectionArea.Create();
+
+  _commands_selection:=TCommandsStorage.Create(true);
+  _commands_selection.DoRegister(TCommandSetup.Create('pivotpoint', nil, @_CmdSetPivot, 'set pivot point for rotation / scaling commands'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('sphere', nil, @_CmdSelectionSphere, 'set spherical selection, expects 4 numbers (center point x,y,z and sphere radius)'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('box', nil, @_CmdSelectionBox, 'set box selection, expects 6 numbers (box left-down and right-up points)'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('reset', nil, @_CmdSelectionClear, 'reset selection'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('inverse', nil, @_CmdSelectionInverse, 'inverse selected area'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('testpoint', nil, @_CmdSelectionTestPoint, 'check if point from arguments is in selected area'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('info', nil, @_CmdSelectionInfo, 'show current selection info'), CommandItemTypeCall);
 
   _commands_upperlevel:=TCommandsStorage.Create(true);
     _commands_mesh:=TCommandsStorage.Create(true);
@@ -956,17 +1100,17 @@ begin
       _commands_bones:=TBonesCommands.Create(self);
       _commands_ikdata:=TBonesCommands.Create(self);
 
+  _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('selection', nil, _commands_selection, 'control pivot point and selection area'));
+  _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('mesh', @_IsModelLoadedPrecondition, _commands_mesh, 'access group of properties and procedures associated with model''s mesh'));
+  _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('skeleton', @_IsModelLoadedPrecondition, _commands_skeleton, 'access group of properties and procedures associated with model''s mesh'));
 
-
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('mesh', @_IsModelLoadedPrecondition, @_CmdPropMesh, 'access group of properties and procedures associated with model''s mesh'), CommandItemTypeProperty);
-  _commands_upperlevel.DoRegister(TCommandSetup.Create('skeleton', @_IsModelLoadedPrecondition, @_CmdPropSkeleton, 'access group of properties and procedures associated with model''s mesh'), CommandItemTypeProperty);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('loadfromfile', @_IsModelNotLoadedPrecondition, @_CmdLoadFromFile, 'load OGF data to selected model slot, expects file path'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_CmdSaveToFile, 'save data from selected model slot to OGF, expects file path'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('unload', @_IsModelLoadedPrecondition, @_CmdUnload, 'clear selected model slot'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdInfo, 'display selected slot info'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('setclipboardmode', nil, @_CmdClipboardMode, 'switches temp buffer between internal storage and system clipboard (globally for all slots)'), CommandItemTypeCall);
 
-  _commands_mesh.DoRegister(TCommandSetup.Create('child', @_IsModelLoadedPrecondition, @_CmdPropChild, 'array of sub-meshes with different textures'), CommandItemTypeProperty);
+  _commands_mesh.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('child', @_IsModelLoadedPrecondition, _commands_children, 'array of sub-meshes with different textures'));
   _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf, 'paste child previously copied into temp buffer'), CommandItemTypeCall);
   _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes, 'remove all children without real mesh (without vertices)'), CommandItemTypeCall);
 
@@ -977,15 +1121,16 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy, 'copy child into temp buffer'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData, 'replace the selected child with data from the temp buffer'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMove, 'move child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelLoadedPrecondition, @_CmdChildScale, 'scale child, expects a number (scaling factor, negative means scaling with mirroring)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rotate', @_IsModelLoadedPrecondition, @_CmdChildRotate, 'rotate child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('scale', @_IsModelLoadedPrecondition, @_CmdChildScale, 'scale child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind, 'bind child to selected bone'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_cmdChildSaveToFile, 'save selected child to file (expects file name)'), CommandItemTypeCall);
 
-  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton, expects a number (scaling factor, negative means scaling with mirroring)'), CommandItemTypeCall);
-  _commands_skeleton.DoRegister(TCommandSetup.Create('bone', @_IsModelHasSkeletonPrecondition, @_CmdPropBones, 'access array of bones'), CommandItemTypeProperty);
-  _commands_skeleton.DoRegister(TCommandSetup.Create('ikdata', @_IsModelHasSkeletonPrecondition, @_CmdPropIkdata, 'access array of bones'' IK Data'), CommandItemTypeProperty);
+  _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsModelHasSkeletonPrecondition, _commands_bones, 'access array of bones'));
+  _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('ikdata', @_IsModelHasSkeletonPrecondition, _commands_ikdata, 'access array of bones'' IK Data'));
+  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
 
@@ -1003,6 +1148,7 @@ begin
   FreeAndNil(_commands_skeleton);
   FreeAndNil(_commands_mesh);
   FreeAndNil(_commands_upperlevel);
+  FreeAndNil(_selectionarea);
   FreeAndNil(_data);
   inherited Destroy;
 end;
