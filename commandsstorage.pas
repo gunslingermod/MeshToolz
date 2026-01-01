@@ -104,13 +104,19 @@ public
   function Get():integer;
 end;
 
+TRegisteredFilter = record
+  name:string;
+  defval:string;
+end;
+
 { TFilteringCommands }
 
 TFilteringCommands = class(TCommandsStorage)
-  _filters:TIndexFilters;
+  _registered_filters:array of TRegisteredFilter;
 
   function _EnumerateFilters():string;
   function _EnumerateAll(userdata:TObject):string; override;
+  procedure _FillFilters(var f:TIndexFilters);
 public
   constructor Create(default_help:boolean);
   destructor Destroy(); override;
@@ -119,7 +125,7 @@ public
 
   function GetFilteringItemTypeName(item_id:integer):string; virtual; abstract;
   function GetFilteringItemsCount():integer; virtual; abstract;
-  function CheckFiltersForItem(item_id:integer):boolean; virtual; abstract;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; virtual; abstract;
 end;
 
 implementation
@@ -486,10 +492,10 @@ var
 begin
   r:='';
 
-  if length(_filters)>0 then begin
+  if length(_registered_filters)>0 then begin
     r:=r+'Registered filters:'+chr($0d)+chr($0a);
-    for i:=0 to length(_filters)-1 do begin
-      r:=r+'  '+_filters[i].name+chr($0d)+chr($0a);
+    for i:=0 to length(_registered_filters)-1 do begin
+      r:=r+'  '+_registered_filters[i].name+chr($0d)+chr($0a);
     end;
   end;
 
@@ -510,21 +516,35 @@ begin
   end;
 end;
 
+procedure TFilteringCommands._FillFilters(var f: TIndexFilters);
+var
+  i:integer;
+begin
+  for i:=0 to length(_registered_filters)-1 do begin
+    PushFilter(f, _registered_filters[i].name, _registered_filters[i].defval);
+  end;
+end;
+
 constructor TFilteringCommands.Create(default_help: boolean);
 begin
   inherited;
-  InitFilters(_filters);
+  setlength(_registered_filters, 0);
 end;
 
 destructor TFilteringCommands.Destroy();
 begin
-  ClearFilters(_filters);
+  setlength(_registered_filters, 0);
   inherited Destroy();
 end;
 
 procedure TFilteringCommands.RegisterFilter(name: string; defval: string);
+var
+  i:integer;
 begin
-  PushFilter(_filters, name, defval);
+  i:=length(_registered_filters);
+  setlength(_registered_filters, i+1);
+  _registered_filters[i].name:=name;
+  _registered_filters[i].defval:=defval;
 end;
 
 function TFilteringCommands.Execute(var args: string; userdata: TObject): TCommandResult;
@@ -533,14 +553,17 @@ var
   tmpstr, r:string;
   cnt:integer;
   indexarg:TCommandIndexArg;
+  filters:TIndexFilters;
 begin
   result:=TCommandResult.Create();
 
+  InitFilters(filters);
+  _FillFilters(filters);
   try
     result.Reset();
     result.SetSuccess(false);
 
-    if ExtractIndexFilter(args, _filters, i) then begin
+    if ExtractIndexFilter(args, filters, i) then begin
       if i < 0 then begin
         result.SetDescription('invalid filter rule');
       end else begin
@@ -550,7 +573,7 @@ begin
         cnt:=0;
         result.SetSuccess(true);
         for i:=GetFilteringItemsCount()-1 downto 0 do begin
-          if CheckFiltersForItem(i) then begin
+          if CheckFiltersForItem(i, filters) then begin
             cnt:=cnt+1;
             indexarg:=TCommandIndexArg.Create(i, userdata);
             tmpstr:=args;
@@ -622,6 +645,7 @@ begin
     end;
 
   finally
+    ClearFilters(filters);
     FreeAndNil(_result_desc);
     _result_desc:=result;
   end;

@@ -5,7 +5,7 @@ unit CommandsParser;
 interface
 
 uses
-  ogf_parser, basedefs, tempbuffer, commandsstorage, SelectionArea;
+  ogf_parser, basedefs, tempbuffer, commandsstorage, SelectionArea, CommandsHelpers;
 
 type
 TSlotsContainer = class;
@@ -27,7 +27,7 @@ public
   constructor Create(slot:TModelSlot);
   function GetFilteringItemTypeName(item_id:integer):string; override;
   function GetFilteringItemsCount():integer; override;
-  function CheckFiltersForItem(item_id:integer):boolean; override;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
 end;
 
 { TBonesCommands }
@@ -37,7 +37,7 @@ public
   constructor Create(slot:TModelSlot);
   function GetFilteringItemTypeName(item_id:integer):string; override;
   function GetFilteringItemsCount():integer; override;
-  function CheckFiltersForItem(item_id:integer):boolean; override;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
 end;
 
 
@@ -108,7 +108,7 @@ TModelSlot = class
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
   destructor Destroy; override;
-  function Id():TSlotId;
+  function SlotId():TSlotId;
   function Data():TOgfParser;
 
   function ExecuteCmd(cmd:string):TCommandResult;
@@ -128,7 +128,7 @@ public
 end;
 
 implementation
-uses sysutils, strutils, CommandsHelpers, ChunkedFileParser;
+uses sysutils, strutils, ChunkedFileParser;
 
 const
   BUFFER_TYPE_CHILDMESH:integer=100;
@@ -171,10 +171,10 @@ begin
   end;
 end;
 
-function TChildrenCommands.CheckFiltersForItem(item_id: integer): boolean;
+function TChildrenCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilters): boolean;
 begin
-  result:= IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().texture, _filters[0], FILTER_MODE_EXACT)
-       and IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().shader,  _filters[1], FILTER_MODE_EXACT)
+  result:= IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().texture, filters[0], FILTER_MODE_EXACT)
+       and IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().shader,  filters[1], FILTER_MODE_EXACT)
 end;
 
 { TBonesCommands }
@@ -202,10 +202,10 @@ begin
   end;
 end;
 
-function TBonesCommands.CheckFiltersForItem(item_id: integer): boolean;
+function TBonesCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilters): boolean;
 begin
-  result:=IsMatchFilter(_slot.Data().Skeleton().GetBoneName(item_id), _filters[0], FILTER_MODE_EXACT)
-       and IsMatchFilter(inttostr(item_id), _filters[1], FILTER_MODE_EXACT)
+  result:=IsMatchFilter(_slot.Data().Skeleton().GetBoneName(item_id), filters[0], FILTER_MODE_EXACT)
+       and IsMatchFilter(inttostr(item_id), filters[1], FILTER_MODE_EXACT)
 end;
 
 
@@ -675,7 +675,7 @@ begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-    if (id >=0) and (id < _data.Meshes.Count()) then begin
+    if (idx >=0) and (idx < _data.Meshes.Count()) then begin
       r:='Child mesh #'+inttostr(idx)+':'+chr($0d)+chr($0a);
       r:=r+'- Texture: '+_data.Meshes.Get(idx).GetTextureData().texture+chr($0d)+chr($0a);
       r:=r+'- Shader: '+_data.Meshes.Get(idx).GetTextureData().shader+chr($0d)+chr($0a);
@@ -1230,7 +1230,7 @@ begin
   inherited Destroy;
 end;
 
-function TModelSlot.Id(): TSlotId;
+function TModelSlot.SlotId(): TSlotId;
 begin
   result:=_id;
 end;
@@ -1271,7 +1271,7 @@ var
   i:integer;
 begin
    for i:=0 to length(_model_slots)-1 do begin
-     if _model_slots[i].Id() = id then begin
+     if _model_slots[i].SlotId() = id then begin
        result:=_model_slots[i];
        exit;
      end;
