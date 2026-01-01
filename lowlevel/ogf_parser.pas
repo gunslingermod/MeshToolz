@@ -151,6 +151,7 @@ type
     function _GetVertexUvDataPtr(id:cardinal):pFVector2;
     function _GetVertexBindings(id:cardinal; bindings_out:TVertexBones):boolean;
     function _SetVertexBindings(id:cardinal; bindings_in:TVertexBones):boolean;
+    function _FilterVertices(var filter:TVertexFilterItems):boolean;
   public
     // Common
     constructor Create;
@@ -172,7 +173,6 @@ type
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
 
-    function FilterVertices(var filter:TVertexFilterItems):boolean;
     procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
   end;
 
@@ -187,10 +187,10 @@ type
 
   TOgfSwiContainer = class
   private
-    _selected_level:integer;
     _lods:array of TOgfSlideWindowItem;
 
     procedure _ResetWithSingleReplacement(w:TOgfSlideWindowItem);
+    function _UpdateLodLevelData(idx:integer; swi:TOgfSlideWindowItem):boolean;
   public
     // Common
     constructor Create;
@@ -202,9 +202,7 @@ type
 
     // Specific
     function GetLodLevelsCount():integer;
-    function SelectLodLevel(level_id:integer):boolean;
-    function GetSelectedLodLevel():integer;
-    function GetLodLevelParams(level_id:integer=-1):TOgfSlideWindowItem;
+    function GetLodLevelParams(level_id:integer):TOgfSlideWindowItem;
   end;
 
   TOgfVertexIndex = word;
@@ -215,6 +213,7 @@ type
   end;
   pTOgfTriangle = ^TOgfTriangle;
 
+  TTrisRemapIndices = array of integer;
   { TOgfTrisContainer }
 
   TOgfTrisContainer = class
@@ -224,6 +223,8 @@ type
 
     function _GetTriangleIdByOffset(offset:integer):integer;
     procedure _RemoveAllTrisNotInCurrentLod();
+    function _FilterVertices(var filter:TVertexFilterItems; swr_data:TOgfSwiContainer):boolean;
+    function _CorrectSwi(swi:TOgfSlideWindowItem; remap:TTrisRemapIndices):TOgfSlideWindowItem;
   public
     // Common
     constructor Create;
@@ -240,8 +241,6 @@ type
     function TrisCountTotal():integer;
     function TrisCountInCurrentLod():integer;
     function GetTriangle(idx:integer; for_current_lod:boolean; var t:TOgfTriangle):boolean;
-
-    function FilterVertices(var filter:TVertexFilterItems):boolean;
   end;
 
   TOgfTextureData = record
@@ -311,7 +310,7 @@ type
     function FilterVertices(var filter:TVertexFilterItems):boolean;
 
     procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
-    function RemoveVertices(cb:TVerticesIterationCallback; userdata:pointer):boolean; // return true from cb will mark the vertex to be removed
+    function RemoveVertices(cb:TVerticesIterationCallback; userdata:pointer):boolean; // true returned from cb will mark the vertex to be removed
 
     function Scale(v:FVector3; pivot_point:FVector3):boolean;
     function Move(v:FVector3):boolean;
@@ -4103,6 +4102,7 @@ begin
     _current_lod_params.num_tris:=0;
     _current_lod_params.num_verts:=0;
     _current_lod_params.offset:=0;
+    result:=true;
   end else begin
     tri_id:=_GetTriangleIdByOffset(params.offset);
     if (tri_id < 0) or (tri_id+params.num_tris > length(_tris)) then exit;
@@ -4151,13 +4151,22 @@ begin
   end;
 end;
 
-function TOgfTrisContainer.FilterVertices(var filter: TVertexFilterItems): boolean;
+function TOgfTrisContainer._FilterVertices(var filter: TVertexFilterItems; swr_data: TOgfSwiContainer): boolean;
 var
   i, newi:integer;
+  tris_remap_indices:TTrisRemapIndices;
+  swi:TOgfSlideWindowItem;
 begin
   result:=false;
 
   if not Loaded() then exit;
+
+  if swr_data <> nil then begin
+    setlength(tris_remap_indices, length(_tris));
+    for i:=0 to length(tris_remap_indices)-1 do begin
+      tris_remap_indices[i]:=-1; // by default mark tris as deleted
+    end;
+  end;
 
   newi:=0;
   for i:=0 to length(_tris)-1 do begin
@@ -4165,21 +4174,100 @@ begin
       _tris[newi].v1:=filter[_tris[i].v1].new_id;
       _tris[newi].v2:=filter[_tris[i].v2].new_id;
       _tris[newi].v3:=filter[_tris[i].v3].new_id;
+
+      if swr_data <> nil then begin
+        tris_remap_indices[i]:=newi;
+      end;
+
       newi:=newi+1;
     end;
   end;
+
+  if IsLodAssigned() then begin
+    swi:=_CorrectSwi(_current_lod_params, tris_remap_indices);
+    AssignLod(swi);
+  end;
+
+  if swr_data <> nil then begin
+    for i:=swr_data.GetLodLevelsCount()-1 downto 0 do begin
+      swi:=swr_data.GetLodLevelParams(i);
+      swi:=_CorrectSwi(swi, tris_remap_indices);
+      swr_data._UpdateLodLevelData(i, swi);
+    end;
+  end;
+
+  setlength(tris_remap_indices, 0);
   setlength(_tris, newi);
 
   result:=true;
+end;
+
+function TOgfTrisContainer._CorrectSwi(swi: TOgfSlideWindowItem; remap: TTrisRemapIndices): TOgfSlideWindowItem;
+var
+  i, idx:integer;
+  start:integer;
+  minvertexid, maxvertexid:cardinal;
+  search_for_start:boolean;
+begin
+  minvertexid:=$FFFFFFFF;
+  maxvertexid:=0;
+
+
+  start:=_GetTriangleIdByOffset(swi.offset);
+  search_for_start:=true;
+  result.num_tris:=0;
+  result.num_verts:=0;
+  result.offset:=0;
+  for i:=0 to swi.num_tris-1 do begin
+    idx:=i+start;
+    if remap[idx] >=0 then begin
+      if search_for_start then begin
+        search_for_start:=false;
+        result.offset:=(remap[idx] * sizeof(TOgfTriangle)) div sizeof(TOgfVertexIndex);
+      end;
+      result.num_tris:=result.num_tris+1;
+
+      if _tris[remap[idx]].v1 > maxvertexid then maxvertexid:=_tris[remap[idx]].v1;
+      if _tris[remap[idx]].v2 > maxvertexid then maxvertexid:=_tris[remap[idx]].v2;
+      if _tris[remap[idx]].v3 > maxvertexid then maxvertexid:=_tris[remap[idx]].v3;
+
+      if _tris[remap[idx]].v1 < minvertexid then minvertexid:=_tris[remap[idx]].v1;
+      if _tris[remap[idx]].v2 < minvertexid then minvertexid:=_tris[remap[idx]].v2;
+      if _tris[remap[idx]].v3 < minvertexid then minvertexid:=_tris[remap[idx]].v3;
+    end;
+  end;
+
+  if result.num_tris>0 then begin
+    result.num_verts:=maxvertexid - minvertexid+1;
+  end;
+
 end;
 
 { TOgfSwiContainer }
 
 procedure TOgfSwiContainer._ResetWithSingleReplacement(w: TOgfSlideWindowItem);
 begin
-  _selected_level:=0;
   SetLength(_lods, 1);
   _lods[0]:=w;
+end;
+
+function TOgfSwiContainer._UpdateLodLevelData(idx: integer; swi: TOgfSlideWindowItem): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if (idx<0) or (idx>=length(_lods)) then exit;
+  _lods[idx]:=swi;
+  result:=true;
+
+  if (swi.num_tris = 0) or (swi.num_verts=0) then begin
+    for i:=idx to length(_lods)-2 do begin
+      _lods[i]:=_lods[i+1];
+    end;
+    setlength(_lods, length(_lods)-1);
+  end;
 end;
 
 constructor TOgfSwiContainer.Create;
@@ -4196,7 +4284,6 @@ end;
 procedure TOgfSwiContainer.Reset;
 begin
   SetLength(_lods, 0);
-  _selected_level:=0;
 end;
 
 function TOgfSwiContainer.Loaded(): boolean;
@@ -4253,28 +4340,18 @@ begin
   result:=length(_lods);
 end;
 
-function TOgfSwiContainer.SelectLodLevel(level_id: integer): boolean;
-begin
-  result:=false;
-  if not Loaded() then exit;
-  if level_id >= GetLodLevelsCount() then exit;
-  _selected_level:=level_id;
-  result:=true;
-end;
-
-function TOgfSwiContainer.GetSelectedLodLevel(): integer;
-begin
-  result:=_selected_level;
-end;
-
 function TOgfSwiContainer.GetLodLevelParams(level_id: integer): TOgfSlideWindowItem;
 begin
   result.num_tris:=0;
   result.num_verts:=0;
   result.offset:=0;
   if not Loaded() then exit;
-  if level_id < 0 then level_id := _selected_level;
-  if level_id >= GetLodLevelsCount() then exit;
+  if (level_id < 0) then begin
+    level_id:=0;
+  end;
+  if (level_id >= GetLodLevelsCount()) then begin
+    level_id:=GetLodLevelsCount()-1;
+  end;
   result:=_lods[level_id];
 end;
 
@@ -4646,7 +4723,6 @@ begin
       tmp:=r.GetCurrentChunkRawDataAsString();
       if not _swr.Deserialize(tmp) then exit;
       if not r.LeaveSubChunk() then exit;
-      if not _swr.SelectLodLevel(0) then exit;
       if not _tris.AssignLod(_swr.GetLodLevelParams(0)) then exit;
     end;
 
@@ -4778,12 +4854,12 @@ begin
       filters[t.v3].need_remove:=false;
     end;
 
-    // execute filter vertices using filter map
-    if not _verts.FilterVertices(filters) then exit;
+    // execute filter vertices using filtering map
+    if not _verts._FilterVertices(filters) then exit;
     // kill unused tris outside sliding window
     _tris._RemoveAllTrisNotInCurrentLod();
     //remap vertices indices in tris
-    if not _tris.FilterVertices(filters) then exit;
+    if not _tris._FilterVertices(filters, nil) then exit;
 
     // modify swr data
     if _hdr.ogf_type = MT_SKELETON_GEOMDEF_PM then begin
@@ -4842,11 +4918,8 @@ begin
 
   if not Loaded() then exit;
 
-  // TODO: remove all SWR LODS before filtering
-  if (_swr.GetLodLevelsCount()>0) then exit;
-
-  if not _verts.FilterVertices(filter) then exit;
-  if not _tris.FilterVertices(filter) then exit;
+  if not _verts._FilterVertices(filter) then exit;
+  if not _tris._FilterVertices(filter, _swr) then exit;
 
   result:=true;
 end;
@@ -5505,7 +5578,7 @@ begin
   end;
 end;
 
-function TOgfVertsContainer.FilterVertices(var filter: TVertexFilterItems): boolean;
+function TOgfVertsContainer._FilterVertices(var filter: TVertexFilterItems): boolean;
 var
   i, cursor, links, newcount:cardinal;
   new_data:array of byte;
