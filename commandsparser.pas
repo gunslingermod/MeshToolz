@@ -95,7 +95,8 @@ TModelSlot = class
   function _CmdChildMoveSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildRotateSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildScaleSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdChildRebind(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRebindAll(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRebindSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildBonestats(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdChildFilterBone(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _cmdChildSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -863,17 +864,21 @@ end;
 type
   TVertexSelectionCallbackData = record
     selection_area:TSelectionArea;
+    vcnt:integer;
   end;
   pTVertexSelectionCallbackData = ^TVertexSelectionCallbackData;
 
 function VertexSelectionCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
 var
-  cbdata:TVertexSelectionCallbackData;
+  cbdata:pTVertexSelectionCallbackData;
 begin
   result:=false;
   if (userdata = nil) or (data = nil) then exit;
-  cbdata:=pTVertexSelectionCallbackData(userdata)^;
-  result:=cbdata.selection_area.IsPointInSelection(data^.pos);
+  cbdata:=pTVertexSelectionCallbackData(userdata);
+  result:=cbdata^.selection_area.IsPointInSelection(data^.pos);
+  if result then begin
+    cbdata^.vcnt:=cbdata^.vcnt+1;
+  end;
 end;
 
 function TModelSlot._CmdChildMoveSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -898,10 +903,15 @@ begin
          result_description.SetDescription('invalid arguments count, expected 3 numbers')
        end else begin
          cbdata.selection_area:=_selectionarea;
+         cbdata.vcnt:=0;
          if not _data.Meshes().Get(idx).Move(v, @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('move operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+         end else if cbdata.vcnt = 0 then begin
+           result_description.SetDescription('no vertices were found in the selection area');
+           result_description.SetWarningFlag(true);
+           result:=true;
          end else begin
-           result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
+           result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
            result:=true;
          end;
        end;
@@ -952,12 +962,18 @@ begin
 
     amount:=amount*pi/180;
     cbdata.selection_area:=_selectionarea;
+    cbdata.vcnt:=0;
     if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
       result_description.SetDescription('rotate operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+    end else if cbdata.vcnt = 0 then begin
+      result_description.SetDescription('no vertices were found in the selection area');
+      result_description.SetWarningFlag(true);
+      result:=true;
     end else begin
       shader:=_data.Meshes().Get(idx).GetTextureData().shader;
       texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-      result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully rotated');
+
+      result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully rotated');
       result:=true;
     end;
 
@@ -986,10 +1002,15 @@ begin
          result_description.SetDescription('invalid arguments count, expected 3 floats');
        end else begin
          cbdata.selection_area:=_selectionarea;
+         cbdata.vcnt:=0;;
          if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('scale operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+         end else if cbdata.vcnt = 0 then begin
+           result_description.SetDescription('no vertices were found in the selection area');
+           result_description.SetWarningFlag(true);
+           result:=true;
          end else begin
-           result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
+           result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
            result:=true;
          end;
        end;
@@ -997,50 +1018,186 @@ begin
   end;
 end;
 
+type
+  TVertexSelectiveBindCallbackData = record
+    selection_area:TSelectionArea;
+    weight:single;
+    src_boneid:TBoneID;
+    vcnt:integer;
+  end;
+  pTVertexSelectiveBindCallbackData = ^TVertexSelectiveBindCallbackData;
 
-function TModelSlot._CmdChildRebind(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+function VertexSelectiveBindCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; target_boneid:cardinal; userdata:pointer):boolean;
+var
+  cbdata:pTVertexSelectiveBindCallbackData;
+  i:integer;
+  bone:TVertexBone;
+  value:single;
+  target_idx:integer;
+begin
+  result:=false;
+  if (userdata = nil) or (data = nil) then exit;
+  cbdata:=pTVertexSelectiveBindCallbackData(userdata);
+  result:=cbdata^.selection_area.IsPointInSelection(data^.pos);
+  if result then begin
+    if (cbdata^.src_boneid = INVALID_BONE_ID) then begin
+      // no need to replace any specific bones not specified - just adjust weight of target_boneid or add it by replace binding with the lowest weight
+      // weight must be from 0 to 1 in this case!
+      target_idx:=0;
+      for i:=0 to links.TotalLinkedBonesCount()-1 do begin
+        bone:=links.GetBoneParams(i);
+        if bone.bone_id = target_boneid then begin
+          target_idx:=i;
+          break;
+        end else if bone.weight < links.GetBoneParams(target_idx).weight then begin
+          target_idx:=i;
+        end;
+      end;
+
+      bone:=links.GetBoneParams(target_idx);
+      bone.weight:=cbdata^.weight;
+      bone.bone_id:=target_boneid;
+      links.SetBoneParams(target_idx, bone, false);
+
+      for i:=0 to links.TotalLinkedBonesCount()-1 do begin
+        if i = target_idx then continue;
+        bone:=links.GetBoneParams(target_idx);
+        if bone.bone_id = target_boneid then begin
+          bone.weight:=0;
+          links.SetBoneParams(target_idx, bone, false);
+        end;
+      end;
+
+      links.NormalizeWeights(target_idx);
+    end else begin
+      // both src_boneid and target_boneid both present - we need to replace src_boneid links to target_boneid links
+      // if weight >= 0 - also adjust it at the moment of replacing
+      value:=cbdata^.weight;
+      target_idx:=-1;
+      for i:=0 to links.TotalLinkedBonesCount()-1 do begin
+        bone:=links.GetBoneParams(i);
+        if bone.bone_id = cbdata^.src_boneid then begin
+          bone.bone_id:=target_boneid;
+          if cbdata^.weight >= 0 then begin
+            bone.weight:=value;
+          end;
+          links.SetBoneParams(i, bone, false);
+          if target_idx < 0 then begin
+            target_idx:=i;
+            value:=0;
+          end;
+        end;
+      end;
+
+      // Normalize weights if something has been changed
+      if target_idx>=0 then begin
+        links.NormalizeWeights(target_idx);
+      end else begin
+        result:=false;
+      end;
+    end;
+  end;
+
+  if result then begin
+    cbdata^.vcnt:=cbdata^.vcnt+1;
+  end;
+end;
+
+function TModelSlot._CmdChildRebindSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   dest_boneid,  src_boneid:TBoneID;
+  weight: single;
   shader, texture:string;
-  flag:boolean;
-  vcnt:integer;
   idx:integer;
+  cbdata:TVertexSelectiveBindCallbackData;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
 
+    result_description.SetDescription('');
     src_boneid:=INVALID_BONE_ID;
     dest_boneid:=INVALID_BONE_ID;
+    weight:=-1;
     if not ExtractBoneIdFromString(args, dest_boneid) then begin
-      result_description.SetDescription('can''t extract target bone id');
-    end else begin
-      args:=TrimLeft(args);
-      if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
-        args:=TrimLeft(rightstr(args, length(args)-1));
-        flag:=ExtractBoneIdFromString(args, src_boneid);
-        args:=TrimLeft(args);
-        if (not flag) then begin
-          result_description.SetDescription('can''t extract source bone id');
-        end else if (length(args)>0) then begin
-          result_description.SetDescription('the procedure expects 1 or 2 argument(s)');
-        end;
-      end;
+      result_description.SetDescription('can''t extract target bone id from argument #1');
+      exit;
+    end;
 
-      if (length(result_description.GetDescription()) = 0) then begin
-        shader:=_data.Meshes().Get(idx).GetTextureData().shader;
-        texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-        vcnt:= _data.Meshes().Get(idx).GetVerticesCountForBoneID(src_boneid);
-        if vcnt = 0 then begin
-          result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') contains no vertices binded with '+GetBoneNameById(src_boneid));
-        end else if not _data.Meshes().Get(idx).RebindVertices(dest_boneid, src_boneid) then begin
-          result_description.SetDescription('failed to rebind vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
+    args:=TrimLeft(args);
+    if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      args:=trim(rightstr(args, length(args)-1));
+      if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
+        // weight omitted - we should use already assigned; just parse 3rd arg
+      end else if not ExtractFloatFromString(args, weight) then begin
+        result_description.SetDescription('can''t extract argument # 2(weight) from arguments');
+        exit;
+      end else if (weight<0) or (weight > 1) then begin
+        result_description.SetDescription('weight must be a number between 0 and 1; if you don''t need weight - just omit it in the command)');
+        exit;
+      end;
+    end else if (length(args) = 0) then begin
+      // 1-arg syntax used, use by default the full weight
+      weight:=1;
+    end else begin
+      result_description.SetDescription('please use comma between arguments #1 and #2');
+      exit;
+    end;
+
+    args:=TrimLeft(args);
+    if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      args:=TrimLeft(rightstr(args, length(args)-1));
+      if (not ExtractBoneIdFromString(args, src_boneid)) then begin
+        result_description.SetDescription('can''t extract source bone id from argument #3');
+        exit;
+      end;
+    end else if (length(args) > 0) then begin
+      result_description.SetDescription('please use comma between arguments #2 and #3');
+      exit;
+    end;
+
+    args:=TrimLeft(args);
+    if length(args) > 0 then begin
+      result_description.SetDescription('the procedure expects 1, 2 or 3 argument(s)');
+      exit;
+    end;
+
+    if (length(result_description.GetDescription()) = 0) then begin
+      shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+      texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+      cbdata.selection_area:=_selectionarea;
+      cbdata.src_boneid:=src_boneid;
+      cbdata.weight:=weight;
+      cbdata.vcnt:=0;
+      if not _data.Meshes().Get(idx).BindVerticesToBone(dest_boneid, @VertexSelectiveBindCallback, @cbdata) then begin
+        result_description.SetDescription('failed to rebind vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
+      end else begin
+        if cbdata.vcnt = 0 then begin
+          result_description.SetDescription('no vertices were found in the selection area');
+          result_description.SetWarningFlag(true);
         end else begin
-          result_description.SetDescription(inttostr(vcnt)+' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') are successfully rebinded from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
-          result:=true;
+          result_description.SetDescription(inttostr(cbdata.vcnt)+' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') are successfully binded to '+GetBoneNameById(dest_boneid));
         end;
+        result:=true;
       end;
     end;
+  end;
+end;
+
+function TModelSlot._CmdChildRebindAll(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  original_sa:TSelectionArea;
+begin
+  original_sa:=_selectionarea;
+  _selectionarea:=TSelectionArea.Create();
+  try
+    _selectionarea.SetPivot(original_sa.GetPivot());
+    _selectionarea.ResetSelectionArea();
+    _selectionarea.InverseSelectedArea();
+    result:=_CmdChildRebindSelected(args, cmd, result_description, userdata);
+  finally
+    FreeAndNil(_selectionarea);
+    _selectionarea:=original_sa;
   end;
 end;
 
@@ -1271,13 +1428,15 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove, 'remove the selected child'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy, 'copy child into temp buffer'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData, 'insert new child with data from the temp buffer, expects index for new child'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMoveAll, 'move the entire child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('moveselected', @_IsModelLoadedPrecondition, @_CmdChildMoveSelected, 'move the entire child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('scaleselected', @_IsModelLoadedPrecondition, @_CmdChildScaleSelected, 'scale selected part of the child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rotateselected', @_IsModelLoadedPrecondition, @_CmdChildRotateSelected, 'rotate selected part of the child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rebindselected', @_IsModelLoadedPrecondition, @_CmdChildRebindSelected, 'link child vertices in the selection; arg 1 - new bone, arg 2  (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMoveAll, 'move selected part of the child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('rotate', @_IsModelLoadedPrecondition, @_CmdChildRotateAll, 'rotate the entire child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('scale', @_IsModelLoadedPrecondition, @_CmdChildScaleAll, 'scale the entire child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('moveselected', @_IsModelLoadedPrecondition, @_CmdChildMoveSelected, 'move selected part of the child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rotateselected', @_IsModelLoadedPrecondition, @_CmdChildRotateSelected, 'rotate selected part of the child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('scaleselected', @_IsModelLoadedPrecondition, @_CmdChildScaleSelected, 'scale selected part of the child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebind, 'bind child to selected bone'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebindAll, 'link child vertices; arg 1 - new bone, arg 2 (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
+
   _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_cmdChildSaveToFile, 'save selected child to file (expects file name)'), CommandItemTypeCall);

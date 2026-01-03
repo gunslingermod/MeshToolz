@@ -112,8 +112,10 @@ type
   TVertexBones = class
   private
     _bones:array of TVertexBone;
+    _is_normalized:boolean;
 
     procedure _SortByWeights();
+    procedure SimplifyLinks();
   public
     // Common
     constructor Create();
@@ -129,9 +131,9 @@ type
 
     function TotalLinkedBonesCount():integer;
     function SimplifiedLinkedBonesCount():integer;
-    procedure SimplifyLinks();
     function ChangeLinkType(new_links_count:integer):boolean;
     procedure NormalizeWeights(except_bone_idx:integer=-1);
+    function ExportSortedData(var out_bones:TVertexBones):boolean;
   end;
 
   { TOgfVertsContainer }
@@ -142,6 +144,7 @@ type
   TVertexFilterItems = array of TVertexFilterItem;
 
   TVerticesIterationCallback = function (vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+  TVerticesBindCallback = function (vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; target_boneid:cardinal; userdata:pointer):boolean;
   TOgfVertsContainer = class
   private
     _link_type:cardinal;
@@ -164,7 +167,8 @@ type
     function MoveVertices(offset:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
     function ScaleVertices(factors:pFVector3; pivot_point:pFVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
     function RotateVertices(m:pFMatrix3x3; pivot_point:pFVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
-    function RebindVerticesToNewBone(new_bone_index:TBoneID; old_bone_index:TBoneID):boolean;
+    function BindVerticesToBone(new_bone_index:TBoneID; selection_callback:TVerticesBindCallback; userdata:pointer):boolean; // if callback is specified - set target TVertexBones and return true to apply changes; if not - the procedure will bind all vertices to specified boneid with weight 1.0
+
     function GetVerticesCountForBoneID(boneid:TBoneID; ignorezeroweights:boolean):integer;
     function IsVertexAssignedToBoneID(vertexid:cardinal; boneid:TBoneID; ignorezeroweights:boolean):boolean;
 
@@ -304,7 +308,7 @@ type
 
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
-    function RebindVertices(target_boneid:TBoneID; source_boneid:TBoneID):boolean;
+    function BindVerticesToBone(target_boneid:TBoneID; selection_callback:TVerticesBindCallback; userdata:pointer):boolean;
     function GetVerticesCountForBoneId(boneid:TBoneID):integer;
 
     function FilterVertices(var filter:TVertexFilterItems):boolean;
@@ -4363,15 +4367,19 @@ var
   full_weights:single;
   i:integer;
 begin
+  if _is_normalized then exit;
+  if length(_bones) = 1 then begin
+    _bones[0].weight:=1;
+    exit;
+  end;
+
   if except_bone_idx >= length(_bones) then except_bone_idx:=-1;
 
   if (except_bone_idx >= 0) and (_bones[except_bone_idx].weight >= 1) then begin
-    _bones[except_bone_idx].weight:=1;
     for i:=0 to length(_bones)-1 do begin
-      if i <> except_bone_idx then begin
-        _bones[i].weight:=0;
-      end;
+      _bones[i].weight:=0;
     end;
+    _bones[except_bone_idx].weight:=1;
   end else begin
     full_weights:=0;
     for i:=0 to length(_bones)-1 do begin
@@ -4390,6 +4398,24 @@ begin
       _bones[i].weight := scaler * _bones[i].weight / full_weights;
     end;
   end;
+
+  _is_normalized:=true;
+end;
+
+function TVertexBones.ExportSortedData(var out_bones: TVertexBones): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  if out_bones = nil then exit;
+
+  out_bones.Reset();
+  for i:=0 to TotalLinkedBonesCount()-1 do begin
+    out_bones.AddBone(GetBoneParams(i), false);
+  end;
+  out_bones._SortByWeights();
+  out_bones.NormalizeWeights(); //for sure
+  result:=true;
 end;
 
 procedure TVertexBones._SortByWeights();
@@ -4424,6 +4450,7 @@ end;
 procedure TVertexBones.Reset();
 begin
   setlength(_bones, 0);
+  _is_normalized:=false;
 end;
 
 
@@ -4451,6 +4478,7 @@ begin
   result:=false;
   if idx >= length(_bones) then exit;
   _bones[idx]:=bone;
+  _is_normalized:=false;
   if normalize_weights then begin
     NormalizeWeights(idx);
   end;
@@ -4521,7 +4549,7 @@ begin
   setlength(tmp_bones{%H-}, length(_bones));
 
   for i:=0 to length(_bones)-1 do begin
-    if _bones[i].weight = 0 then continue;
+    if abs(_bones[i].weight) < EPS then continue;
     skip:=false;
 
     for j:=0 to new_count-1 do begin
@@ -4542,6 +4570,9 @@ begin
   for i:=0 to new_count-1 do begin
     _bones[i]:=tmp_bones[i];
   end;
+
+  _is_normalized:=false;
+  NormalizeWeights();
 
   setlength(tmp_bones, 0);
 end;
@@ -4570,6 +4601,7 @@ begin
     end;
   end else if new_links_count < length(_bones) then begin
     SetLength(_bones, new_links_count);
+    _is_normalized:=false;
     NormalizeWeights();
   end;
 
@@ -4902,9 +4934,9 @@ begin
   end;
 end;
 
-function TOgfChild.RebindVertices(target_boneid: TBoneID; source_boneid: TBoneID): boolean;
+function TOgfChild.BindVerticesToBone(target_boneid: TBoneID; selection_callback: TVerticesBindCallback; userdata: pointer): boolean;
 begin
-  result:=_verts.RebindVerticesToNewBone(target_boneid, source_boneid);
+  result:=_verts.BindVerticesToBone(target_boneid, selection_callback, userdata);
 end;
 
 function TOgfChild.GetVerticesCountForBoneId(boneid: TBoneID): integer;
@@ -5186,6 +5218,8 @@ var
   pvert2link:pTOgfVertex2link;
   pvert3link:pTOgfVertex3link;
   pvert4link:pTOgfVertex4link;
+
+  bindings_sorted:TVertexBones;
 begin
   result:=false;
   if not Loaded() then exit;
@@ -5197,38 +5231,49 @@ begin
     pvert1link:=@_raw_data[pos];
     pvert1link^.bone_id:=bindings_in.GetBoneParams(0).bone_id;
     result:=true;
-  end else if _link_type = OGF_LINK_TYPE_2 then begin
-    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex2link);
-    pvert2link:=@_raw_data[pos];
-    bone:=bindings_in.GetBoneParams(0);
-    pvert2link^.bone0:=bone.bone_id;
-    bone:=bindings_in.GetBoneParams(1);
-    pvert2link^.bone1:=bone.bone_id;
-    pvert2link^.weight1:=bone.weight;
-    result:=true;
-  end else if _link_type = OGF_LINK_TYPE_3 then begin
-    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex3link);
-    pvert3link:=@_raw_data[pos];
-    for i:=0 to bindings_in.TotalLinkedBonesCount()-1 do begin
-      bone:=bindings_in.GetBoneParams(i);
-      pvert3link^.bones[i]:=bone.bone_id;
-      if i<length(pvert3link^.weights) then begin
-        pvert3link^.weights[i]:=bone.weight;
+  end else begin
+    bindings_sorted:=TVertexBones.Create();
+    try
+      if not bindings_in.ExportSortedData(bindings_sorted) then exit;
+
+      if _link_type = OGF_LINK_TYPE_2 then begin
+        pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex2link);
+        pvert2link:=@_raw_data[pos];
+        bone:=bindings_sorted.GetBoneParams(0);
+        pvert2link^.bone0:=bone.bone_id;
+        bone:=bindings_sorted.GetBoneParams(1);
+        pvert2link^.bone1:=bone.bone_id;
+        pvert2link^.weight1:=bone.weight;
+        result:=true;
+      end else if _link_type = OGF_LINK_TYPE_3 then begin
+        pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex3link);
+        pvert3link:=@_raw_data[pos];
+        for i:=0 to bindings_sorted.TotalLinkedBonesCount()-1 do begin
+          bone:=bindings_sorted.GetBoneParams(i);
+          pvert3link^.bones[i]:=bone.bone_id;
+          if i<length(pvert3link^.weights) then begin
+            pvert3link^.weights[i]:=bone.weight;
+          end;
+        end;
+        result:=true;
+      end else if _link_type = OGF_LINK_TYPE_4 then begin
+        pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex4link);
+        pvert4link:=@_raw_data[pos];
+        for i:=0 to bindings_sorted.TotalLinkedBonesCount()-1 do begin
+          bone:=bindings_sorted.GetBoneParams(i);
+          pvert4link^.bones[i]:=bone.bone_id;
+          if i<length(pvert4link^.weights) then begin
+            pvert4link^.weights[i]:=bone.weight;
+          end;
+        end;
+        result:=true;
       end;
+    finally
+      FreeAndNil(bindings_sorted);
     end;
-    result:=true;
-  end else if _link_type = OGF_LINK_TYPE_4 then begin
-    pos:=sizeof(TOgfVertsHeader)+id*sizeof(TOgfVertex4link);
-    pvert4link:=@_raw_data[pos];
-    for i:=0 to bindings_in.TotalLinkedBonesCount()-1 do begin
-      bone:=bindings_in.GetBoneParams(i);
-      pvert4link^.bones[i]:=bone.bone_id;
-      if i<length(pvert4link^.weights) then begin
-        pvert4link^.weights[i]:=bone.weight;
-      end;
-    end;
-    result:=true;
   end;
+
+
 end;
 
 procedure TOgfVertsContainer.Reset;
@@ -5388,43 +5433,57 @@ begin
   end;
 end;
 
-
-function TOgfVertsContainer.RebindVerticesToNewBone(new_bone_index: TBoneID; old_bone_index: TBoneID): boolean;
+function TOgfVertsContainer.BindVerticesToBone(new_bone_index: TBoneID; selection_callback: TVerticesBindCallback; userdata: pointer): boolean;
 var
-  i, j:integer;
+  i,j,k:integer;
+  w:single;
   b:TVertexBones;
+  v:pTOgfVertexCommonData;
+  puv:pFVector2;
   bone:TVertexBone;
 begin
   result:=false;
   if not Loaded() then exit;
 
+  result:=true;
   b:=TVertexBones.Create();
   try
-    if old_bone_index = INVALID_BONE_ID then begin
-      if (GetCurrentLinkType()<>OGF_LINK_TYPE_1) and not ChangeLinkType(OGF_LINK_TYPE_1) then exit;
-
-      bone.bone_id:=new_bone_index;
-      bone.weight:=1;
-      b.AddBone(bone, false);
-    end;
-
     for i:=0 to _verts_count-1 do begin
-      if old_bone_index <> INVALID_BONE_ID then begin
-        if not _GetVertexBindings(i, b) then exit;
-        for j:=0 to b.TotalLinkedBonesCount()-1 do begin
-          bone:=b.GetBoneParams(j);
-          if bone.bone_id = old_bone_index then begin
-            bone.bone_id:=new_bone_index;
-            if not b.SetBoneParams(j, bone, false) then exit;
+      if not _GetVertexBindings(i, b) then begin
+        result:=false;
+        continue;
+      end;
+
+      if selection_callback<>nil then begin
+        puv:=_GetVertexUvDataPtr(i);
+        v:=_GetVertexDataPtr(i);
+        if (v=nil) or (puv=nil) then begin
+          result:=false;
+        end else if selection_callback(i, v, puv, b, new_bone_index, userdata) then begin
+          b.NormalizeWeights();
+          if not _SetVertexBindings(i, b) then begin
+            result:=false;
           end;
         end;
+      end else begin
+        // Replace the 1st bone, set zero weights for the others
+        k:=b.TotalLinkedBonesCount();
+        b.Reset();
+        bone.bone_id:=new_bone_index;
+        bone.weight:=1;
+        for j:=0 to k-1 do begin
+          b.AddBone(bone, false);
+          bone.weight:=0;
+        end;
+        if not _SetVertexBindings(i, b) then begin
+          result:=false;
+        end;
       end;
-      if not _SetVertexBindings(i, b) then exit;
     end;
-    result:=true;
   finally
     FreeAndNil(b);
   end;
+
 end;
 
 function TOgfVertsContainer.GetVerticesCountForBoneID(boneid: TBoneID; ignorezeroweights: boolean): integer;
