@@ -414,9 +414,47 @@ begin
   result:=true;
 end;
 
-function TModelSlot._CmdSelectionInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+type
+  TVertexCounterCallbackData = record
+    selection_area:TSelectionArea;
+    vcnt:integer;
+  end;
+  pTVertexCounterCallbackData = ^TVertexCounterCallbackData;
+
+function VertexCounterCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTVertexCounterCallbackData;
 begin
-  result_description.SetDescription(_selectionarea.Info());
+  result:=true;
+  if (userdata = nil) or (data = nil) then exit;
+  cbdata:=pTVertexCounterCallbackData(userdata);
+  if cbdata^.selection_area.IsPointInSelection(data^.pos) then begin
+    cbdata^.vcnt:=cbdata^.vcnt+1;
+  end;
+end;
+
+function TModelSlot._CmdSelectionInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  r:string;
+  i:integer;
+  cbdata:TVertexCounterCallbackData;
+begin
+  r:=_selectionarea.Info();
+
+  if _data.Loaded() then begin
+    cbdata.selection_area:=_selectionarea;
+    cbdata.vcnt:=0;
+
+    for i:=0 to _data.Meshes().Count()-1 do begin
+      _data.Meshes().Get(i).IterateVertices(@VertexCounterCallback, @cbdata);
+    end;
+
+    r:=r+chr($0d)+chr($0a)+'Selected vertices count: '+inttostr(cbdata.vcnt);
+  end;
+
+  // TODO: count of bones?
+
+  result_description.SetDescription(r);
   result:=true;
 end;
 
@@ -675,6 +713,7 @@ function TModelSlot._CmdChildInfo(var args: string; cmd: TCommandSetup; result_d
 var
   idx:integer;
   r:string;
+  cbdata:TVertexCounterCallbackData;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -686,7 +725,12 @@ begin
       r:=r+'- Vertices count:'+inttostr(_data.Meshes.Get(idx).GetVerticesCount())+chr($0d)+chr($0a);
       r:=r+'- Tris count:'+inttostr(_data.Meshes.Get(idx).GetTrisCountTotal())+chr($0d)+chr($0a);
       r:=r+'- Current link type:'+inttostr(_data.Meshes.Get(idx).GetCurrentLinkType())+chr($0d)+chr($0a);
-      r:=r+'- Progressive LOD levels count: '+inttostr(_data.Meshes.Get(idx).GetLodLevels());
+      r:=r+'- Progressive LOD levels count: '+inttostr(_data.Meshes.Get(idx).GetLodLevels())+chr($0d)+chr($0a);
+
+      cbdata.selection_area:=_selectionarea;
+      cbdata.vcnt:=0;
+      _data.Meshes.Get(idx).IterateVertices(@VertexCounterCallback, @cbdata);
+      r:=r+'- Selected vertices count: '+inttostr(cbdata.vcnt);
 
       result_description.SetDescription(r);
       result:=true;
