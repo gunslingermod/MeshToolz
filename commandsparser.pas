@@ -102,6 +102,8 @@ TModelSlot = class
   function _cmdChildSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _cmdChildLodLevelSelect(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _cmdChildLodLevelsRemove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildRemoveSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdChildSplitSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1429,6 +1431,95 @@ begin
   end;
 end;
 
+function TModelSlot._CmdChildRemoveSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx, newidx:integer;
+  r:string;
+  cbdata:TVertexSelectionCallbackData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    cbdata.selection_area:=_selectionarea;
+    cbdata.vcnt:=0;
+    result:=_data.Meshes().Get(idx).RemoveVertices(@VertexSelectionCallback, @cbdata);
+
+    if not result then begin
+      result_description.SetDescription('remove operation failed');
+    end else if cbdata.vcnt=0 then begin
+      result_description.SetDescription('selection area is empty');
+      result_description.SetWarningFlag(true);
+      result:=true;
+    end else begin
+      r:='';
+      if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
+        r:='mesh is fully collapsed (no vertices left), please remove it'+chr($0d)+chr($0a);
+        result_description.SetWarningFlag(true);
+      end;
+      r:=r+inttostr(cbdata.vcnt)+ ' vertices successfully removed';
+      result_description.SetDescription(r);
+
+      result:=true;
+    end;
+  end;
+
+end;
+
+function TModelSlot._CmdChildSplitSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx, newidx:integer;
+  r:string;
+  cbdata_cnt:TVertexCounterCallbackData;
+  cbdata_sel:TVertexSelectionCallbackData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    cbdata_cnt.vcnt:=0;
+    cbdata_cnt.selection_area:=_selectionarea;
+    _data.Meshes().Get(idx).IterateVertices(@VertexCounterCallback, @cbdata_cnt);
+
+    if cbdata_cnt.vcnt=0 then begin
+      result_description.SetDescription('selection area is empty');
+    end else if cbdata_cnt.vcnt = _data.Meshes().Get(idx).GetVerticesCount() then begin
+      result_description.SetDescription('the whole child mesh is selected');
+    end else begin
+      r:=_data.Meshes().Get(idx).Serialize();
+      newidx:=_data.Meshes().Append(r);
+      if newidx<0 then begin
+        result_description.SetDescription('error while copying source child');
+      end else begin
+        _selectionarea.InverseSelectedArea();
+        try
+          cbdata_sel.selection_area:=_selectionarea;
+          cbdata_sel.vcnt:=0;
+
+          result:=_data.Meshes().Get(newidx).RemoveVertices(@VertexSelectionCallback, @cbdata_sel);
+        finally
+          _selectionarea.InverseSelectedArea();
+        end;
+
+        if not result then begin
+          _data.Meshes().Remove(newidx);
+          result_description.SetDescription('can''t filter selected vertices in new child, aborting');
+        end else begin
+          cbdata_sel.selection_area:=_selectionarea;
+          cbdata_sel.vcnt:=0;
+
+          result:=_data.Meshes().Get(idx).RemoveVertices(@VertexSelectionCallback, @cbdata_sel);
+          if not result then begin
+            result_description.SetDescription('can''t remove vertices from source child');
+          end else begin
+            result_description.SetDescription(inttostr(cbdata_sel.vcnt)+' vertices successfully extracted into mesh #'+inttostr(newidx));
+          end;
+        end;
+      end;
+
+    end;
+  end;
+end;
+
 constructor TModelSlot.Create(id: TSlotId; container: TSlotsContainer);
 begin
   _id:=id;
@@ -1469,17 +1560,19 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo, 'show info'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('settexture', @_IsModelLoadedPrecondition, @_CmdChildSetTexture, 'change assigned shader, expects string argument'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('setshader', @_IsModelLoadedPrecondition, @_CmdChildSetShader, 'change assigned shader, expects string argument'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove, 'remove the selected child'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('copy', @_IsModelLoadedPrecondition, @_CmdChildCopy, 'copy child into temp buffer'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('paste', @_IsModelLoadedPrecondition, @_CmdChildPasteData, 'insert new child with data from the temp buffer, expects index for new child'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('moveselected', @_IsModelLoadedPrecondition, @_CmdChildMoveSelected, 'move the entire child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('scaleselected', @_IsModelLoadedPrecondition, @_CmdChildScaleSelected, 'scale selected part of the child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rotateselected', @_IsModelLoadedPrecondition, @_CmdChildRotateSelected, 'rotate selected part of the child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rebindselected', @_IsModelLoadedPrecondition, @_CmdChildRebindSelected, 'link child vertices in the selection; arg 1 - new bone, arg 2  (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMoveAll, 'move selected part of the child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('rotate', @_IsModelLoadedPrecondition, @_CmdChildRotateAll, 'rotate the entire child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('scale', @_IsModelLoadedPrecondition, @_CmdChildScaleAll, 'scale the entire child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebindAll, 'link child vertices; arg 1 - new bone, arg 2 (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove, 'remove the selected child'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('moveselected', @_IsModelLoadedPrecondition, @_CmdChildMoveSelected, 'move the entire child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('scaleselected', @_IsModelLoadedPrecondition, @_CmdChildScaleSelected, 'scale selected part of the child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rotateselected', @_IsModelLoadedPrecondition, @_CmdChildRotateSelected, 'rotate selected part of the child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rebindselected', @_IsModelLoadedPrecondition, @_CmdChildRebindSelected, 'link child vertices in the selection; arg 1 - new bone, arg 2  (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('removeselected', @_IsModelLoadedPrecondition, @_CmdChildRemoveSelected, 'remove selected part of child'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('splitselected', @_IsModelLoadedPrecondition, @_CmdChildSplitSelected, 'extract selected part of child into a new child'), CommandItemTypeCall);
 
   _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);
