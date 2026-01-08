@@ -299,6 +299,7 @@ type
 
     function GetCurrentLinkType():cardinal;
     function GetVerticesCount():cardinal;
+    function GetVerticesCountForBoneId(boneid:TBoneID):integer;
     function GetTrisCountTotal():cardinal;
     function GetTrisCountInCurrentLod():cardinal;
 
@@ -309,8 +310,6 @@ type
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
     function BindVerticesToBone(target_boneid:TBoneID; selection_callback:TVerticesBindCallback; userdata:pointer):boolean;
-    function GetVerticesCountForBoneId(boneid:TBoneID):integer;
-
     function FilterVertices(var filter:TVertexFilterItems):boolean;
 
     procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
@@ -354,6 +353,9 @@ type
     _name:string;
     _parent_name:string;
     _obb:FObb;
+
+    procedure _SetName(name:string);
+    procedure _SetParentName(name:string);
   public
     // Common
     constructor Create;
@@ -410,13 +412,13 @@ type
     procedure Reset; virtual;
     function Loaded():boolean;
     function Deserialize(rawdata:string; version:cardinal):integer;
-    function Serialize(version:cardinal):string;
+    function Serialize():string;
   end;
 
-  { TOgfBoneIKData }
+  { TOgfJointData }
 
-  TOgfBoneIKData = class
-    _version:cardinal;
+  TOgfJointData = class
+    _loaded:boolean;
     _material:string;
     _shape:TOgfBoneShape;
     _ikdata:TOgfJointIKData;
@@ -438,15 +440,21 @@ type
     function MoveShape(v:FVector3):boolean;
     function SerializeShape():string;
     function DeserializeShape(s:string):boolean;
+    function GetMaterial():string;
+    procedure SetMaterial(matname:string);
+    procedure GetTransformData(var offset:FVector3; var rotate:FVector3);
+    procedure SetTransformData(offset:FVector3; rotate:FVector3);
+    procedure GetMassParams(var center:FVector3; var mass:single);
+    procedure SetMassParams(center:FVector3; mass:single);
 
     function UniformScale(k:single):boolean;
   end;
 
-  { TOgfBonesIKDataContainer }
+  { TOgfJointsDataContainer }
 
-  TOgfBonesIKDataContainer = class
+  TOgfJointsDataContainer = class
     _loaded:boolean;
-    _ik_data:array of TOgfBoneIKData;
+    _data:array of TOgfJointData;
   public
     // Common
     constructor Create;
@@ -458,7 +466,7 @@ type
 
     // Specific
     function Count():integer;
-    function Get(i:integer):TOgfBoneIKData;
+    function Get(i:integer):TOgfJointData;
 
     function UniformScale(k:single):boolean;
   end;
@@ -484,33 +492,76 @@ type
     function UniformScale(k:single):boolean;
   end;
 
+
+  { TBoneUnitedData }
+
+  TBoneUnitedData = record
+    id:TBoneID;
+    parent_id:TBoneID;
+    name:string;
+    parent_name:string;
+    material:string;
+    obb:FObb;
+    transform:FMatrix4x4;
+    shape:TOgfBoneShape;
+    mass:single;
+    center_of_mass:FVector3;
+  end;
+  pTBoneUnitedData=^TBoneUnitedData;
+
+  TBonesIterationCallback = function (bone_id:integer; bone_data:pTBoneUnitedData; userdata:pointer):boolean;
   { TOgfSkeleton }
 
   TOgfSkeletonData = packed record
     bones:TOgfBonesContainer;
-    ik:TOgfBonesIKDataContainer;
+    ik:TOgfJointsDataContainer;
+  end;
+
+  TOgfBoneData = record
+    bone:TOgfBone;
+    joint:TOgfJointData;
   end;
 
   TOgfSkeleton = class
     _loaded:boolean;
     _data:TOgfSkeletonData;
+
+    function _GetBone(id:TBoneID):TOgfBoneData;
+    function _GetBoneByName(name:string; var output:TOgfBoneData):boolean;
   public
     constructor Create();
     procedure Reset;
     function Loaded():boolean;
     destructor Destroy(); override;
 
-    function Build(desc:TOgfBonesContainer; ik:TOgfBonesIKDataContainer):boolean;
+    function Build(desc:TOgfBonesContainer; ik:TOgfJointsDataContainer):boolean;
 
     function GetBonesCount():integer;
-    function GetBoneName(id:integer):string;
-    function GetParentBoneName(id:integer):string;
-    function GetOgfShape(boneid:integer):TOgfBoneShape;
+    function GetBoneIdxByName(name:string):integer; overload;
+    function GetBoneName(idx:TBoneID):string;
+    function GetBoneParentName(idx:TBoneID):string;
+    function GetBoneMaterial(idx:TBoneID):string;
+    function GetBoneBindPosition(idx:TBoneID):FVector3;
+    function GetBoneCurrentPosition(idx:TBoneID):FVector3;
 
-    function SerializeBoneIKData(id:integer):string;
-    function DeserializeBoneIKData(id:integer; s:string):boolean;
+    function GetBoneLocalTransform(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
+    function GetBoneLocalTransformMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
+    function GetBoneBindPoseToGlobalMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
+    function GetBoneBindPoseFromGlobalTransformMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
 
+
+    function RenameBone(old_name:string; new_name:string):boolean;
+    function ReparentBone(idx:TBoneID; new_parent_idx:TBoneID; preserve_global_pos:boolean):boolean;
+
+    function GetBoneMassParams(idx:TBoneID; var center:FVector3; var mass:single):boolean;
+    function GetBoneShape(idx:TBoneID; var shape:TOgfBoneShape):boolean;
+    function GetBoneBoundingBox(idx:TBoneID; var obb:FObb):boolean;
+
+    function GetBoneUnitedData(idx:TBoneID; var data:TBoneUnitedData):boolean;
+
+    procedure IterateBones(cb:TBonesIterationCallback; userdata:pointer);
     function UniformScale(k:single):boolean;
+
   end;
 
   { TOgfUserdataContainer }
@@ -868,7 +919,7 @@ type
  private
    _children:TOgfChildrenContainer;
    _bone_names:TOgfBonesContainer;
-   _ikdata:TOgfBonesIKDataContainer;
+   _joints:TOgfJointsDataContainer;
    _userdata:TOgfUserdataContainer;
    _lodref:TOgfLodRefsContainer;
    _skeleton:TOgfSkeleton;
@@ -2079,10 +2130,10 @@ begin
   if min_limit.y > max_limit.y then exit;
   if min_limit.z > max_limit.z then exit;
 
-  d:=v_sub(@max_limit, @min_limit);
-  d2:=v_mul(@d, 0.5);
-  new_initt:=v_add(@min_limit, @d2);
-  new_sizet:=v_mul(@d2, 1/32767);
+  d:=v_sub(max_limit, min_limit);
+  d2:=v_mul(d, 0.5);
+  new_initt:=v_add(min_limit, d2);
+  new_sizet:=v_mul(d2, 1/32767);
 
   setlength(new_data, _frames_count);
 
@@ -2103,7 +2154,7 @@ begin
         exit;
       end;
 
-      trans:=v_sub(@trans, @new_initt);
+      trans:=v_sub(trans, new_initt);
 
       if abs(d.x)>EPS then begin
         qt_value:= trans.x / new_sizet.x;
@@ -2489,7 +2540,7 @@ begin
       _RebuildTransKeysForNewLimits(min_limit, max_limit);
     end;
 
-    trans:=v_sub(@key.T, @_initT);
+    trans:=v_sub(key.T, _initT);
 
     if _is16bittransform then begin
       pqt16:=@(pTOgfMotionKeyQT16(@_trans_keys_rawdata[0]))[idx];
@@ -3270,7 +3321,7 @@ begin
 end;
 
 
-function TOgfSkeleton.Build(desc: TOgfBonesContainer; ik: TOgfBonesIKDataContainer): boolean;
+function TOgfSkeleton.Build(desc: TOgfBonesContainer; ik: TOgfJointsDataContainer): boolean;
 begin
   result:=false;
   if desc.Count()<>ik.Count() then exit;
@@ -3292,59 +3343,297 @@ begin
   result:=_data.bones.Count();
 end;
 
-function TOgfSkeleton.GetBoneName(id: integer): string;
-var
-  b:TOgfBone;
+function TOgfSkeleton._GetBone(id: TBoneID): TOgfBoneData;
 begin
-  result:='';
+  result.bone:=nil;
+  result.joint:=nil;
   if not Loaded() then exit;
-  b:=_data.bones.Bone(id);
-  if b=nil then exit;
-  result:=b.GetName();
+
+  result.bone:=_data.bones.Bone(id);
+  result.joint:=_data.ik.Get(id);
 end;
 
-function TOgfSkeleton.GetParentBoneName(id: integer): string;
+function TOgfSkeleton._GetBoneByName(name: string; var output: TOgfBoneData): boolean;
 var
-  b:TOgfBone;
+  idx:integer;
 begin
-  result:='';
-  if not Loaded() then exit;
-  b:=_data.bones.Bone(id);
-  if b=nil then exit;
-  result:=b.GetParentName();
-end;
-
-function TOgfSkeleton.GetOgfShape(boneid: integer): TOgfBoneShape;
-var
-  boneik:TOgfBoneIKData;
-begin
-  result.shape_type:=OGF_SHAPE_TYPE_INVALID;
-  boneik:=_data.ik.Get(boneid);
-  if boneik<>nil then begin
-    result:=boneik.GetShape();
+  result:=false;
+  idx:=GetBoneIdxByName(name);
+  if idx >= 0 then begin
+    output.bone:=_data.bones.Bone(idx);
+    output.joint:=_data.ik.Get(idx);
+    result:=true;
   end;
 end;
 
-function TOgfSkeleton.SerializeBoneIKData(id: integer): string;
+function TOgfSkeleton.GetBoneIdxByName(name: string): integer;
 var
-  ikd:TOgfBoneIKData;
+  bone:TOgfBone;
+  i:integer;
 begin
-  result:='';
+  result:=-1;
   if not Loaded() then exit;
-  ikd:=_data.ik.Get(id);
-  if ikd=nil then exit;
-  result:=ikd.Serialize();
+
+  for i:=0 to GetBonesCount()-1 do begin
+    bone:=_data.bones.Bone(i);
+    if bone.GetName() = name then begin
+      result:=i;
+      break;
+    end;
+  end;
 end;
 
-function TOgfSkeleton.DeserializeBoneIKData(id: integer; s: string): boolean;
+function TOgfSkeleton.GetBoneName(idx: TBoneID): string;
+begin
+  result:='';
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    result:=_GetBone(idx).bone.GetName();
+  end;
+end;
+
+function TOgfSkeleton.RenameBone(old_name: string; new_name: string): boolean;
 var
-  ikd:TOgfBoneIKData;
+  idx:integer;
+  bone:TOgfBone;
 begin
   result:=false;
   if not Loaded() then exit;
-  ikd:=_data.ik.Get(id);
-  if ikd=nil then exit;
-  result:=(ikd.Deserialize(s)>0);
+  // check if we already have bone with new name
+  idx:=GetBoneIdxByName(new_name);
+  if idx < 0 then exit;
+
+  idx:=GetBoneIdxByName(old_name);
+  if idx < 0 then exit;
+
+  bone:=_GetBone(idx).bone;
+  if bone<>nil then begin
+    bone._SetName(new_name);
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.ReparentBone(idx: TBoneID; new_parent_idx: TBoneID; preserve_global_pos: boolean): boolean;
+var
+  bone:TOgfBoneData;
+  new_parent:TOgfBoneData;
+  new_parent_name:string;
+  my_matrix:FMatrix4x4;
+  parent_matrix:FMatrix4x4;
+
+  rotate:FVector3;
+  offset:FVector3;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    bone:=_GetBone(idx);
+    if bone.bone = nil then exit;
+
+    if (new_parent_idx = INVALID_BONE_ID) or (new_parent_idx = idx) then begin
+      new_parent.bone:=nil;
+      new_parent.joint:=nil;
+      new_parent_name:='';
+    end else begin
+      new_parent:=_GetBone(new_parent_idx);
+      if new_parent.bone = nil then exit;
+      new_parent_name:=new_parent.bone.GetName();
+    end;
+
+    if (preserve_global_pos) and (length(bone.bone.GetParentName())<>0) then begin
+      if not GetBoneBindPoseToGlobalMatrix(idx,my_matrix) then exit;
+      offset.x:=my_matrix.c.x;
+      offset.y:=my_matrix.c.y;
+      offset.z:=my_matrix.c.z;
+      m_getXYZi(my_matrix, rotate);
+
+      bone.joint.SetTransformData(offset, rotate);
+    end;
+
+    if (preserve_global_pos) and (length(new_parent_name)<>0) then begin
+      bone.joint.GetTransformData(offset, rotate);
+      m_setXYZ(my_matrix, rotate);
+      m_translate_over(my_matrix, offset);
+
+      if not GetBoneBindPoseFromGlobalTransformMatrix(new_parent_idx,parent_matrix) then exit;
+      my_matrix := m_mul(parent_matrix, my_matrix);
+
+      offset.x:=my_matrix.c.x;
+      offset.y:=my_matrix.c.y;
+      offset.z:=my_matrix.c.z;
+      m_getXYZi(my_matrix, rotate);
+      bone.joint.SetTransformData(offset, rotate);
+    end;
+
+    bone.bone._SetParentName(new_parent_name);
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneParentName(idx: TBoneID): string;
+begin
+  result:='';
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    result:=_GetBone(idx).bone.GetParentName();
+  end;
+end;
+
+function TOgfSkeleton.GetBoneMaterial(idx: TBoneID): string;
+begin
+  result:='';
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    result:=_GetBone(idx).joint.GetMaterial();
+  end;
+end;
+
+function TOgfSkeleton.GetBoneBindPosition(idx: TBoneID): FVector3;
+var
+  m: FMatrix4x4;
+begin
+  set_zero(result);
+  if  GetBoneBindPoseToGlobalMatrix(idx, m) then begin
+    result.x:=m.c.x;
+    result.y:=m.c.y;
+    result.z:=m.c.z;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneCurrentPosition(idx: TBoneID): FVector3;
+begin
+  //TODO - current active animation?
+  result:=GetBoneBindPosition(idx);
+end;
+
+function TOgfSkeleton.GetBoneLocalTransform(idx: TBoneID; var offset: FVector3; var rotate: FVector3): boolean;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    _GetBone(idx).joint.GetTransformData(offset, rotate);
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneLocalTransformMatrix(idx: TBoneID; var m:FMatrix4x4): boolean;
+var
+  offset, rotate:FVector3;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    _GetBone(idx).joint.GetTransformData(offset, rotate);
+    m_setXYZ(m, rotate);
+    m_translate_over(m, offset);
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneBindPoseToGlobalMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
+var
+  parent_transform, my_transform:FMatrix4x4;
+  b,p_b:TOgfBoneData;
+  parentname:string;
+  parentid:TBoneId;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    parentname:=b.bone.GetParentName();
+    parentid:=GetBoneIdxByName(parentname);
+    if (length(parentname)>0) and (parentid<>INVALID_BONE_ID) then begin
+      if GetBoneLocalTransformMatrix(idx, my_transform) and GetBoneBindPoseToGlobalMatrix(parentid, parent_transform) then begin
+        m:=m_mul(parent_transform, my_transform);
+        result:=true;
+      end;
+    end else begin
+      result:=GetBoneLocalTransformMatrix(idx, m);
+    end;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneBindPoseFromGlobalTransformMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
+var
+  parent_transform, my_transform:FMatrix4x4;
+  b,p_b:TOgfBoneData;
+  parentname:string;
+  parentid:TBoneId;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    parentname:=b.bone.GetParentName();
+    parentid:=GetBoneIdxByName(parentname);
+    if (length(parentname)>0) and (parentid<>INVALID_BONE_ID) then begin
+      if GetBoneLocalTransformMatrix(idx, my_transform) and GetBoneBindPoseFromGlobalTransformMatrix(parentid, parent_transform) then begin
+        my_transform:=m_invert43(my_transform);
+        m:=m_mul(my_transform, parent_transform);
+        result:=true;
+      end;
+    end else begin
+      result:=GetBoneLocalTransformMatrix(idx, m);
+      m:=m_invert43(m);
+    end;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneMassParams(idx: TBoneID; var center: FVector3; var mass: single): boolean;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    _GetBone(idx).joint.GetMassParams(center, mass);
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneShape(idx: TBoneID; var shape: TOgfBoneShape): boolean;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    shape:=_GetBone(idx).joint.GetShape();
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneBoundingBox(idx: TBoneID; var obb: FObb): boolean;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    obb:=_GetBone(idx).bone.GetOBB();
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneUnitedData(idx: TBoneID; var data: TBoneUnitedData): boolean;
+var
+  b:TOgfBoneData;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+
+    data.id:=idx;
+    data.name:=b.bone.GetName();
+    data.parent_name:=b.bone.GetParentName();
+    data.parent_id:=INVALID_BONE_ID;
+    if length(data.parent_name) > 0 then begin
+      data.parent_id:=GetBoneIdxByName(data.parent_name);
+    end;
+    data.material:=b.joint.GetMaterial();
+    data.obb:=b.bone.GetOBB();
+    GetBoneLocalTransformMatrix(idx, data.transform);
+    data.shape:=b.joint.GetShape();
+    b.joint.GetMassParams(data.center_of_mass, data.mass);
+    result:=true;
+  end;
+end;
+
+procedure TOgfSkeleton.IterateBones(cb: TBonesIterationCallback; userdata: pointer);
+var
+  i:integer;
+  data:TBoneUnitedData;
+begin
+  if not Loaded() then exit;
+  for i:=0 to GetBonesCount()-1 do begin
+    if GetBoneUnitedData(i, data) then begin
+      if not cb(i, @data, userdata) then exit;
+    end;
+  end;
 end;
 
 function TOgfSkeleton.UniformScale(k: single): boolean;
@@ -3434,38 +3723,38 @@ begin
   result:=result+_script+chr(0);
 end;
 
-{ TOgfBonesIKDataContainer }
+{ TOgfJointsDataContainer }
 
-constructor TOgfBonesIKDataContainer.Create;
+constructor TOgfJointsDataContainer.Create;
 begin
   _loaded:=false;
-  setlength(_ik_data, 0);
+  setlength(_data, 0);
   Reset();
 end;
 
-destructor TOgfBonesIKDataContainer.Destroy;
+destructor TOgfJointsDataContainer.Destroy;
 begin
   Reset();
   inherited Destroy;
 end;
 
-procedure TOgfBonesIKDataContainer.Reset;
+procedure TOgfJointsDataContainer.Reset;
 var
   i:integer;
 begin
-  for i:=0 to length(_ik_data)-1 do begin
-    _ik_data[i].Free;
+  for i:=0 to length(_data)-1 do begin
+    _data[i].Free;
   end;
-  setlength(_ik_data, 0);
+  setlength(_data, 0);
   _loaded:=false;
 end;
 
-function TOgfBonesIKDataContainer.Loaded(): boolean;
+function TOgfJointsDataContainer.Loaded(): boolean;
 begin
   result:=_loaded;
 end;
 
-function TOgfBonesIKDataContainer.Deserialize(rawdata: string): boolean;
+function TOgfJointsDataContainer.Deserialize(rawdata: string): boolean;
 var
   i, cnt:integer;
 begin
@@ -3473,10 +3762,10 @@ begin
   Reset();
 
   repeat
-    i:=length(_ik_data);
-    setlength(_ik_data, i+1);
-    _ik_data[i]:=TOgfBoneIKData.Create();
-    cnt:=_ik_data[i].Deserialize(rawdata);
+    i:=length(_data);
+    setlength(_data, i+1);
+    _data[i]:=TOgfJointData.Create();
+    cnt:=_data[i].Deserialize(rawdata);
     if (cnt<0) or not AdvanceString(rawdata, cnt) then begin
       Reset();
       break;
@@ -3489,43 +3778,43 @@ begin
   _loaded:=result;
 end;
 
-function TOgfBonesIKDataContainer.Serialize(): string;
+function TOgfJointsDataContainer.Serialize(): string;
 var
   i:integer;
 begin
   result:='';
   if not Loaded() then exit;
 
-  for i:=0 to length(_ik_data)-1 do begin
-    result:=result+_ik_data[i].Serialize();
+  for i:=0 to length(_data)-1 do begin
+    result:=result+_data[i].Serialize();
   end;
 end;
 
-function TOgfBonesIKDataContainer.Count(): integer;
+function TOgfJointsDataContainer.Count(): integer;
 begin
   if Loaded() then begin
-    result:=length(_ik_data);
+    result:=length(_data);
   end else begin
     result:=0;
   end;
 end;
 
-function TOgfBonesIKDataContainer.Get(i: integer): TOgfBoneIKData;
+function TOgfJointsDataContainer.Get(i: integer): TOgfJointData;
 begin
   result:=nil;
-  if not Loaded() or (i<0) or (i >= length(_ik_data)) then exit;
-  result:=_ik_data[i];
+  if not Loaded() or (i<0) or (i >= length(_data)) then exit;
+  result:=_data[i];
 end;
 
-function TOgfBonesIKDataContainer.UniformScale(k: single): boolean;
+function TOgfJointsDataContainer.UniformScale(k: single): boolean;
 var
   i:integer;
 begin
   result:=Loaded();
   if not result then exit;
 
-  for i:=0 to length(_ik_data)-1 do begin
-    result:=result and _ik_data[i].UniformScale(k);
+  for i:=0 to length(_data)-1 do begin
+    result:=result and _data[i].UniformScale(k);
   end;
 end;
 
@@ -3617,7 +3906,7 @@ begin
   result:=sz;
 end;
 
-function TOgfJointIKData.Serialize(version: cardinal): string;
+function TOgfJointIKData.Serialize(): string;
 var
   i:integer;
 begin
@@ -3636,29 +3925,27 @@ begin
   result:=result+SerializeCardinal(_ik_flags);
   result:=result+SerializeFloat(_break_force);
   result:=result+SerializeFloat(_break_torque);
-  if version > OGF_JOINT_IK_VERSION_0 then begin
-    result:=result+SerializeFloat(_friction);
-  end;
+  result:=result+SerializeFloat(_friction);
 end;
 
-{ TOgfBoneIKData }
+{ TOgfJointData }
 
-constructor TOgfBoneIKData.Create;
+constructor TOgfJointData.Create;
 begin
   _ikdata:=TOgfJointIKData.Create;
   Reset();
 end;
 
-destructor TOgfBoneIKData.Destroy;
+destructor TOgfJointData.Destroy;
 begin
   Reset();
   FreeAndNil(_ikdata);
   inherited Destroy;
 end;
 
-procedure TOgfBoneIKData.Reset;
+procedure TOgfJointData.Reset;
 begin
-  _version:=$FFFFFFFF;
+  _loaded:=false;
   _material:='';
   _shape.shape_type:=OGF_SHAPE_TYPE_INVALID;
   _shape.flags:=0;
@@ -3672,24 +3959,26 @@ begin
   set_zero(_center_of_mass);
 end;
 
-function TOgfBoneIKData.Loaded(): boolean;
+function TOgfJointData.Loaded(): boolean;
 begin
-  result:=(_version <> $FFFFFFFF);
+  result:=_loaded;
 end;
 
-function TOgfBoneIKData.Deserialize(rawdata: string): integer;
+function TOgfJointData.Deserialize(rawdata: string): integer;
 var
   sz, total:integer;
+  version:cardinal;
 begin
   result:=-1;
   total:=0;
 
   Reset();
+  _loaded:=true;
 
-  if length(rawdata)<sizeof(_version) then exit;
-  _version:=pcardinal(@rawdata[1])^;
-  if not AdvanceString(rawdata, sizeof(_version)) then exit;
-  total:=total+sizeof(_version);
+  if length(rawdata)<sizeof(cardinal) then exit;
+  version:=pcardinal(@rawdata[1])^;
+  if not AdvanceString(rawdata, sizeof(version)) then exit;
+  total:=total+sizeof(version);
 
   if not DeserializeZStringAndSplit(rawdata, _material) then exit;
   total:=total+length(_material)+1;
@@ -3699,7 +3988,7 @@ begin
   if not AdvanceString(rawdata, sizeof(_shape)) then exit;
   total:=total+sizeof(_shape);
 
-  sz:=_ikdata.Deserialize(rawdata, _version);
+  sz:=_ikdata.Deserialize(rawdata, version);
   if sz < 0 then exit;
   if not AdvanceString(rawdata, sz) then exit;
   total:=total+sz;
@@ -3727,16 +4016,16 @@ begin
   result:=total;
 end;
 
-function TOgfBoneIKData.Serialize(): string;
+function TOgfJointData.Serialize(): string;
 var
   t:string;
 begin
   result:='';
   if not Loaded() then exit;
-  t:=_ikdata.Serialize(_version);
+  t:=_ikdata.Serialize();
   if length(t) = 0 then exit;
 
-  result:=result+SerializeCardinal(_version);
+  result:=result+SerializeCardinal(1); //version
   result:=result+_material+chr(0);
   result:=result+SerializeBlock(@_shape, sizeof(_shape));
   result:=result+t;
@@ -3746,12 +4035,12 @@ begin
   result:=result+SerializeBlock(@_center_of_mass, sizeof(_center_of_mass));
 end;
 
-function TOgfBoneIKData.GetShape(): TOgfBoneShape;
+function TOgfJointData.GetShape(): TOgfBoneShape;
 begin
   result:=_shape;
 end;
 
-function TOgfBoneIKData.MoveShape(v: FVector3): boolean;
+function TOgfJointData.MoveShape(v: FVector3): boolean;
 begin
   result:=false;
   if not Loaded() then exit;
@@ -3763,28 +4052,69 @@ begin
   end;
 end;
 
-function TOgfBoneIKData.SerializeShape(): string;
+function TOgfJointData.SerializeShape(): string;
 var
   i:integer;
+const
+  HEADER:string = 'OgfShape';
 begin
   result:='';
   if not Loaded() then exit;
-
+  result:=result+HEADER;
   for i:=0 to sizeof(_shape)-1 do begin
     result:= result+PAnsiChar(@_shape)[i];
   end;
 end;
 
-function TOgfBoneIKData.DeserializeShape(s: string): boolean;
+function TOgfJointData.DeserializeShape(s: string): boolean;
+const
+  HEADER:string = 'OgfShape';
 begin
   result:=false;
-  if length(s) <> sizeof(_shape) then exit;
+  if length(s) <> sizeof(_shape)+length(HEADER) then exit;
   if not Loaded() then exit;
-  _shape:=pTOgfBoneShape(@s[1])^;
-  result:=true;
+  if leftstr(s, length(HEADER)) = HEADER then begin
+    _shape:=pTOgfBoneShape(@s[length(HEADER)+1])^;
+    result:=true;
+  end;
 end;
 
-function TOgfBoneIKData.UniformScale(k: single): boolean;
+function TOgfJointData.GetMaterial(): string;
+begin
+  result:=_material;
+end;
+
+procedure TOgfJointData.SetMaterial(matname: string);
+begin
+  _material:=matname;
+end;
+
+procedure TOgfJointData.GetTransformData(var offset: FVector3;
+  var rotate: FVector3);
+begin
+  offset:=_rest_offset;
+  rotate:=_rest_rotate;
+end;
+
+procedure TOgfJointData.SetTransformData(offset: FVector3; rotate: FVector3);
+begin
+  _rest_offset:=offset;
+  _rest_rotate:=rotate;
+end;
+
+procedure TOgfJointData.GetMassParams(var center: FVector3; var mass: single);
+begin
+  center:=_center_of_mass;
+  mass:=_mass;
+end;
+
+procedure TOgfJointData.SetMassParams(center: FVector3; mass: single);
+begin
+  _mass:=mass;
+  _center_of_mass:=center;
+end;
+
+function TOgfJointData.UniformScale(k: single): boolean;
 begin
   result:=Loaded();
   if not result then exit;
@@ -3796,6 +4126,16 @@ begin
 end;
 
 { TOgfBone }
+
+procedure TOgfBone._SetName(name: string);
+begin
+  _name:=name;
+end;
+
+procedure TOgfBone._SetParentName(name: string);
+begin
+  _parent_name:=name;
+end;
 
 constructor TOgfBone.Create;
 begin
@@ -5381,11 +5721,11 @@ begin
         if not selection_callback(i, v, puv, b, userdata) then continue;
       end;
 
-      v_sub(@v^.pos, pivot_point);
+      v_sub(v^.pos, pivot_point^);
       v^.pos.x:=v^.pos.x*factors^.x;
       v^.pos.y:=v^.pos.y*factors^.y;
       v^.pos.z:=v^.pos.z*factors^.z;
-      v_add(@v^.pos, pivot_point)
+      v_add(v^.pos, pivot_point^)
     end;
 
   finally
@@ -5423,9 +5763,9 @@ begin
         if not selection_callback(i, v, puv, b, userdata) then continue;
       end;
 
-      v^.pos:=v_sub(@v^.pos, pivot_point);
-      v^.pos:=m_mul(m, @v^.pos);
-      v^.pos:=v_add(@v^.pos, pivot_point)
+      v^.pos:=v_sub(v^.pos, pivot_point^);
+      v^.pos:=m_mul(m^, v^.pos);
+      v^.pos:=v_add(v^.pos, pivot_point^)
     end;
 
   finally
@@ -6534,7 +6874,7 @@ begin
 
   _children:=TOgfChildrenContainer.Create();
   _bone_names:=TOgfBonesContainer.Create();
-  _ikdata:=TOgfBonesIKDataContainer.Create();
+  _joints:=TOgfJointsDataContainer.Create();
   _userdata:=TOgfUserdataContainer.Create();
   _lodref:=TOgfLodRefsContainer.Create();
 
@@ -6548,7 +6888,7 @@ begin
   _skeleton.Free();
   _children.Free();
   _bone_names.Free();
-  _ikdata.Free();
+  _joints.Free();
   _userdata.Free();
   _lodref.Free();
 
@@ -6562,7 +6902,7 @@ begin
 
   _children.Reset();
   _bone_names.Reset();
-  _ikdata.Reset();
+  _joints.Reset();
   _userdata.Reset();
   _lodref.Reset();
 
@@ -6595,7 +6935,7 @@ begin
 
       chunk:=mem.FindSubChunk(CHUNK_OGF_S_IKDATA);
       if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
-      r:=_ikdata.Deserialize(mem.GetCurrentChunkRawDataAsString());
+      r:=_joints.Deserialize(mem.GetCurrentChunkRawDataAsString());
       mem.LeaveSubChunk();
       if not r then exit;
 
@@ -6613,7 +6953,7 @@ begin
         if not r then exit;
       end;
 
-      if not _skeleton.Build(_bone_names, _ikdata) then exit;
+      if not _skeleton.Build(_bone_names, _joints) then exit;
 
       if _animations.LoadFromChunkedMem(mem) then begin
         _animations.ResetSource(_source);
@@ -6647,7 +6987,7 @@ begin
 
   children:=_children.Serialize();
   bone_names:=_bone_names.Serialize();
-  ikdata:=_ikdata.Serialize();
+  ikdata:=_joints.Serialize();
   userdata:=_userdata.Serialize();
   lodref:=_lodref.Serialize();
 

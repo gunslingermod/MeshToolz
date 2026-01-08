@@ -55,7 +55,6 @@ TModelSlot = class
   _commands_children:TChildrenCommands;
   _commands_skeleton:TCommandsStorage;
   _commands_bones:TBonesCommands;
-  _commands_ikdata:TBonesCommands;
 
   function _CmdSetPivot(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSelectionSphere(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -107,9 +106,7 @@ TModelSlot = class
 
   function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdIKDataInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdIKDataCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-  function _CmdIKDataPaste(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneReparent(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -256,24 +253,17 @@ var
 begin
   result:=false;
 
-  if not result then begin
-    // Пробуем извлечь ID по имени кости
-    tmpstr:=inoutstr;
-    tmpid:=ExtractABNString(tmpstr);
-    tmpstr:=TrimLeft(tmpstr);
-    tmpid:=trim(tmpid);
+  // Try to extract bone ID using argument as bone name
+  tmpstr:=inoutstr;
+  tmpid:=ExtractABNString(tmpstr);
+  tmpstr:=TrimLeft(tmpstr);
+  tmpid:=trim(tmpid);
 
-    for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
-      if _data.Skeleton().GetBoneName(i) = tmpid then begin
-        result:=true;
-        tmp_num:=i;
-        break;
-      end;
-    end;
-  end;
+  tmp_num:=_data.Skeleton().GetBoneIdxByName(tmpid);
 
-  if not result then begin
-    // Пробуем извлечь ID напрямую
+  if tmp_num<0 then begin
+    // Try to extract the index itself
+    // Index in the output can be invalid! Check it before using!
     tmpstr:=inoutstr;
     tmpid:=ExtractNumericString(tmpstr, true);
     tmpstr:=TrimLeft(tmpstr);
@@ -281,6 +271,8 @@ begin
     if (tmp_num <> -2) then begin
       result:=(_data.Skeleton().GetBonesCount() > tmp_num);
     end;
+  end else begin
+    result:=true;
   end;
 
   if result then begin
@@ -438,8 +430,10 @@ end;
 function TModelSlot._CmdSelectionInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   r:string;
+  r_bones:string;
   i:integer;
   cbdata:TVertexCounterCallbackData;
+  v:FVector3;
 begin
   r:=_selectionarea.Info();
 
@@ -452,11 +446,21 @@ begin
     end;
 
     r:=r+chr($0d)+chr($0a)+'Selected vertices count: '+inttostr(cbdata.vcnt);
+
+    r_bones:='';
+    for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
+      v:=_data.Skeleton().GetBoneCurrentPosition(i);
+      if _selectionarea.IsPointInSelection(v) then begin
+        if length(r_bones)=0 then begin
+          r_bones:=r_bones+chr($0d)+chr($0a)+'Selected bones:'+chr($0d)+chr($0a);
+        end;
+        r_bones:=r_bones+'- '+_data.Skeleton().GetBoneName(i)+' ('+floattostr(v.x)+', '+floattostr(v.y)+', '+floattostr(v.z)+')'+chr($0d)+chr($0a);
+      end;
+    end;
   end;
 
-  // TODO: count of bones?
 
-  result_description.SetDescription(r);
+  result_description.SetDescription(r+r_bones);
   result:=true;
 end;
 
@@ -640,76 +644,108 @@ function TModelSlot._CmdBoneInfo(var args: string; cmd: TCommandSetup; result_de
 var
   idx:integer;
   r:string;
+  obb:FObb;
+  shape:TOgfBoneShape;
+  v1, v2:FVector3;
+  trm:FMatrix4x4;
+  n:single;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
+
     r:='Info for bone #'+inttostr(idx)+':'+chr($0d)+chr($0a);
     r:=r+'- Name: '+_data.Skeleton().GetBoneName(idx)+chr($0d)+chr($0a);
-    r:=r+'- Parent: '+_data.Skeleton().GetParentBoneName(idx);
+    r:=r+'- Parent: '+_data.Skeleton().GetBoneParentName(idx)+chr($0d)+chr($0a);
+    r:=r+'- Material: '+data.Skeleton().GetBoneMaterial(idx)+chr($0d)+chr($0a);
+
+    v1:=data.Skeleton().GetBoneBindPosition(idx);
+    r:=r+'- Bind position: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
+
+    if data.Skeleton().GetBoneLocalTransform(idx, v1, v2) then begin
+      r:=r+'- Offset: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
+      r:=r+'- Rotate: '+floattostr(v2.x)+', '+floattostr(v2.y)+', '+floattostr(v2.z)+chr($0d)+chr($0a);
+    end;
+
+    if data.Skeleton().GetBoneMassParams(idx, v1, n) then begin
+      r:=r+'- Center of mass: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
+      r:=r+'- Mass: '+floattostr(n)+chr($0d)+chr($0a);
+    end;
+
+    if data.Skeleton().GetBoneShape(idx, shape) then begin
+      r:=r+'- Shape type: '+inttostr(shape.shape_type)+' ('+ShapeTypeById(shape.shape_type)+')'+chr($0d)+chr($0a);
+    end;
+
+    if data.Skeleton().GetBoneBoundingBox(idx, obb) then begin
+      r:=r+'- OBB Halfsize: '+floattostr(obb.m_halfsize.x)+', '+floattostr(obb.m_halfsize.y)+', '+floattostr(obb.m_halfsize.z)+chr($0d)+chr($0a);
+      r:=r+'- OBB Translate: '+floattostr(obb.m_translate.x)+', '+floattostr(obb.m_translate.y)+', '+floattostr(obb.m_translate.z)+chr($0d)+chr($0a);
+      r:=r+'- OBB Rotation Matrix: '+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(obb.m_rotate.i.x)+', '+floattostr(obb.m_rotate.i.y)+', '+floattostr(obb.m_rotate.i.z)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(obb.m_rotate.j.x)+', '+floattostr(obb.m_rotate.j.y)+', '+floattostr(obb.m_rotate.j.z)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(obb.m_rotate.k.x)+', '+floattostr(obb.m_rotate.k.y)+', '+floattostr(obb.m_rotate.k.z)+' )'+chr($0d)+chr($0a);
+    end;
+
+    if data.Skeleton().GetBoneLocalTransformMatrix(idx, trm) then begin
+      r:=r+'- Local Transform Matrix: '+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.i.x)+', '+floattostr(trm.i.y)+', '+floattostr(trm.i.z)+', '+floattostr(trm.i.w)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.j.x)+', '+floattostr(trm.j.y)+', '+floattostr(trm.j.z)+', '+floattostr(trm.j.w)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.k.x)+', '+floattostr(trm.k.y)+', '+floattostr(trm.k.z)+', '+floattostr(trm.k.w)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.c.x)+', '+floattostr(trm.c.y)+', '+floattostr(trm.c.z)+', '+floattostr(trm.c.w)+' )'+chr($0d)+chr($0a);
+    end;
+
+    if data.Skeleton().GetBoneBindPoseToGlobalMatrix(idx, trm) then begin
+      r:=r+'- Global Bind pose Matrix: '+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.i.x)+', '+floattostr(trm.i.y)+', '+floattostr(trm.i.z)+', '+floattostr(trm.i.w)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.j.x)+', '+floattostr(trm.j.y)+', '+floattostr(trm.j.z)+', '+floattostr(trm.j.w)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.k.x)+', '+floattostr(trm.k.y)+', '+floattostr(trm.k.z)+', '+floattostr(trm.k.w)+' )'+chr($0d)+chr($0a);
+      r:=r+'( '+floattostr(trm.c.x)+', '+floattostr(trm.c.y)+', '+floattostr(trm.c.z)+', '+floattostr(trm.c.w)+' )'+chr($0d)+chr($0a);
+    end;
+
     result_description.SetDescription(r);
     result:=true;
   end;
 end;
 
-function TModelSlot._CmdIKDataInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+function TModelSlot._CmdBoneReparent(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
+  new_parent_id:TBoneId;
   r:string;
-  shape_type_id:word;
+  n:integer;
+  preserve_pos:boolean;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
+    if not ExtractBoneIdFromString(args, new_parent_id) then begin
+      result_description.SetDescription('can''t extract new parent bone id from argument #1');
+      exit;
+    end;
 
-    r:='IKData info for bone #'+inttostr(idx)+' ('+_data.Skeleton().GetBoneName(idx)+'):'+chr($0d)+chr($0a);
+    args:=trim(args);
+    preserve_pos:=true;
+    if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      args:=trim(rightstr(args, length(args)-1));
+      n:=strtointdef(args, -1);
+      if (n < 0) or (n > 1) then begin
+        result_description.SetDescription('the second argument must be 1 (preserve global position) or 0 (not preserve)');
+        exit;
+      end else begin
+        preserve_pos:=(n>0);
+      end;
+    end else if (length(args) > 0) then begin
+      result_description.SetDescription('Please use comma to split arguments');
+    end;
 
-    shape_type_id:=_data.Skeleton().GetOgfShape(idx).shape_type;
-    r:=r+'- Shape type: '+inttostr(shape_type_id)+' ('+ShapeTypeById(shape_type_id)+')';
-
-    result_description.SetDescription(r);
-    result:=true;
-  end;
-end;
-
-function TModelSlot._CmdIKDataCopy(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  s:string;
-  idx:integer;
-begin
-  result:=false;
-  if userdata is TCommandIndexArg then begin
-    idx:=(userdata as TCommandIndexArg).Get();
-    s:=_data.Skeleton().SerializeBoneIKData(idx);
-    if length(s)=0 then begin
-      result_description.SetDescription('failed to serialize ikdata for bone #'+inttostr(idx));
+    if not _data.Skeleton().ReparentBone(idx, new_parent_id, preserve_pos) then begin
+      result_description.SetDescription('error while reparenting bone '+_data.Skeleton().GetBoneName(idx));
     end else begin
-      _container.GetTempBuffer().SetData(s, BUFFER_TYPE_BONEIKDATA);
-      result_description.SetDescription('data successfully copied to temp buffer');
+      result_description.SetDescription('bone '+_data.Skeleton().GetBoneName(idx)+' reparented');
       result:=true;
     end;
   end;
 end;
 
-function TModelSlot._CmdIKDataPaste(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
-var
-  s:string;
-  idx:integer;
-begin
-  result:=false;
-  if userdata is TCommandIndexArg then begin
-    idx:=(userdata as TCommandIndexArg).Get();
-
-    if not _container.GetTempBuffer().GetData(s, BUFFER_TYPE_BONEIKDATA) then begin
-      result_description.SetDescription('invalid data in the temp buffer');
-    end else if not _data.Skeleton().DeserializeBoneIKData(idx, s) then begin
-      result_description.SetDescription('failed to paste serialized data');
-    end else begin
-      result_description.SetDescription('ikdata successfully pasted');
-      result:=true;
-    end;
-  end;
-end;
 
 function TModelSlot._CmdChildInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
@@ -1541,7 +1577,6 @@ begin
       _commands_children:=TChildrenCommands.Create(self);
     _commands_skeleton:=TCommandsStorage.Create(true);
       _commands_bones:=TBonesCommands.Create(self);
-      _commands_ikdata:=TBonesCommands.Create(self);
 
   _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('selection', nil, _commands_selection, 'control pivot point and selection area'));
   _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('mesh', @_IsModelLoadedPrecondition, _commands_mesh, 'access group of properties and procedures associated with model''s mesh'));
@@ -1583,21 +1618,15 @@ begin
 
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsModelHasSkeletonPrecondition, _commands_bones, 'access array of bones'));
-  _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('ikdata', @_IsModelHasSkeletonPrecondition, _commands_ikdata, 'access array of bones'' IK Data'));
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
-
-  _commands_ikdata.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdIKDataInfo, 'display IK data info associated with the selected bone'), CommandItemTypeCall);
-  _commands_ikdata.DoRegister(TCommandSetup.Create('copy', @_IsModelHasSkeletonPrecondition, @_CmdIKDataCopy, 'copy IK data info of the selected bone to temp buffer'), CommandItemTypeCall);
-  _commands_ikdata.DoRegister(TCommandSetup.Create('paste', @_IsModelHasSkeletonPrecondition, @_CmdIKDataPaste, 'replace IK data of the selected bone with data from temp buffer' ), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('reparent', @_IsModelHasSkeletonPrecondition, @_CmdBoneReparent, 'change bone parent; arg 1 - new parent, arg 2 (optional) - preserve bone global position (1, default) or not (0)'), CommandItemTypeCall);
 
 end;
 
 destructor TModelSlot.Destroy;
 begin
-
-  FreeAndNil(_commands_ikdata);
   FreeAndNil(_commands_children);
   FreeAndNil(_commands_skeleton);
   FreeAndNil(_commands_mesh);

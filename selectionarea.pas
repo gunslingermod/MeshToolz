@@ -94,7 +94,7 @@ function TSelectionArea.IsPointInSelection(point: FVector3): boolean;
 begin
   result:=false;
   if _selectiontype = SelectionTypeSphere then begin
-    result:= distance_between(@_center, @point) < _radius;
+    result:= distance_between(_center, point) < _radius;
   end else if _selectiontype = SelectionTypeBox then begin
     result:=(point.x<=max(_p1.x, _p2.x))
         and (point.x>=min(_p1.x, _p2.x))
