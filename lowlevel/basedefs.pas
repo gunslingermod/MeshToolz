@@ -82,6 +82,7 @@ type
   function m_mul(var m:FMatrix3x3; var v:FVector3):FVector3; overload;
   function m_mul(var m:FMatrix4x4; var q:Fquaternion):Fquaternion; overload;
   function m_mul(var m1:FMatrix4x4; var m2:FMatrix4x4):FMatrix4x4; overload;
+  function m_mul4x3(var m1:FMatrix4x4; var m2:FMatrix4x4):FMatrix4x4; overload;
 
   procedure m_setHPB(var m:FMatrix4x4; h:single; p:single; b:single);
   procedure m_getHPB(var m:FMatrix4x4; var h:single; var p:single; var b:single);
@@ -90,6 +91,7 @@ type
   procedure m_getXYZi(var m:FMatrix4x4; var v:FVector3);
   procedure m_translate_over(var m:FMatrix4x4; var v:FVector3);
   function m_invert43(var m:FMatrix4x4):FMatrix4x4;
+  procedure m_rotation(var m:FMatrix4x4; var q:Fquaternion);
 
   function distance_between(var point1:FVector3; var point2:FVector3):single;
 
@@ -229,6 +231,29 @@ begin
   result.c.w := m1.i.w * m2.c.x + m1.j.w * m2.c.y + m1.k.w * m2.c.z + m1.c.w * m2.c.w;
 end;
 
+function m_mul4x3(var m1: FMatrix4x4; var m2: FMatrix4x4): FMatrix4x4;
+begin
+  result.i.x := m1.i.x * m2.i.x + m1.j.x * m2.i.y + m1.k.x * m2.i.z;
+  result.i.y := m1.i.y * m2.i.x + m1.j.y * m2.i.y + m1.k.y * m2.i.z;
+  result.i.z := m1.i.z * m2.i.x + m1.j.z * m2.i.y + m1.k.z * m2.i.z;
+  result.i.w := 0;
+
+  result.j.x := m1.i.x * m2.j.x + m1.j.x * m2.j.y + m1.k.x * m2.j.z;
+  result.j.y := m1.i.y * m2.j.x + m1.j.y * m2.j.y + m1.k.y * m2.j.z;
+  result.j.z := m1.i.z * m2.j.x + m1.j.z * m2.j.y + m1.k.z * m2.j.z;
+  result.j.w := 0;
+
+  result.k.x := m1.i.x * m2.k.x + m1.j.x * m2.k.y + m1.k.x * m2.k.z;
+  result.k.y := m1.i.y * m2.k.x + m1.j.y * m2.k.y + m1.k.y * m2.k.z;
+  result.k.z := m1.i.z * m2.k.x + m1.j.z * m2.k.y + m1.k.z * m2.k.z;
+  result.k.w := 0;
+
+  result.c.x := m1.i.x * m2.c.x + m1.j.x * m2.c.y + m1.k.x * m2.c.z + m1.c.x;
+  result.c.y := m1.i.y * m2.c.x + m1.j.y * m2.c.y + m1.k.y * m2.c.z + m1.c.y;
+  result.c.z := m1.i.z * m2.c.x + m1.j.z * m2.c.y + m1.k.z * m2.c.z + m1.c.z;
+  result.c.w := 1;
+end;
+
 procedure m_setHPB(var m: FMatrix4x4; h: single; p: single; b: single);
 var
   sh,sp,sb,ch,cp,cb:single;
@@ -318,6 +343,20 @@ begin
  result.c.y := -( m.c.x * result.i.y + m.c.y * result.j.y + m.c.z * result.k.y );
  result.c.z := -( m.c.x * result.i.z + m.c.y * result.j.z + m.c.z * result.k.z );
  result.c.w := 1;
+end;
+
+procedure m_rotation(var m: FMatrix4x4; var q: Fquaternion);
+var
+  xx,yy,zz,xy,xz,yz,wx,wy,wz:single;
+begin
+  xx := q.x*q.x; yy := q.y*q.y; zz := q.z*q.z;
+  xy := q.x*q.y; xz := q.x*q.z; yz := q.y*q.z;
+  wx := q.w*q.x; wy := q.w*q.y; wz := q.w*q.z;
+
+  m.i.x := 1 - 2 * ( yy + zz ); m.i.y :=     2 * ( xy - wz ); m.i.z :=     2 * ( xz + wy ); m.i.w := 0;
+  m.j.x :=     2 * ( xy + wz ); m.j.y := 1 - 2 * ( xx + zz ); m.j.z :=     2 * ( yz - wx ); m.j.w := 0;
+  m.k.x :=     2 * ( xz - wy ); m.k.y :=     2 * ( yz + wx ); m.k.z := 1 - 2 * ( xx + yy ); m.k.w := 0;
+  m.c.x := 0;                   m.c.y := 0;                   m.c.z := 0;                   m.c.w := 1;
 end;
 
 function distance_between(var point1: FVector3; var point2: FVector3): single;

@@ -522,9 +522,11 @@ type
     joint:TOgfJointData;
   end;
 
+  TOgfAnimationsParser = class;
   TOgfSkeleton = class
     _loaded:boolean;
     _data:TOgfSkeletonData;
+    _animations:TOgfAnimationsParser;
 
     function _GetBone(id:TBoneID):TOgfBoneData;
     function _GetBoneByName(name:string; var output:TOgfBoneData):boolean;
@@ -535,11 +537,13 @@ type
     destructor Destroy(); override;
 
     function Build(desc:TOgfBonesContainer; ik:TOgfJointsDataContainer):boolean;
+    procedure AssignAnimations(animations:TOgfAnimationsParser);
 
     function GetBonesCount():integer;
-    function GetBoneIdxByName(name:string):integer; overload;
+    function GetBoneIdxByName(name:string):TBoneID; overload;
     function GetBoneName(idx:TBoneID):string;
     function GetBoneParentName(idx:TBoneID):string;
+    function GetBoneParentIdx(idx:TBoneID):TBoneId;
     function GetBoneMaterial(idx:TBoneID):string;
     function GetBoneBindPosition(idx:TBoneID):FVector3;
     function GetBoneCurrentPosition(idx:TBoneID):FVector3;
@@ -548,6 +552,9 @@ type
     function GetBoneLocalTransformMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
     function GetBoneBindPoseToGlobalMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
     function GetBoneBindPoseFromGlobalTransformMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
+
+    function GetBoneMotionKeyToGlobalMatrix(idx:TBoneID; motion_name:string; key_idx:integer; var m:FMatrix4x4):boolean;
+    function GetBoneMotionKeyPosition(idx:TBoneID; motion_name:string; key_idx:integer):FVector3;
 
 
     function RenameBone(old_name:string; new_name:string):boolean;
@@ -705,6 +712,7 @@ type
      _name:string;
      _idx_in_track:cardinal;
      procedure _SetIdxInTracks(new_idx_in_tracks:integer);
+     procedure _SetName(new_name:string);
    public
      // Common
      constructor Create; overload;
@@ -757,6 +765,12 @@ type
      function Loaded():boolean;
      function Deserialize(rawdata:string):integer;
      function Serialize():string;
+
+     function GetName():string;
+     procedure SetName(name:string);
+     function GetIntervalsCount():integer;
+     function GetInterval(idx:integer):TOgfMotionMarkInterval;
+     procedure AddInterval(interval:TOgfMotionMarkInterval);
    end;
 
    { TOgfMotionMarks }
@@ -771,9 +785,13 @@ type
      procedure Reset;
      function Loaded():boolean;
      function Deserialize(rawdata:string):integer;
-     function Serialize():string;
+     function Serialize(force_v4:boolean):string;
 
      procedure CopyFrom(second:TOgfMotionMarks);
+
+     function Count():integer;
+     function Get(idx:integer):TOgfMotionMark;
+     function Add(mark_name:string; interval:TOgfMotionMarkInterval):integer;
    end;
 
    { TOgfMotionDef }
@@ -800,7 +818,7 @@ type
      procedure Reset;
      function Loaded():boolean;
      function Deserialize(rawdata:string; version:cardinal):integer;
-     function Serialize():string;
+     function Serialize(force_v4:boolean):string;
 
      function GetData():TOgfMotionDefData;
      procedure SetData(d:TOgfMotionDefData);
@@ -899,6 +917,7 @@ type
 
     function AddBone(name:string; default_key:TMotionKey; part_id:integer=0):boolean;
     function RemoveBone(name:string):boolean;
+    function RenameBone(old_name:string; new_name:string):boolean;
 
     function ChangeAnimationFramesCount(anim_name:string; new_frames_count:integer):boolean;
     function GetAnimationFramesCount(anim_name:string):integer;
@@ -1148,6 +1167,49 @@ begin
   end;
 end;
 
+function TOgfMotionMark.GetName(): string;
+begin
+  if _loaded then begin
+    result:=_name;
+  end else begin
+    result:='';
+  end;
+end;
+
+procedure TOgfMotionMark.SetName(name: string);
+begin
+  _name:=name;
+end;
+
+function TOgfMotionMark.GetIntervalsCount(): integer;
+begin
+  if _loaded then begin
+    result:=length(_intervals);
+  end else begin
+    result:=0;
+  end;
+end;
+
+function TOgfMotionMark.GetInterval(idx: integer): TOgfMotionMarkInterval;
+begin
+  result.start:=0;
+  result.finish:=0;
+  if not _loaded then exit;
+  if (idx>=0) and (idx < length(_intervals)) then begin
+    result:=_intervals[idx];
+  end;
+end;
+
+procedure TOgfMotionMark.AddInterval(interval: TOgfMotionMarkInterval);
+var
+  i:integer;
+begin
+  i:=length(_intervals);
+  setlength(_intervals, i+1);
+  _intervals[i]:=interval;
+  _loaded:=true;
+end;
+
 { TOgfMotionMarks }
 
 constructor TOgfMotionMarks.Create;
@@ -1219,12 +1281,19 @@ begin
 
 end;
 
-function TOgfMotionMarks.Serialize(): string;
+function TOgfMotionMarks.Serialize(force_v4: boolean): string;
 var
   i:integer;
 begin
   result:='';
-  if not _loaded then exit;
+  if not _loaded then begin
+    if force_v4 then begin
+      result:=result+SerializeCardinal(0);
+    end;
+    exit;
+  end;
+
+
   result:=result+SerializeCardinal(length(_marks));
 
   for i:=0 to length(_marks)-1 do begin
@@ -1245,6 +1314,49 @@ begin
   setlength(_marks, length(second._marks));
   for i:=0 to length(_marks)-1 do begin
     _marks[i]:=TOgfMotionMark.Create(second._marks[i]);
+  end;
+end;
+
+function TOgfMotionMarks.Count(): integer;
+begin
+  result:=length(_marks);
+end;
+
+function TOgfMotionMarks.Get(idx: integer): TOgfMotionMark;
+begin
+  result:=nil;
+
+  if (idx >= 0) and (idx < length(_marks)) then begin
+    result:=_marks[idx];
+  end;
+end;
+
+function TOgfMotionMarks.Add(mark_name: string; interval: TOgfMotionMarkInterval): integer;
+var
+  i:integer;
+begin
+  result:=-1;
+
+  for i:=0 to length(_marks)-1 do begin
+    if _marks[i].GetName() = mark_name then begin
+      _marks[i].AddInterval(interval);
+      result:=i;
+      break;
+    end;
+  end;
+
+  if result<0 then begin
+    i:=length(_marks);
+    setlength(_marks, i+1);
+    _marks[i]:=TOgfMotionMark.Create();
+    _marks[i].AddInterval(interval);
+    _marks[i].SetName(mark_name);
+    result:=i;
+  end;
+
+
+  if result>=0 then begin
+    _loaded:=true;
   end;
 end;
 
@@ -1348,7 +1460,7 @@ begin
   end;
 end;
 
-function TOgfMotionDef.Serialize(): string;
+function TOgfMotionDef.Serialize(force_v4: boolean): string;
 begin
   result:='';
   if not _loaded then exit;
@@ -1361,7 +1473,7 @@ begin
   result:=result+SerializeFloat(_data.power);
   result:=result+SerializeFloat(_data.accrue);
   result:=result+SerializeFloat(_data.falloff);
-  result:=result+_data.marks.Serialize(); // for version <4 returns an empty string because not loaded
+  result:=result+_data.marks.Serialize(force_v4); // for version <4 returns an empty string because not loaded
 
 end;
 
@@ -1471,6 +1583,11 @@ end;
 procedure TOgfMotionBoneParams._SetIdxInTracks(new_idx_in_tracks: integer);
 begin
   _idx_in_track:=new_idx_in_tracks;
+end;
+
+procedure TOgfMotionBoneParams._SetName(new_name: string);
+begin
+  _name:=new_name;
 end;
 
 { TOgfMotionBonePart }
@@ -1782,7 +1899,6 @@ begin
     end;
   end;
 
-
   result:=result+SerializeWord(version);
   result:=result+SerializeWord(length(_bone_parts));
   for i:=0 to length(_bone_parts)-1 do begin
@@ -1791,7 +1907,7 @@ begin
 
   result:=result+SerializeWord(length(_defs));
   for i:=0 to length(_defs)-1 do begin
-    result:=result+_defs[i].Serialize();
+    result:=result+_defs[i].Serialize(version>=4);
   end;
 
 end;
@@ -3307,6 +3423,7 @@ begin
   _loaded:=false;
   _data.ik:=nil;
   _data.bones:=nil;
+  _animations:=nil;
 end;
 
 function TOgfSkeleton.Loaded(): boolean;
@@ -3331,6 +3448,11 @@ begin
 
   _loaded:=true;
   result:=true;
+end;
+
+procedure TOgfSkeleton.AssignAnimations(animations: TOgfAnimationsParser);
+begin
+  _animations:=animations;
 end;
 
 function TOgfSkeleton.GetBonesCount(): integer;
@@ -3366,12 +3488,12 @@ begin
   end;
 end;
 
-function TOgfSkeleton.GetBoneIdxByName(name: string): integer;
+function TOgfSkeleton.GetBoneIdxByName(name: string): TBoneID;
 var
   bone:TOgfBone;
   i:integer;
 begin
-  result:=-1;
+  result:=INVALID_BONE_ID;
   if not Loaded() then exit;
 
   for i:=0 to GetBonesCount()-1 do begin
@@ -3393,22 +3515,35 @@ end;
 
 function TOgfSkeleton.RenameBone(old_name: string; new_name: string): boolean;
 var
-  idx:integer;
+  idx:TBoneID;
   bone:TOgfBone;
+  i:integer;
 begin
   result:=false;
   if not Loaded() then exit;
   // check if we already have bone with new name
   idx:=GetBoneIdxByName(new_name);
-  if idx < 0 then exit;
+  if idx <> INVALID_BONE_ID then exit;
 
   idx:=GetBoneIdxByName(old_name);
-  if idx < 0 then exit;
+  if idx = INVALID_BONE_ID then exit;
 
   bone:=_GetBone(idx).bone;
   if bone<>nil then begin
     bone._SetName(new_name);
+    for i:=0 to GetBonesCount()-1 do begin
+      bone:=_GetBone(i).bone;
+      if bone<>nil then begin
+        if bone.GetParentName() = old_name then begin
+          bone._SetParentName(new_name);
+        end;
+      end;
+    end;
     result:=true;
+
+    if _animations<>nil then begin
+      result:=_animations.RenameBone(old_name, new_name);
+    end;
   end;
 end;
 
@@ -3476,6 +3611,16 @@ begin
   end;
 end;
 
+function TOgfSkeleton.GetBoneParentIdx(idx: TBoneID): TBoneId;
+var
+  parent_name:string;
+begin
+  result:=INVALID_BONE_ID;
+  parent_name:=GetBoneParentName(idx);
+  if length(parent_name) = 0 then exit;
+  result:=GetBoneIdxByName(parent_name);
+end;
+
 function TOgfSkeleton.GetBoneMaterial(idx: TBoneID): string;
 begin
   result:='';
@@ -3527,16 +3672,14 @@ end;
 function TOgfSkeleton.GetBoneBindPoseToGlobalMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
 var
   parent_transform, my_transform:FMatrix4x4;
-  b,p_b:TOgfBoneData;
-  parentname:string;
+  b:TOgfBoneData;
   parentid:TBoneId;
 begin
   result:=false;
   if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
     b:=_GetBone(idx);
-    parentname:=b.bone.GetParentName();
-    parentid:=GetBoneIdxByName(parentname);
-    if (length(parentname)>0) and (parentid<>INVALID_BONE_ID) then begin
+    parentid:=GetBoneParentIdx(idx);
+    if parentid<>INVALID_BONE_ID then begin
       if GetBoneLocalTransformMatrix(idx, my_transform) and GetBoneBindPoseToGlobalMatrix(parentid, parent_transform) then begin
         m:=m_mul(parent_transform, my_transform);
         result:=true;
@@ -3550,16 +3693,14 @@ end;
 function TOgfSkeleton.GetBoneBindPoseFromGlobalTransformMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
 var
   parent_transform, my_transform:FMatrix4x4;
-  b,p_b:TOgfBoneData;
-  parentname:string;
+  b:TOgfBoneData;
   parentid:TBoneId;
 begin
   result:=false;
   if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
     b:=_GetBone(idx);
-    parentname:=b.bone.GetParentName();
-    parentid:=GetBoneIdxByName(parentname);
-    if (length(parentname)>0) and (parentid<>INVALID_BONE_ID) then begin
+    parentid:=GetBoneParentIdx(idx);
+    if parentid<>INVALID_BONE_ID then begin
       if GetBoneLocalTransformMatrix(idx, my_transform) and GetBoneBindPoseFromGlobalTransformMatrix(parentid, parent_transform) then begin
         my_transform:=m_invert43(my_transform);
         m:=m_mul(my_transform, parent_transform);
@@ -3569,6 +3710,45 @@ begin
       result:=GetBoneLocalTransformMatrix(idx, m);
       m:=m_invert43(m);
     end;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneMotionKeyToGlobalMatrix(idx: TBoneID; motion_name: string; key_idx: integer; var m: FMatrix4x4): boolean;
+var
+  parentid:TBoneId;
+  key:TMotionKey;
+  m2:FMatrix4x4;
+begin
+  result:=false;
+  if _animations = nil then exit;
+  if _animations.GetAnimationIdByName(motion_name)<0 then exit;
+  if (key_idx < 0) or  (_animations.GetAnimationFramesCount(motion_name)<=key_idx) then exit;
+  if not _animations.GetAnimationKeyForBone(motion_name, GetBoneName(idx), key_idx, key) then exit;
+
+  parentid:=GetBoneParentIdx(idx);
+  if parentid = INVALID_BONE_ID then begin
+    m_rotation(m, key.Q);
+    m_translate_over(m, key.T);
+    result:=true;
+  end else begin
+    if GetBoneMotionKeyToGlobalMatrix(parentid, motion_name, key_idx, m) then begin
+      m_rotation(m2, key.Q);
+      m_translate_over(m2, key.T);
+      m := m_mul(m, m2);
+      result:=true;
+    end;
+  end;
+end;
+
+function TOgfSkeleton.GetBoneMotionKeyPosition(idx: TBoneID; motion_name: string; key_idx: integer): FVector3;
+var
+  m: FMatrix4x4;
+begin
+  set_zero(result);
+  if  GetBoneMotionKeyToGlobalMatrix(idx, motion_name, key_idx, m) then begin
+    result.x:=m.c.x;
+    result.y:=m.c.y;
+    result.z:=m.c.z;
   end;
 end;
 
@@ -6562,6 +6742,25 @@ begin
   end;
 end;
 
+function TOgfAnimationsParser.RenameBone(old_name: string; new_name: string): boolean;
+var
+  part_id, bone_id:integer;
+  bone:TOgfMotionBoneParams;
+
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if _params.FindBoneIdxsByName(new_name, part_id, bone_id) then exit;
+
+  if _params.FindBoneIdxsByName(old_name, part_id, bone_id) then begin
+    bone:=_params.GetBone(part_id, bone_id);
+    if bone<>nil then begin
+      bone._SetName(new_name);
+      result:=true;
+    end;
+  end;
+end;
+
 function TOgfAnimationsParser.GetAnimationFramesCount(anim_name: string): integer;
 var
   track:TOgfMotionTrack;
@@ -6884,8 +7083,8 @@ end;
 
 destructor TOgfParser.Destroy;
 begin
-  _animations.Free();
   _skeleton.Free();
+  _animations.Free();
   _children.Free();
   _bone_names.Free();
   _joints.Free();
@@ -6897,6 +7096,7 @@ end;
 
 procedure TOgfParser.Reset;
 begin
+  _skeleton.Reset();
   _animations.Free();
   _animations:=TOgfAnimationsParser.Create();
 
@@ -6961,6 +7161,7 @@ begin
         _animations.Free();
         _animations:=TOgfAnimationsParser.Create();
       end;
+      _skeleton.AssignAnimations(_animations);
 
       result:=true;
   finally
@@ -7039,4 +7240,5 @@ end;
 
 
 end.
+
 

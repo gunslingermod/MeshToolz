@@ -40,6 +40,16 @@ public
   function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
 end;
 
+{ TAnimationsCommands }
+
+TAnimationsCommands = class(TSlotFilteringCommands)
+public
+  constructor Create(slot:TModelSlot);
+  function GetFilteringItemTypeName(item_id:integer):string; override;
+  function GetFilteringItemsCount():integer; override;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
+end;
+
 
 { TModelSlot }
 
@@ -55,6 +65,8 @@ TModelSlot = class
   _commands_children:TChildrenCommands;
   _commands_skeleton:TCommandsStorage;
   _commands_bones:TBonesCommands;
+  _commands_animations:TAnimationsCommands;
+  _commands_mmarks:TCommandsStorage;
 
   function _CmdSetPivot(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSelectionSphere(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -68,11 +80,13 @@ TModelSlot = class
   function _IsModelLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _IsModelNotLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _IsModelHasSkeletonPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _IsAnimationsLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
   function GetBoneNameById(boneid: TBoneId): string;
 
   function _CmdLoadFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdLoadAnimsFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdUnload(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -107,6 +121,12 @@ TModelSlot = class
   function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneReparent(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneRename(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+
+  function _CmdAnimInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimKeyInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimAddMotionMark(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimResetMotionMarks(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -186,7 +206,7 @@ constructor TBonesCommands.Create(slot: TModelSlot);
 begin
   inherited;
 
-  RegisterFilter('bonename');
+  RegisterFilter('name');
   RegisterFilter('id');
 end;
 
@@ -209,6 +229,35 @@ function TBonesCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilt
 begin
   result:=IsMatchFilter(_slot.Data().Skeleton().GetBoneName(item_id), filters[0], FILTER_MODE_EXACT)
        and IsMatchFilter(inttostr(item_id), filters[1], FILTER_MODE_EXACT)
+end;
+
+{ TAnimationsCommands }
+
+constructor TAnimationsCommands.Create(slot: TModelSlot);
+begin
+  inherited;
+
+  RegisterFilter('name');
+end;
+
+function TAnimationsCommands.GetFilteringItemTypeName(item_id: integer): string;
+begin
+  result:='animation';
+end;
+
+function TAnimationsCommands.GetFilteringItemsCount(): integer;
+begin
+  result:=0;
+  if _slot.Data()<>nil then begin
+    if _slot.Data().Animations()<>nil then begin
+      result:=_slot.Data().Animations().AnimationsCount();
+    end;
+  end;
+end;
+
+function TAnimationsCommands.CheckFiltersForItem(item_id: integer; filters: TIndexFilters): boolean;
+begin
+  result:=IsMatchFilter(_slot.Data().Animations().GetAnimationParams(item_id).name, filters[0], FILTER_MODE_EXACT);
 end;
 
 
@@ -245,6 +294,21 @@ begin
   end;
 end;
 
+function TModelSlot._IsAnimationsLoadedPrecondition(args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=true;
+  if not _data.Loaded() then begin
+    result_description.SetDescription('Slot is empty. Load data first');
+    result:=false;
+  end else if _data.Skeleton()=nil then begin
+    result_description.SetDescription('Loaded model has no skeleton');
+    result:=false;
+  end else if _data.Animations()=nil then begin
+    result_description.SetDescription('No animations loaded');
+    result:=false;
+  end;
+end;
+
 //////////////////////////////////////////////////////// Helper functions ////////////////////////////////////////////////////
 function TModelSlot.ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
 var
@@ -261,7 +325,7 @@ begin
 
   tmp_num:=_data.Skeleton().GetBoneIdxByName(tmpid);
 
-  if tmp_num<0 then begin
+  if tmp_num = INVALID_BONE_ID then begin
     // Try to extract the index itself
     // Index in the output can be invalid! Check it before using!
     tmpstr:=inoutstr;
@@ -516,6 +580,30 @@ begin
   end;
 end;
 
+function TModelSlot._CmdLoadAnimsFromFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  path:string;
+begin
+  result:=false;
+
+  path:=args;
+  if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
+    path:=rightstr(path, length(path)-1);
+  end;
+  if (length(path)>0) and ((path[length(path)] = '"') or (path[length(path)] = '''')) then begin
+    path:=leftstr(path, length(path)-1);
+  end;
+
+  if _data.Animations().AnimationsCount()>0 then begin
+    result_description.SetDescription('animations are already loaded, use merge command to load more');
+  end else begin
+    result:=_data.Animations().LoadFromFile(path);
+    if not result then begin
+      result_description.SetDescription('Can''t load animations from file "'+path+'"');
+    end;
+  end;
+end;
+
 function TModelSlot._CmdSaveToFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   path:string;
@@ -741,6 +829,232 @@ begin
       result_description.SetDescription('error while reparenting bone '+_data.Skeleton().GetBoneName(idx));
     end else begin
       result_description.SetDescription('bone '+_data.Skeleton().GetBoneName(idx)+' reparented');
+      result:=true;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdBoneRename(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  i:integer;
+  old_name:string;
+const
+  SYMBOLS:string='abcdefghijklmnopqrstuvwxyz0123456789_+-';
+
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    args:=trim(args);
+    if length(args)=0 then begin
+      result_description.SetDescription('expected new bone name in argument');
+    end else begin
+      for i:=1 to length(args) do begin
+        if pos(lowercase(args[i]), SYMBOLS) = 0 then begin
+          result_description.SetDescription('new bone name is invalid');
+          break;
+        end
+      end;
+
+      if (length(result_description.GetDescription()) = 0) then begin
+        old_name:=_data.Skeleton().GetBoneName(idx);
+        if (_data.Skeleton().GetBoneIdxByName(args) <> INVALID_BONE_ID) then begin
+          result_description.SetDescription('bone with name '+args+' already present in the skeleton');
+        end else if _data.Skeleton().RenameBone(old_name, args) then begin
+          result_description.SetDescription('bone '+old_name+' successfully renamed to '+args);
+          result:=true;
+        end else begin
+          result_description.SetDescription('error while renaming bone '+old_name+' to '+args);
+        end;
+      end;
+    end;
+  end;
+
+end;
+
+function TModelSlot._CmdAnimInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  animdata:TOgfMotionDefData;
+  r:string;
+  marks_cnt:integer;
+  mark:TOgfMotionMark;
+  interval:TOgfMotionMarkInterval;
+  i,j:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    args:=trim(args);
+    animdata:=_data.Animations().GetAnimationParams(idx);
+
+    if length(animdata.name)>0 then begin
+      r:='Animation #'+inttostr(idx)+':'+chr($0d)+chr($0a);
+      r:=r+'- Name: '+animdata.name+chr($0d)+chr($0a);
+      r:=r+'- Frames count: '+inttostr(_data.Animations().GetAnimationFramesCount(animdata.name))+chr($0d)+chr($0a);
+      r:=r+'- Motion ID: '+inttostr(animdata.motion_id)+chr($0d)+chr($0a);
+      r:=r+'- Flags: '+inttostr(animdata.flags)+chr($0d)+chr($0a);
+      r:=r+'- Speed: '+floattostr(animdata.speed)+chr($0d)+chr($0a);
+      r:=r+'- Power: '+floattostr(animdata.power)+chr($0d)+chr($0a);
+      r:=r+'- Accrue: '+floattostr(animdata.accrue)+chr($0d)+chr($0a);
+      r:=r+'- Falloff: '+floattostr(animdata.falloff)+chr($0d)+chr($0a);
+      r:=r+'- Bone or part: '+inttostr(animdata.bone_or_part)+chr($0d)+chr($0a);
+      marks_cnt:=animdata.marks.Count();
+      r:=r+'- Marks: '+inttostr(marks_cnt)+chr($0d)+chr($0a);
+      if marks_cnt>0 then begin
+        for i:=0 to marks_cnt-1 do begin
+          mark:=animdata.marks.Get(idx);
+          if mark<>nil then begin
+            r:=r+'- Mark #'+inttostr(i)+' ('+mark.GetName()+')'+chr($0d)+chr($0a);
+            for j:=0 to mark.GetIntervalsCount()-1 do begin;
+              interval:=mark.GetInterval(j);
+              r:=r+'  + Interval #'+inttostr(j)+': from '+floattostr(interval.start)+' to '+floattostr(interval.finish)+chr($0d)+chr($0a);
+            end;
+          end;
+        end;
+      end;
+      result_description.SetDescription(r);
+      result:=true;
+    end;
+
+  end;
+
+end;
+
+function TModelSlot._CmdAnimKeyInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  keyid:integer;
+  bonename:string;
+  defs:TOgfMotionDefData;
+  frames_count:integer;
+  key:TMotionKey;
+  i:integer;
+  s,r:string;
+  pos:FVector3;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    frames_count:=_data.Animations().GetAnimationFramesCount(defs.name);
+
+    keyid:=strtointdef(ExtractNumericString(args, false), -1);
+    if keyid<0 then begin
+      result_description.SetDescription('first argument is an index of key');
+      exit;
+    end else if keyid > frames_count then begin
+      result_description.SetDescription('animation '+defs.name+' has only '+inttostr(frames_count)+' frames');
+      exit;
+    end;
+
+    args:=trim(args);
+    if (length(args)=0) then begin
+      bonename:='';
+    end else if (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      args:=trim(rightstr(args, length(args)-1));
+      bonename:=args;
+      if length(bonename)=0 then begin
+        result_description.SetDescription('bone name expected in optional second argument');
+        exit;
+      end;
+    end else begin
+      result_description.SetDescription('can''t extract 2nd argument');
+      exit;
+    end;
+
+    r:='';
+    for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
+      s:=_data.Skeleton().GetBoneName(i);
+      if length(s)>0 then begin
+        if (length(bonename)=0) or (s=bonename) then begin
+          if _data.Animations().GetAnimationKeyForBone(defs.name, s, keyid, key) then begin
+            r:=r+'Bone '+s+' data in key '+inttostr(keyid)+':'+chr($0d)+chr($0a);
+            r:=r+'- Local position: '+floattostr(key.T.x)+', '+floattostr(key.T.y)+', '+floattostr(key.T.z)+chr($0d)+chr($0a);
+
+            pos:=_data.Skeleton().GetBoneMotionKeyPosition(i, defs.name,keyid);
+            r:=r+'- Global position: '+floattostr(pos.x)+', '+floattostr(pos.y)+', '+floattostr(pos.z)+chr($0d)+chr($0a);
+            result:=true;
+          end;
+        end;
+      end;
+    end;
+    result_description.SetDescription(r);
+  end;
+end;
+
+function TModelSlot._CmdAnimAddMotionMark(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  name:string;
+  interval:TOgfMotionMarkInterval;
+  animdata:TOgfMotionDefData;
+  t:single;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    name:=ExtractABNString(args);
+
+    args:=trim(args);
+    if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      result_description.SetDescription('procedure expects 3 arguments');
+      exit;
+    end;
+
+    args:=trim(rightstr(args, length(args)-1));
+    if not ExtractFloatFromString(args, interval.start) then begin
+      result_description.SetDescription('can''t parse 2nd argument - start time of marked interval');
+      exit;
+    end;
+
+    args:=trim(args);
+    if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
+      result_description.SetDescription('procedure expects 3 arguments');
+      exit;
+    end;
+
+    args:=trim(rightstr(args, length(args)-1));
+    if not ExtractFloatFromString(args, interval.start) then begin
+      result_description.SetDescription('can''t parse 3rd argument - end time of marked interval');
+      exit;
+    end;
+
+    if interval.start > interval.finish then begin
+      t:=interval.start;
+      interval.start:=interval.finish;
+      interval.finish:=t;
+    end;
+
+    animdata:=_data.Animations().GetAnimationParams(idx);
+    if animdata.marks<>nil then begin
+      result:=animdata.marks.Add(name, interval)>=0;
+      if result then begin
+        result_description.SetDescription('Successfully added interval to motion mark '+name+' of '+animdata.name);
+      end;
+    end;
+  end;
+
+  if not result then begin
+    result_description.SetDescription('can''t add motion mark');
+  end;
+
+end;
+
+
+function TModelSlot._CmdAnimResetMotionMarks(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  animdata:TOgfMotionDefData;
+ begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    animdata:=_data.Animations().GetAnimationParams(idx);
+    if animdata.marks<>nil then begin
+      animdata.marks.Reset;
+      result_description.SetDescription('motion marks successfully reset for '+animdata.name);
       result:=true;
     end;
   end;
@@ -1577,6 +1891,8 @@ begin
       _commands_children:=TChildrenCommands.Create(self);
     _commands_skeleton:=TCommandsStorage.Create(true);
       _commands_bones:=TBonesCommands.Create(self);
+      _commands_animations:=TAnimationsCommands.Create(self);
+      _commands_mmarks:=TCommandsStorage.Create(true);
 
   _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('selection', nil, _commands_selection, 'control pivot point and selection area'));
   _commands_upperlevel.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('mesh', @_IsModelLoadedPrecondition, _commands_mesh, 'access group of properties and procedures associated with model''s mesh'));
@@ -1619,9 +1935,21 @@ begin
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsModelHasSkeletonPrecondition, _commands_bones, 'access array of bones'));
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from file'), CommandItemTypeCall);
+
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('rename', @_IsModelHasSkeletonPrecondition, @_CmdBoneRename, 'rename bone, expects 1 argumanr - new bone name'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('reparent', @_IsModelHasSkeletonPrecondition, @_CmdBoneReparent, 'change bone parent; arg 1 - new parent, arg 2 (optional) - preserve bone global position (1, default) or not (0)'), CommandItemTypeCall);
+
+  _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('animation', @_IsAnimationsLoadedPrecondition, _commands_animations, 'access group of properties and procedures associated with loaded animations'));
+  _commands_animations.DoRegister(TCommandSetup.Create('info', @_IsAnimationsLoadedPrecondition, @_CmdAnimInfo, 'display animations info'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('keyinfo', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyInfo, 'show bone parameters is specific key; arg 1 - key index, arg 2 (optional) - bone name'), CommandItemTypeCall);
+
+
+  _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('marks', @_IsAnimationsLoadedPrecondition, _commands_mmarks, 'access group of properties and procedures associated with motion marks'));
+  _commands_mmarks.DoRegister(TCommandSetup.Create('add', @_IsAnimationsLoadedPrecondition, @_CmdAnimAddMotionMark, 'add new interval, expects 3 arguments (mark name, interval start, interval end)'), CommandItemTypeCall);
+  _commands_mmarks.DoRegister(TCommandSetup.Create('reset', @_IsAnimationsLoadedPrecondition, @_CmdAnimResetMotionMarks, 'reset marks fro selected animation'), CommandItemTypeCall);
 
 end;
 
