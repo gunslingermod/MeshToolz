@@ -67,7 +67,14 @@ type
   procedure set_zero(var s:FSphere); overload;
   procedure set_zero(var c:FCylinder); overload;
   procedure set_zero(var m:FMatrix3x3); overload;
+  procedure set_zero(var m:FMatrix4x4); overload;
   procedure set_zero(var o:FObb); overload;
+  procedure set_zero(var q:Fquaternion); overload;
+
+  procedure m_identity(var m:FMatrix3x3); overload;
+  procedure m_identity(var m:FMatrix4x4); overload;
+
+  function m_same(var m1:FMatrix4x4; var m2:FMatrix4x4):boolean;
 
   procedure uniform_scale(var v:FVector3; k:single); overload;
   procedure uniform_scale(var s:FSphere; k:single); overload;
@@ -90,8 +97,14 @@ type
   procedure m_getXYZ(var m:FMatrix4x4; var v:FVector3);
   procedure m_getXYZi(var m:FMatrix4x4; var v:FVector3);
   procedure m_translate_over(var m:FMatrix4x4; var v:FVector3);
+  procedure m_get_translation(var m:FMatrix4x4; var v:FVector3);
   function m_invert43(var m:FMatrix4x4):FMatrix4x4;
   procedure m_rotation(var m:FMatrix4x4; var q:Fquaternion);
+  procedure q_rotationYawPitchRoll(var q:Fquaternion; var ypr:FVector3);
+  procedure q_rotation(var q:Fquaternion; var m:FMatrix4x4);
+  procedure q_set(var q:Fquaternion; x:single; y:single; z:single; w:single);
+  procedure q_scale(var q:Fquaternion; n:single);
+
 
   function distance_between(var point1:FVector3; var point2:FVector3):single;
 
@@ -132,11 +145,53 @@ begin
   set_zero(m.k);
 end;
 
+procedure set_zero(var m: FMatrix4x4);
+begin
+  set_zero(m.i);
+  set_zero(m.j);
+  set_zero(m.k);
+  set_zero(m.c);
+end;
+
 procedure set_zero(var o: FObb);
 begin
   set_zero(o.m_rotate);
   set_zero(o.m_translate);
   set_zero(o.m_halfsize);
+end;
+
+procedure set_zero(var q: Fquaternion);
+begin
+  q.x:=0;
+  q.y:=0;
+  q.z:=0;
+  q.w:=0;
+end;
+
+procedure m_identity(var m: FMatrix3x3);
+begin
+  set_zero(m);
+  m.i.x:=1;
+  m.j.y:=1;
+  m.k.z:=1;
+end;
+
+procedure m_identity(var m: FMatrix4x4);
+begin
+  m.i.x:=1;
+  m.j.y:=1;
+  m.k.z:=1;
+  m.c.w:=1;
+end;
+
+function m_same(var m1: FMatrix4x4; var m2: FMatrix4x4): boolean;
+var
+  EPS:single = 0.000001;
+begin
+  result:= (abs(m1.i.x - m2.i.x) < EPS) and (abs(m1.i.y - m2.i.y) < EPS) and (abs(m1.i.z - m2.i.z) < EPS) and (abs(m1.i.w - m2.i.w) < EPS)
+       and (abs(m1.j.x - m2.j.x) < EPS) and (abs(m1.j.y - m2.j.y) < EPS) and (abs(m1.j.z - m2.j.z) < EPS) and (abs(m1.j.w - m2.j.w) < EPS)
+       and (abs(m1.k.x - m2.k.x) < EPS) and (abs(m1.k.y - m2.k.y) < EPS) and (abs(m1.k.z - m2.k.z) < EPS) and (abs(m1.k.w - m2.k.w) < EPS)
+       and (abs(m1.c.x - m2.c.x) < EPS) and (abs(m1.c.y - m2.c.y) < EPS) and (abs(m1.c.z - m2.c.z) < EPS) and (abs(m1.c.w - m2.c.w) < EPS);
 end;
 
 procedure uniform_scale(var v: FVector3; k: single);
@@ -313,6 +368,13 @@ begin
   m.c.z:=v.z;
 end;
 
+procedure m_get_translation(var m: FMatrix4x4; var v: FVector3);
+begin
+  v.x:=m.c.x;
+  v.y:=m.c.y;
+  v.z:=m.c.z;
+end;
+
 function m_invert43(var m: FMatrix4x4): FMatrix4x4;
 var
   detinv:single;
@@ -357,6 +419,72 @@ begin
   m.j.x :=     2 * ( xy + wz ); m.j.y := 1 - 2 * ( xx + zz ); m.j.z :=     2 * ( yz - wx ); m.j.w := 0;
   m.k.x :=     2 * ( xz - wy ); m.k.y :=     2 * ( yz + wx ); m.k.z := 1 - 2 * ( xx + yy ); m.k.w := 0;
   m.c.x := 0;                   m.c.y := 0;                   m.c.z := 0;                   m.c.w := 1;
+end;
+
+procedure q_rotationYawPitchRoll(var q: Fquaternion; var ypr: FVector3);
+var
+  sy,cy,sp,cp,sr,cr:single;
+begin
+  sy := sin(ypr.x * 0.5);
+  cy := cos(ypr.x * 0.5);
+  sp := sin(ypr.y * 0.5);
+  cp := cos(ypr.y * 0.5);
+  sr := sin(ypr.z * 0.5);
+  cr := cos(ypr.z * 0.5);
+
+  q.x := sr * cp * cy - cr * sp * sy;
+  q.y := cr * sp * cy + sr * cp * sy;
+  q.z := cr * cp * sy - sr * sp * cy;
+  q.w := cr * cp * cy + sr * sp * sy;
+end;
+
+procedure q_rotation(var q: Fquaternion; var m: FMatrix4x4);
+var
+  tr,s:single;
+begin
+  tr:=m.i.x+m.j.y+m.k.z+1;
+  if tr > 0 then begin
+    s := 0.5 / sqrt(tr);
+    q.w := 0.25 / S;
+    q.x := ( m.k.y - m.j.z ) * S;
+    q.y := ( m.i.z - m.k.x ) * S;
+    q.z := ( m.j.x - m.i.y ) * S;
+  end else if (m.i.x > m.j.y ) and ( m.i.x > m.k.z)  then begin
+    s := sqrt( 1.0 + m.i.x - m.j.y - m.k.z ) * 2;
+    q.x := 0.5 / S;
+    q.y := (m.i.y + m.j.x ) / S;
+    q.z := (m.i.z + m.k.x ) / S;
+    q.w := (m.j.z + m.k.y ) / S;
+  end else if ( m.j.y > m.k.z ) then begin
+    s  := sqrt( 1.0 + m.j.y - m.i.x - m.k.z ) * 2;
+    q.x := (m.i.y + m.j.x ) / S;
+    q.y := 0.5 / S;
+    q.z := (m.j.z + m.k.y ) / S;
+    q.w := (m.i.z + m.k.x ) / S;
+  end else begin
+    s  := sqrt( 1.0 + m.k.z - m.i.x - m.j.y ) * 2;
+    q.x := (m.i.z + m.k.x ) / S;
+    q.y := (m.j.z + m.k.y ) / S;
+    q.z := 0.5 / S;
+    q.w := (m.i.y + m.j.x ) / S;
+  end;
+
+end;
+
+procedure q_set(var q: Fquaternion; x: single; y: single; z: single; w: single);
+begin
+  q.x:=x;
+  q.y:=y;
+  q.z:=z;
+  q.w:=w;
+end;
+
+procedure q_scale(var q: Fquaternion; n: single);
+begin
+  q.x:=q.x*n;
+  q.y:=q.y*n;
+  q.z:=q.z*n;
+  q.w:=q.w*n;
 end;
 
 function distance_between(var point1: FVector3; var point2: FVector3): single;

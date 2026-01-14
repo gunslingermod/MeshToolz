@@ -346,7 +346,7 @@ type
     function Replace(id:integer; data:string):boolean;
   end;
 
-
+  TOgfAnimationsParser = class;
   { TOgfBone }
 
   TOgfBone = class
@@ -369,6 +369,7 @@ type
     function GetName():string;
     function GetParentName():string;
     function GetOBB():FObb;
+    procedure MoveObb(var delta:FVector3);
     function Rename(name:string):boolean;
 
     function UniformScale(k:single):boolean;
@@ -426,6 +427,15 @@ type
     _rest_offset:FVector3;
     _mass:single;
     _center_of_mass:FVector3;
+
+
+    // Transformation matrix for temp work & calculations
+    // assign just from TOgfSkeleton before actual bone calculations
+    _wrk_transform:FMatrix4x4;
+    procedure _AssignKeyWrkPose(key:TMotionKey);
+    procedure _AssignWrkPose(var m:FMatrix4x4);
+    procedure _AssignBindWrkPose();
+    procedure _GetWrkTransform(var m:FMatrix4x4);
   public
     // Common
     constructor Create;
@@ -442,10 +452,15 @@ type
     function DeserializeShape(s:string):boolean;
     function GetMaterial():string;
     procedure SetMaterial(matname:string);
-    procedure GetTransformData(var offset:FVector3; var rotate:FVector3);
-    procedure SetTransformData(offset:FVector3; rotate:FVector3);
+    procedure GetBindTransformData(var offset:FVector3; var rotate:FVector3);
+    procedure GetBindTransformData(var m:FMatrix4x4);
+    procedure SetBindTransformData(offset:FVector3; rotate:FVector3); overload;
+    procedure SetBindTransformData(var m:FMatrix4x4); overload;
+
     procedure GetMassParams(var center:FVector3; var mass:single);
     procedure SetMassParams(center:FVector3; mass:single);
+    procedure MoveMassCenter(delta:FVector3);
+    procedure MoveJointPosition(delta:FVector3);
 
     function UniformScale(k:single):boolean;
   end;
@@ -455,6 +470,7 @@ type
   TOgfJointsDataContainer = class
     _loaded:boolean;
     _data:array of TOgfJointData;
+
   public
     // Common
     constructor Create;
@@ -502,7 +518,6 @@ type
     parent_name:string;
     material:string;
     obb:FObb;
-    transform:FMatrix4x4;
     shape:TOgfBoneShape;
     mass:single;
     center_of_mass:FVector3;
@@ -522,52 +537,89 @@ type
     joint:TOgfJointData;
   end;
 
-  TOgfAnimationsParser = class;
+  TOgfSkeletonBonePoseData = record
+    name:string;
+    transform:FMatrix4x4;
+  end;
+
+  { TOgfSkeletonPose }
+
+  TOgfSkeletonPose = class
+    _bones:array of TOgfSkeletonBonePoseData;
+    function _IdxByName(name:string):integer;
+  public
+    constructor Create();
+    procedure Reset();
+    procedure SetBone(bonename:string; var transform:FMatrix4x4);
+    function GetBone(bonename:string; var transform:FMatrix4x4):boolean;
+    function BonesCount():integer;
+    destructor Destroy(); override;
+  end;
+
+  { TOgfSkeleton }
+
   TOgfSkeleton = class
     _loaded:boolean;
     _data:TOgfSkeletonData;
     _animations:TOgfAnimationsParser;
 
+    function _Build(desc:TOgfBonesContainer; ik:TOgfJointsDataContainer):boolean;
+
     function _GetBone(id:TBoneID):TOgfBoneData;
     function _GetBoneByName(name:string; var output:TOgfBoneData):boolean;
+
+    function _SetKeyPoseForWork(anim_name:string; key_id:integer):boolean;
+    function _SetBindPoseForWork():boolean;
+    function _GetWrkPose(pose:TOgfSkeletonPose):boolean;
+    function _SetWrkPose(pose:TOgfSkeletonPose):integer; // count of bones were set
+
+    function _GetWrkBoneLocalTransform(idx:TBoneID; var m:FMatrix4x4):boolean;
+    function _GetWrkBoneSpaceToGlobalSpaceMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
+    function _GetGlobalSpaceToWrkBoneSpaceMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
+    function _ConvertGlobalCoordinatesIntoWrkBoneSpace(bone_idx:TBoneID; in_v:FVector3; var out_v:FVector3):boolean;
+    function _ConvertGlobalCoordinatesIntoParentSpaceOfWrkBone(child_bone_idx:TBoneID; in_v:FVector3; var out_v:FVector3):boolean;
+    function _ConvertTransformFromGlobalIntoWrkBoneSpace(bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
+    function _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(child_bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
   public
     constructor Create();
     procedure Reset;
     function Loaded():boolean;
     destructor Destroy(); override;
+    procedure IterateBones(cb:TBonesIterationCallback; userdata:pointer);
+    function ForceSetBoneBindPoseTransform(bone_idx:TBoneId; offset:FVector3; rotate:FVector3):boolean; // Use it only if you completely understand what you do!
 
-    function Build(desc:TOgfBonesContainer; ik:TOgfJointsDataContainer):boolean;
     procedure AssignAnimations(animations:TOgfAnimationsParser);
 
+
+    // Bone parameters getters
     function GetBonesCount():integer;
     function GetBoneIdxByName(name:string):TBoneID; overload;
     function GetBoneName(idx:TBoneID):string;
     function GetBoneParentName(idx:TBoneID):string;
     function GetBoneParentIdx(idx:TBoneID):TBoneId;
     function GetBoneMaterial(idx:TBoneID):string;
-    function GetBoneBindPosition(idx:TBoneID):FVector3;
-    function GetBoneCurrentPosition(idx:TBoneID):FVector3;
+    function GetBoneMassParams(idx:TBoneID; var center:FVector3; var mass:single):boolean;
+    function GetBoneShape(idx:TBoneID; var shape:TOgfBoneShape):boolean;
+    function GetBoneBoundingBox(idx:TBoneID; var obb:FObb):boolean;
+    function GetBoneUnitedData(idx:TBoneID; var data:TBoneUnitedData):boolean;
 
-    function GetBoneLocalTransform(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
-    function GetBoneLocalTransformMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
-    function GetBoneBindPoseToGlobalMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
-    function GetBoneBindPoseFromGlobalTransformMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
+    //-1 in key_idx means bind pose for the next group of functions
+    function GetGlobalBonePositionInPose(bone_idx:TBoneId; anim_name:string; key_idx:integer; var position:FVector3): boolean;
+    function GetGlobalSpaceToBoneSpaceMatrixInPose(bone_idx:TBoneId; anim_name:string; key_idx:integer; var m:FMatrix4x4): boolean;
+    function GetBoneSpaceToGlobalSpaceMatrixInPose(bone_idx:TBoneId; anim_name:string; key_idx:integer; var m:FMatrix4x4): boolean;
+    function GetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):boolean;
+    function SetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):boolean;
 
-    function GetBoneMotionKeyToGlobalMatrix(idx:TBoneID; motion_name:string; key_idx:integer; var m:FMatrix4x4):boolean;
-    function GetBoneMotionKeyPosition(idx:TBoneID; motion_name:string; key_idx:integer):FVector3;
-
+    function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
+    function MoveBoneInBindPose(idx:TBoneID; v:FVector3; is_absolute:boolean; correct_animations:boolean):boolean;
 
     function RenameBone(old_name:string; new_name:string):boolean;
     function ReparentBone(idx:TBoneID; new_parent_idx:TBoneID; preserve_global_pos:boolean):boolean;
 
-    function GetBoneMassParams(idx:TBoneID; var center:FVector3; var mass:single):boolean;
-    function GetBoneShape(idx:TBoneID; var shape:TOgfBoneShape):boolean;
-    function GetBoneBoundingBox(idx:TBoneID; var obb:FObb):boolean;
 
-    function GetBoneUnitedData(idx:TBoneID; var data:TBoneUnitedData):boolean;
 
-    procedure IterateBones(cb:TBonesIterationCallback; userdata:pointer);
     function UniformScale(k:single):boolean;
+
 
   end;
 
@@ -961,6 +1013,7 @@ end;
 function QrToQuat(pqr:pTOgfMotionKeyQR):Fquaternion;
 function Qt8ToT(pqt:pTOgfMotionKeyQT8; size_tr:pFVector3; init_tr:pFVector3):FVector3;
 function Qt16ToT(pqt:pTOgfMotionKeyQT16; size_tr:pFVector3; init_tr:pFVector3):FVector3;
+function TransformToMotionKey(var transform:FMatrix4x4):TMotionKey;
 
 const
   INVALID_BONE_ID: TBoneID = $FFFF;
@@ -1036,9 +1089,9 @@ begin
     s.box.m_translate.z:=s.box.m_translate.z+v.z;
     result:=true;
   end else if s.shape_type = OGF_SHAPE_TYPE_SPHERE then begin
-    s.sphere.p.x:=s.sphere.p.x+s.box.m_translate.x+v.x;
-    s.sphere.p.y:=s.sphere.p.y+s.box.m_translate.y+v.y;
-    s.sphere.p.z:=s.sphere.p.z+s.box.m_translate.z+v.z;
+    s.sphere.p.x:=s.sphere.p.x+v.x;
+    s.sphere.p.y:=s.sphere.p.y+v.y;
+    s.sphere.p.z:=s.sphere.p.z+v.z;
     result:=true;
   end else if s.shape_type = OGF_SHAPE_TYPE_CYLINDER then begin
     s.cylinder.m_center.x:=s.cylinder.m_center.x+v.x;
@@ -1064,6 +1117,67 @@ begin
   end else if s.shape_type = OGF_SHAPE_TYPE_NONE then begin;
     result:=true;
   end;
+end;
+
+{ TOgfSkeletonPose }
+
+function TOgfSkeletonPose._IdxByName(name: string): integer;
+var
+  i:integer;
+begin
+  result:=-1;
+  for i:=0 to length(_bones)-1 do begin
+    if _bones[i].name = name then begin
+      result:=i;
+      break;
+    end;
+  end;
+end;
+
+constructor TOgfSkeletonPose.Create();
+begin
+  Reset();
+end;
+
+procedure TOgfSkeletonPose.Reset();
+begin
+  setlength(_bones, 0);
+end;
+
+procedure TOgfSkeletonPose.SetBone(bonename: string; var transform: FMatrix4x4);
+var
+  idx:integer;
+begin
+  idx:=_IdxByName(bonename);
+  if idx<0 then begin
+    idx:=length(_bones);
+    setlength(_bones, idx+1);
+  end;
+  _bones[idx].transform:=transform;
+  _bones[idx].name:=bonename;
+end;
+
+function TOgfSkeletonPose.GetBone(bonename: string; var transform: FMatrix4x4): boolean;
+var
+  idx:integer;
+begin
+  result:=false;
+  idx:=_IdxByName(bonename);
+  if idx>=0 then begin
+    transform:=_bones[idx].transform;
+    result:=true;
+  end;
+end;
+
+function TOgfSkeletonPose.BonesCount(): integer;
+begin
+  result:=length(_bones);
+end;
+
+destructor TOgfSkeletonPose.Destroy();
+begin
+  Reset();
+  inherited Destroy();
 end;
 
 { TOgfMotionMark }
@@ -2575,6 +2689,12 @@ begin
   result.z:=dz*size_tr^.z+init_tr^.z;
 end;
 
+function TransformToMotionKey(var transform: FMatrix4x4): TMotionKey;
+begin
+  m_get_translation(transform, result.T);
+  q_rotation(result.Q, transform);
+end;
+
 function TOgfMotionBoneTrack.FramesCount(): integer;
 begin
   result:=_frames_count;
@@ -3438,13 +3558,15 @@ begin
 end;
 
 
-function TOgfSkeleton.Build(desc: TOgfBonesContainer; ik: TOgfJointsDataContainer): boolean;
+function TOgfSkeleton._Build(desc: TOgfBonesContainer; ik: TOgfJointsDataContainer): boolean;
 begin
   result:=false;
   if desc.Count()<>ik.Count() then exit;
   Reset();
   _data.ik:=ik;
   _data.bones:=desc;
+
+  _SetBindPoseForWork();
 
   _loaded:=true;
   result:=true;
@@ -3485,6 +3607,203 @@ begin
     output.bone:=_data.bones.Bone(idx);
     output.joint:=_data.ik.Get(idx);
     result:=true;
+  end;
+end;
+
+function TOgfSkeleton._SetKeyPoseForWork(anim_name: string; key_id: integer): boolean;
+var
+  key:TMotionKey;
+  anim_idx:integer;
+  b:TOgfBoneData;
+  i:integer;
+  name:string;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if _animations=nil then exit;;
+  anim_idx := _animations.GetAnimationIdByName(anim_name);
+  if anim_idx < 0 then exit;
+
+  for i:=0 to GetBonesCount()-1 do begin
+    b:=_GetBone(i);
+    name:=b.bone.GetName();
+    if _animations.GetAnimationKeyForBone(anim_name,name,key_id, key) then begin
+      b.joint._AssignKeyWrkPose(key);
+    end;
+  end;
+  result:=true;
+end;
+
+function TOgfSkeleton._SetBindPoseForWork(): boolean;
+var
+  i:integer;
+  b:TOgfBoneData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  for i:=0 to GetBonesCount()-1 do begin
+    b:=_GetBone(i);
+    if b.joint<>nil then begin;
+      b.joint._AssignBindWrkPose();
+    end;
+  end;
+  result:=true;
+end;
+
+function TOgfSkeleton._GetWrkPose(pose: TOgfSkeletonPose): boolean;
+var
+  b:TOgfBoneData;
+  i:integer;
+  m:FMatrix4x4;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  pose.Reset();
+
+  for i:=0 to GetBonesCount()-1 do begin
+    b:=_GetBone(i);
+    if b.bone = nil then continue;
+    b.joint.GetBindTransformData(m);
+    pose.SetBone(b.bone.GetName(), m);
+  end;
+  result:=true;
+end;
+
+function TOgfSkeleton._SetWrkPose(pose: TOgfSkeletonPose): integer;
+var
+  i:integer;
+  b:TOgfBoneData;
+  m:FMatrix4x4;
+begin
+  result:=0;
+  if not Loaded() then exit;
+
+  for i:=0 to GetBonesCount()-1 do begin
+    b:=_GetBone(i);
+    if b.bone = nil then continue;
+
+    if pose.GetBone(b.bone.GetName(), m) then begin
+      b.joint._AssignWrkPose(m);
+      result:=result+1;
+    end;
+  end;
+end;
+
+function TOgfSkeleton._GetWrkBoneLocalTransform(idx: TBoneID; var m: FMatrix4x4): boolean;
+var
+  b:TOgfBoneData;
+begin
+  result:=false;
+  b:=_GetBone(idx);
+  if b.joint=nil then exit;
+
+  b.joint._GetWrkTransform(m);
+  result:=true;
+end;
+
+function TOgfSkeleton._GetWrkBoneSpaceToGlobalSpaceMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
+var
+  parent_transform, my_transform:FMatrix4x4;
+  b:TOgfBoneData;
+  parentid:TBoneId;
+
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    parentid:=GetBoneParentIdx(idx);
+
+    if parentid<>INVALID_BONE_ID then begin
+      b.joint._GetWrkTransform(my_transform);
+      if _GetWrkBoneSpaceToGlobalSpaceMatrix(parentid, parent_transform) then begin
+        m:=m_mul(parent_transform, my_transform);
+        result:=true;
+      end;
+    end else begin
+      b.joint._GetWrkTransform(m);
+      result:=true;
+    end;
+  end;
+end;
+
+function TOgfSkeleton._GetGlobalSpaceToWrkBoneSpaceMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
+var
+  parent_transform, my_transform:FMatrix4x4;
+  b:TOgfBoneData;
+  parentid:TBoneId;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    parentid:=GetBoneParentIdx(idx);
+    if parentid<>INVALID_BONE_ID then begin
+      b.joint._GetWrkTransform(my_transform);
+      if _GetGlobalSpaceToWrkBoneSpaceMatrix(parentid, parent_transform) then begin
+        my_transform:=m_invert43(my_transform);
+        m:=m_mul(my_transform, parent_transform);
+        result:=true;
+      end;
+    end else begin
+      b.joint._GetWrkTransform(m);
+      m:=m_invert43(m);
+      result:=true;
+    end;
+  end;
+end;
+
+function TOgfSkeleton._ConvertGlobalCoordinatesIntoWrkBoneSpace(bone_idx: TBoneID; in_v: FVector3; var out_v: FVector3): boolean;
+var
+  m, out_m:FMatrix4x4;
+begin
+ // TODO: vector multiplying instead of matrix multiplying in _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone?
+  result:=false;
+
+  m_identity(m);
+  m_translate_over(m, in_v);
+
+  if _ConvertTransformFromGlobalIntoWrkBoneSpace(bone_idx, m, out_m) then begin
+    m_get_translation(out_m, out_v);
+    result:=true;
+  end;
+end;
+
+function TOgfSkeleton._ConvertGlobalCoordinatesIntoParentSpaceOfWrkBone(child_bone_idx: TBoneID; in_v: FVector3; var out_v: FVector3): boolean;
+var
+  parent_bone_idx:TBoneID;
+begin
+  result:=false;
+  parent_bone_idx:=GetBoneParentIdx(child_bone_idx);
+  if parent_bone_idx = INVALID_BONE_ID then begin
+    // no parent bone, so parent is already global space; no need to convert
+    out_v:=in_v;
+  end else begin
+    result:=_ConvertGlobalCoordinatesIntoWrkBoneSpace(parent_bone_idx, in_v, out_v);
+  end;
+end;
+
+function TOgfSkeleton._ConvertTransformFromGlobalIntoWrkBoneSpace(bone_idx: TBoneID; in_m: FMatrix4x4; var out_m: FMatrix4x4): boolean;
+var
+  m:FMatrix4x4;
+begin
+  result:=false;
+  if not _GetGlobalSpaceToWrkBoneSpaceMatrix(bone_idx, m) then exit;
+  out_m:=m_mul(m, in_m);
+  result:=true;
+end;
+
+function TOgfSkeleton._ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(child_bone_idx: TBoneID; in_m: FMatrix4x4; var out_m: FMatrix4x4): boolean;
+var
+  parent_bone_idx:TBoneID;
+begin
+  result:=false;
+  parent_bone_idx:=GetBoneParentIdx(child_bone_idx);
+  if parent_bone_idx = INVALID_BONE_ID then begin
+    // no parent bone, so parent is already global space; no need to convert
+    out_m:=in_m;
+  end else begin
+    result:=_ConvertTransformFromGlobalIntoWrkBoneSpace(parent_bone_idx, in_m, out_m);
   end;
 end;
 
@@ -3541,7 +3860,7 @@ begin
     end;
     result:=true;
 
-    if _animations<>nil then begin
+    if (_animations<>nil) and (_animations.Loaded()) and (_animations.AnimationsCount() > 0) then begin
       result:=_animations.RenameBone(old_name, new_name);
     end;
   end;
@@ -3550,13 +3869,14 @@ end;
 function TOgfSkeleton.ReparentBone(idx: TBoneID; new_parent_idx: TBoneID; preserve_global_pos: boolean): boolean;
 var
   bone:TOgfBoneData;
+  m:FMatrix4x4;
   new_parent:TOgfBoneData;
   new_parent_name:string;
-  my_matrix:FMatrix4x4;
-  parent_matrix:FMatrix4x4;
 
-  rotate:FVector3;
-  offset:FVector3;
+  i,j:integer;
+  def:TOgfMotionDefData;
+
+  m2:FMatrix4x4;
 begin
   result:=false;
   if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
@@ -3574,34 +3894,56 @@ begin
     end;
 
     if (preserve_global_pos) and (length(bone.bone.GetParentName())<>0) then begin
-      if not GetBoneBindPoseToGlobalMatrix(idx,my_matrix) then exit;
-      offset.x:=my_matrix.c.x;
-      offset.y:=my_matrix.c.y;
-      offset.z:=my_matrix.c.z;
-      m_getXYZi(my_matrix, rotate);
+      if (_animations<>nil) and (_animations.Loaded()) then begin
+        for i:=0 to _animations.AnimationsCount()-1 do begin
+          def:=_animations.GetAnimationParams(i);
+          if length(def.name)=0 then continue;
+          for j:=0 to _animations.GetAnimationFramesCount(def.name)-1 do begin
+            _SetKeyPoseForWork(def.name, j);
+            if not _GetWrkBoneSpaceToGlobalSpaceMatrix(idx, m) then continue;
+            _animations.SetAnimationKeyForBone(def.name, bone.bone.GetName(), j, TransformToMotionKey(m));
+          end;
+        end;
+      end;
 
-      bone.joint.SetTransformData(offset, rotate);
+
+      // Unparent the bone
+      _SetBindPoseForWork();
+      if not _GetWrkBoneSpaceToGlobalSpaceMatrix(idx, m) then exit;
+      bone.joint.SetBindTransformData(m);
+      bone.bone._SetParentName('');
     end;
 
+
+    // Bone transform is in global space now
     if (preserve_global_pos) and (length(new_parent_name)<>0) then begin
-      bone.joint.GetTransformData(offset, rotate);
-      m_setXYZ(my_matrix, rotate);
-      m_translate_over(my_matrix, offset);
+      if (_animations<>nil) and (_animations.Loaded()) then begin
+        for i:=0 to _animations.AnimationsCount()-1 do begin
+          def:=_animations.GetAnimationParams(i);
+          if length(def.name)=0 then continue;
+          for j:=0 to _animations.GetAnimationFramesCount(def.name)-1 do begin
+            _SetKeyPoseForWork(def.name, j);
+            bone.joint._GetWrkTransform(m);
 
-      if not GetBoneBindPoseFromGlobalTransformMatrix(new_parent_idx,parent_matrix) then exit;
-      my_matrix := m_mul(parent_matrix, my_matrix);
+            new_parent.joint._GetWrkTransform(m2);
+            if not _ConvertTransformFromGlobalIntoWrkBoneSpace(new_parent_idx, m, m) then continue;
 
-      offset.x:=my_matrix.c.x;
-      offset.y:=my_matrix.c.y;
-      offset.z:=my_matrix.c.z;
-      m_getXYZi(my_matrix, rotate);
-      bone.joint.SetTransformData(offset, rotate);
+            _animations.SetAnimationKeyForBone(def.name, bone.bone.GetName(), j, TransformToMotionKey(m));
+          end;
+        end;
+      end;
+
+      _SetBindPoseForWork();
+      bone.joint._GetWrkTransform(m);
+      if not _ConvertTransformFromGlobalIntoWrkBoneSpace(new_parent_idx, m, m) then exit;
+      bone.joint.SetBindTransformData(m);
+      bone.bone._SetParentName(new_parent_name);
     end;
 
-    bone.bone._SetParentName(new_parent_name);
     result:=true;
   end;
 end;
+
 
 function TOgfSkeleton.GetBoneParentName(idx: TBoneID): string;
 begin
@@ -3629,128 +3971,125 @@ begin
   end;
 end;
 
-function TOgfSkeleton.GetBoneBindPosition(idx: TBoneID): FVector3;
+function TOgfSkeleton.GetGlobalBonePositionInPose(bone_idx: TBoneId; anim_name: string; key_idx: integer; var position: FVector3): boolean;
 var
-  m: FMatrix4x4;
-begin
-  set_zero(result);
-  if  GetBoneBindPoseToGlobalMatrix(idx, m) then begin
-    result.x:=m.c.x;
-    result.y:=m.c.y;
-    result.z:=m.c.z;
-  end;
-end;
-
-function TOgfSkeleton.GetBoneCurrentPosition(idx: TBoneID): FVector3;
-begin
-  //TODO - current active animation?
-  result:=GetBoneBindPosition(idx);
-end;
-
-function TOgfSkeleton.GetBoneLocalTransform(idx: TBoneID; var offset: FVector3; var rotate: FVector3): boolean;
+  m:FMatrix4x4;
 begin
   result:=false;
-  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
-    _GetBone(idx).joint.GetTransformData(offset, rotate);
-    result:=true;
-  end;
+  if not GetBoneSpaceToGlobalSpaceMatrixInPose(bone_idx, anim_name, key_idx, m) then exit;
+
+  position.x:=m.c.x;
+  position.y:=m.c.y;
+  position.z:=m.c.z;
+  result:=true;
 end;
 
-function TOgfSkeleton.GetBoneLocalTransformMatrix(idx: TBoneID; var m:FMatrix4x4): boolean;
-var
-  offset, rotate:FVector3;
+function TOgfSkeleton.GetGlobalSpaceToBoneSpaceMatrixInPose(bone_idx: TBoneId; anim_name: string; key_idx: integer; var m: FMatrix4x4): boolean;
 begin
   result:=false;
-  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
-    _GetBone(idx).joint.GetTransformData(offset, rotate);
-    m_setXYZ(m, rotate);
-    m_translate_over(m, offset);
-    result:=true;
-  end;
-end;
+  if not Loaded() then exit;
 
-function TOgfSkeleton.GetBoneBindPoseToGlobalMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
-var
-  parent_transform, my_transform:FMatrix4x4;
-  b:TOgfBoneData;
-  parentid:TBoneId;
-begin
-  result:=false;
-  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
-    b:=_GetBone(idx);
-    parentid:=GetBoneParentIdx(idx);
-    if parentid<>INVALID_BONE_ID then begin
-      if GetBoneLocalTransformMatrix(idx, my_transform) and GetBoneBindPoseToGlobalMatrix(parentid, parent_transform) then begin
-        m:=m_mul(parent_transform, my_transform);
-        result:=true;
-      end;
-    end else begin
-      result:=GetBoneLocalTransformMatrix(idx, m);
-    end;
-  end;
-end;
-
-function TOgfSkeleton.GetBoneBindPoseFromGlobalTransformMatrix(idx: TBoneID; var m: FMatrix4x4): boolean;
-var
-  parent_transform, my_transform:FMatrix4x4;
-  b:TOgfBoneData;
-  parentid:TBoneId;
-begin
-  result:=false;
-  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
-    b:=_GetBone(idx);
-    parentid:=GetBoneParentIdx(idx);
-    if parentid<>INVALID_BONE_ID then begin
-      if GetBoneLocalTransformMatrix(idx, my_transform) and GetBoneBindPoseFromGlobalTransformMatrix(parentid, parent_transform) then begin
-        my_transform:=m_invert43(my_transform);
-        m:=m_mul(my_transform, parent_transform);
-        result:=true;
-      end;
-    end else begin
-      result:=GetBoneLocalTransformMatrix(idx, m);
-      m:=m_invert43(m);
-    end;
-  end;
-end;
-
-function TOgfSkeleton.GetBoneMotionKeyToGlobalMatrix(idx: TBoneID; motion_name: string; key_idx: integer; var m: FMatrix4x4): boolean;
-var
-  parentid:TBoneId;
-  key:TMotionKey;
-  m2:FMatrix4x4;
-begin
-  result:=false;
-  if _animations = nil then exit;
-  if _animations.GetAnimationIdByName(motion_name)<0 then exit;
-  if (key_idx < 0) or  (_animations.GetAnimationFramesCount(motion_name)<=key_idx) then exit;
-  if not _animations.GetAnimationKeyForBone(motion_name, GetBoneName(idx), key_idx, key) then exit;
-
-  parentid:=GetBoneParentIdx(idx);
-  if parentid = INVALID_BONE_ID then begin
-    m_rotation(m, key.Q);
-    m_translate_over(m, key.T);
-    result:=true;
+  if key_idx=-1 then begin
+    if not _SetBindPoseForWork() then exit;
   end else begin
-    if GetBoneMotionKeyToGlobalMatrix(parentid, motion_name, key_idx, m) then begin
-      m_rotation(m2, key.Q);
-      m_translate_over(m2, key.T);
-      m := m_mul(m, m2);
-      result:=true;
-    end;
+    if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+  end;
+
+  result:=_GetGlobalSpaceToWrkBoneSpaceMatrix(bone_idx, m);
+end;
+
+function TOgfSkeleton.GetBoneSpaceToGlobalSpaceMatrixInPose(bone_idx: TBoneId; anim_name: string; key_idx: integer; var m: FMatrix4x4): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if key_idx=-1 then begin
+    if not _SetBindPoseForWork() then exit;
+  end else begin
+    if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+  end;
+
+  result:=_GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m);
+end;
+
+function TOgfSkeleton.GetSkeletonPose(anim_name: string; key_idx: integer; pose: TOgfSkeletonPose): boolean;
+begin
+  result:=false;
+  if key_idx = -1 then begin
+    if not _SetBindPoseForWork() then exit;
+  end else begin
+    if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+  end;
+
+  result:=_GetWrkPose(pose);
+end;
+
+function TOgfSkeleton.SetSkeletonPose(anim_name: string; key_idx: integer; pose: TOgfSkeletonPose): boolean;
+begin
+
+end;
+
+
+function TOgfSkeleton.GetBoneBindTransformInParentSpace(idx: TBoneID; var offset: FVector3; var rotate: FVector3): boolean;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    _GetBone(idx).joint.GetBindTransformData(offset, rotate);
+    result:=true;
   end;
 end;
 
-function TOgfSkeleton.GetBoneMotionKeyPosition(idx: TBoneID; motion_name: string; key_idx: integer): FVector3;
+function TOgfSkeleton.MoveBoneInBindPose(idx: TBoneID; v: FVector3; is_absolute: boolean; correct_animations: boolean): boolean;
 var
-  m: FMatrix4x4;
+  b, child_bone:TOgfBoneData;
+  original_matrix, temp_matrix, new_matrix, child_matrix:FMatrix4x4;
+  position:FVector3;
+
+  i:integer;
 begin
-  set_zero(result);
-  if  GetBoneMotionKeyToGlobalMatrix(idx, motion_name, key_idx, m) then begin
-    result.x:=m.c.x;
-    result.y:=m.c.y;
-    result.z:=m.c.z;
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+      b:=_GetBone(idx);
+      if b.joint=nil then exit;
+
+      _SetBindPoseForWork();
+
+      b.joint._GetWrkTransform(original_matrix);
+      if not _GetWrkBoneSpaceToGlobalSpaceMatrix(idx, temp_matrix) then exit;
+      m_get_translation(temp_matrix, position);
+
+      // Get target position in global space
+      if is_absolute then begin;
+        m_translate_over(temp_matrix, v);
+      end else begin
+        position:=v_add(position, v);
+        m_translate_over(temp_matrix, position);
+      end;
+
+      if not _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(idx, temp_matrix, new_matrix) then exit;
+
+      for i:=0 to GetBonesCount()-1 do begin
+        if i = idx then continue;
+        child_bone:=_GetBone(i);
+        if (child_bone.bone<>nil) and (child_bone.bone.GetParentName() = b.bone.GetName()) then begin
+          b.joint._AssignWrkPose(original_matrix);
+          if not _GetWrkBoneSpaceToGlobalSpaceMatrix(i, child_matrix) then continue;
+          b.joint._AssignWrkPose(new_matrix);
+          if not _ConvertTransformFromGlobalIntoWrkBoneSpace(idx, child_matrix, child_matrix) then exit;
+          child_bone.joint.SetBindTransformData(child_matrix);
+        end;
+      end;
+
+      b.joint.SetBindTransformData(new_matrix);
+
+
+      // TODO: correct OBB, center of mass and shape?
+
+
+      result:=true;
   end;
 end;
+
 
 function TOgfSkeleton.GetBoneMassParams(idx: TBoneID; var center: FVector3; var mass: single): boolean;
 begin
@@ -3796,7 +4135,6 @@ begin
     end;
     data.material:=b.joint.GetMaterial();
     data.obb:=b.bone.GetOBB();
-    GetBoneLocalTransformMatrix(idx, data.transform);
     data.shape:=b.joint.GetShape();
     b.joint.GetMassParams(data.center_of_mass, data.mass);
     result:=true;
@@ -3813,6 +4151,19 @@ begin
     if GetBoneUnitedData(i, data) then begin
       if not cb(i, @data, userdata) then exit;
     end;
+  end;
+end;
+
+function TOgfSkeleton.ForceSetBoneBindPoseTransform(bone_idx: TBoneId; offset: FVector3; rotate: FVector3): boolean;
+var
+  b:TOgfBoneData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  b:=_GetBone(bone_idx);
+  if b.joint<>nil then begin
+    b.joint.SetBindTransformData(offset, rotate);
+    result:=true;
   end;
 end;
 
@@ -4110,6 +4461,27 @@ end;
 
 { TOgfJointData }
 
+procedure TOgfJointData._AssignKeyWrkPose(key: TMotionKey);
+begin
+  m_rotation(_wrk_transform, key.Q);
+  m_translate_over(_wrk_transform, key.T);
+end;
+
+procedure TOgfJointData._AssignWrkPose(var m: FMatrix4x4);
+begin
+  _wrk_transform:=m;
+end;
+
+procedure TOgfJointData._AssignBindWrkPose();
+begin
+  GetBindTransformData(_wrk_transform);
+end;
+
+procedure TOgfJointData._GetWrkTransform(var m: FMatrix4x4);
+begin
+  m:=_wrk_transform;
+end;
+
 constructor TOgfJointData.Create;
 begin
   _ikdata:=TOgfJointIKData.Create;
@@ -4269,17 +4641,29 @@ begin
   _material:=matname;
 end;
 
-procedure TOgfJointData.GetTransformData(var offset: FVector3;
+procedure TOgfJointData.GetBindTransformData(var offset: FVector3;
   var rotate: FVector3);
 begin
   offset:=_rest_offset;
   rotate:=_rest_rotate;
 end;
 
-procedure TOgfJointData.SetTransformData(offset: FVector3; rotate: FVector3);
+procedure TOgfJointData.GetBindTransformData(var m: FMatrix4x4);
+begin
+  m_setXYZ(m, _rest_rotate);
+  m_translate_over(m, _rest_offset);
+end;
+
+procedure TOgfJointData.SetBindTransformData(offset: FVector3; rotate: FVector3);
 begin
   _rest_offset:=offset;
   _rest_rotate:=rotate;
+end;
+
+procedure TOgfJointData.SetBindTransformData(var m: FMatrix4x4);
+begin
+  m_getXYZi(m, _rest_rotate);
+  m_get_translation(m, _rest_offset);
 end;
 
 procedure TOgfJointData.GetMassParams(var center: FVector3; var mass: single);
@@ -4292,6 +4676,16 @@ procedure TOgfJointData.SetMassParams(center: FVector3; mass: single);
 begin
   _mass:=mass;
   _center_of_mass:=center;
+end;
+
+procedure TOgfJointData.MoveMassCenter(delta: FVector3);
+begin
+  _center_of_mass:=v_add(_center_of_mass, delta);
+end;
+
+procedure TOgfJointData.MoveJointPosition(delta: FVector3);
+begin
+  _rest_offset:=v_add(_rest_offset, delta);
 end;
 
 function TOgfJointData.UniformScale(k: single): boolean;
@@ -4315,6 +4709,11 @@ end;
 procedure TOgfBone._SetParentName(name: string);
 begin
   _parent_name:=name;
+end;
+
+procedure TOgfBone.MoveObb(var delta: FVector3);
+begin
+  _obb.m_translate:=v_add(_obb.m_translate, delta);
 end;
 
 constructor TOgfBone.Create;
@@ -7153,7 +7552,7 @@ begin
         if not r then exit;
       end;
 
-      if not _skeleton.Build(_bone_names, _joints) then exit;
+      if not _skeleton._Build(_bone_names, _joints) then exit;
 
       if _animations.LoadFromChunkedMem(mem) then begin
         _animations.ResetSource(_source);

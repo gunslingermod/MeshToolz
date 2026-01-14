@@ -119,9 +119,12 @@ TModelSlot = class
   function _CmdChildSplitSelected(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSkeletonHierarchy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneReparent(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneRename(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneSetBindTransform(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneBindPoseMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -386,19 +389,27 @@ end;
 function TModelSlot._CmdSetPivot(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   v:FVector3;
+  argsparser:TCommandsArgumentsParser;
 begin
   result:=false;
   set_zero(v{%H-});
-  if not ExtractFVector3(args, v) then begin
-    result_description.SetDescription('can''t extract vector from argument');
-  end else begin
-    args:=TrimLeft(args);
-    if length(args)>0 then begin
-      result_description.SetDescription('invalid arguments count, expected 3 numbers')
-    end else begin
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X component of new pivot position');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y component of new pivot position');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z component of new pivot position');
+    if argsparser.Parse(args) and argsparser.GetAsSingle(0, v.x) and argsparser.GetAsSingle(1, v.y) and argsparser.GetAsSingle(2, v.z) then begin
       _selectionarea.SetPivot(v);
       result:=true;
+    end else begin
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
     end;
+
+  finally
+    FreeAndNil(argsparser);
   end;
 end;
 
@@ -406,63 +417,66 @@ function TModelSlot._CmdSelectionSphere(var args: string; cmd: TCommandSetup; re
 var
   v:FVector3;
   r:single;
+  argsparser:TCommandsArgumentsParser;
 begin
   result:=false;
-  set_zero(v{%H-});
-  if not ExtractFVector3(args, v) then begin
-    result_description.SetDescription('can''t extract center point vector from arguments');
-    exit;
-  end;
-  args:=TrimLeft(args);
-  if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
-    result_description.SetDescription('procedure expects 4 numbers as arguments');
-    exit;
-  end;
-
-  args:=trim(rightstr(args, length(args)-1));
-  if not ExtractFloatFromString(args, r) then begin
-    result_description.SetDescription('can''t extract radius from arguments');
-    exit;
-  end;
-
-  args:=TrimLeft(args);
-  if length(args)<>0 then begin
-    result_description.SetDescription('invalid arguments count, expected 4 numbers')
-  end else begin
-    _selectionarea.SetSelectionAreaAsSphere(v, r);
-    result:=true;
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X coordinate of sphere center');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y coordinate of sphere center');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z coordinate of sphere center');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'radius of the sphere');
+    if argsparser.Parse(args) and
+       argsparser.GetAsSingle(0, v.x) and
+       argsparser.GetAsSingle(1, v.y) and
+       argsparser.GetAsSingle(2, v.z) and
+       argsparser.GetAsSingle(3, r)
+    then begin
+      _selectionarea.SetSelectionAreaAsSphere(v, r);
+      result:=true;
+    end else begin
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
+    end;
+  finally
+    FreeAndNil(argsparser);
   end;
 end;
 
 function TModelSlot._CmdSelectionBox(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   p1, p2:FVector3;
+  argsparser:TCommandsArgumentsParser;
 begin
   result:=false;
-  set_zero(p1);
-  set_zero(p2);
-  if not ExtractFVector3(args, p1) then begin
-    result_description.SetDescription('can''t extract 1st point vector from arguments');
-    exit;
-  end;
-  args:=TrimLeft(args);
-  if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
-    result_description.SetDescription('procedure expects 6 numbers as arguments');
-    exit;
-  end;
-
-  args:=trim(rightstr(args, length(args)-1));
-  if not ExtractFVector3(args, p2) then begin
-    result_description.SetDescription('can''t extract 2nd point vector from arguments');
-    exit;
-  end;
-
-  args:=TrimLeft(args);
-  if length(args)<>0 then begin
-    result_description.SetDescription('invalid arguments count, expected 6 numbers')
-  end else begin
-    _selectionarea.SetSelectionAreaAsBox(p1, p2);
-    result:=true;
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X coordinate of the 1st point');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y coordinate of the 1st point');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z coordinate of the 1st point');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X coordinate of the 2nd point');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y coordinate of the 2nd point');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z coordinate of the 2nd point');
+    if argsparser.Parse(args) and
+       argsparser.GetAsSingle(0, p1.x) and
+       argsparser.GetAsSingle(1, p1.y) and
+       argsparser.GetAsSingle(2, p1.z) and
+       argsparser.GetAsSingle(3, p2.x) and
+       argsparser.GetAsSingle(4, p2.y) and
+       argsparser.GetAsSingle(5, p2.z)
+    then begin
+      _selectionarea.SetSelectionAreaAsBox(p1, p2);
+      result:=true;
+    end else begin
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
+    end;
+  finally
+    FreeAndNil(argsparser);
   end;
 end;
 
@@ -513,8 +527,7 @@ begin
 
     r_bones:='';
     for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
-      v:=_data.Skeleton().GetBoneCurrentPosition(i);
-      if _selectionarea.IsPointInSelection(v) then begin
+      if data.Skeleton().GetGlobalBonePositionInPose(i, '', -1, v) and _selectionarea.IsPointInSelection(v) then begin
         if length(r_bones)=0 then begin
           r_bones:=r_bones+chr($0d)+chr($0a)+'Selected bones:'+chr($0d)+chr($0a);
         end;
@@ -531,24 +544,35 @@ end;
 function TModelSlot._CmdSelectionTestPoint(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   v:FVector3;
+  argsparser:TCommandsArgumentsParser;
 begin
   result:=false;
-  set_zero(v);
-  if not ExtractFVector3(args, v) then begin
-    result_description.SetDescription('can''t extract point coordinates from arguments');
-    exit;
-  end;
 
-  args:=TrimLeft(args);
-  if length(args)<>0 then begin
-    result_description.SetDescription('invalid arguments count, expected 3 numbers')
-  end else begin
-    if _selectionarea.IsPointInSelection(v) then begin
-      result_description.SetDescription('Point is inside the selected area');
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'point X coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'point Y coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'point Z coordinate');
+    if argsparser.Parse(args) and
+       argsparser.GetAsSingle(0, v.x) and
+       argsparser.GetAsSingle(1, v.y) and
+       argsparser.GetAsSingle(2, v.z)
+    then begin
+      if _selectionarea.IsPointInSelection(v) then begin
+        result_description.SetDescription('Point is inside the selected area');
+      end else begin
+        result_description.SetDescription('Point is outside the selected area');
+      end;
+      result:=true;
     end else begin
-      result_description.SetDescription('Point is outside the selected area');
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
     end;
-    result:=true;
+
+  finally
+    FreeAndNil(argsparser);
   end;
 
 end;
@@ -677,7 +701,7 @@ begin
     end else begin
       shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
       texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
-      result_description.SetDescription('mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully appended');
+      result_description.SetDescription('child #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully appended');
       result:=true;
     end;
   end else begin
@@ -699,10 +723,10 @@ begin
 
     if _data.Meshes().Get(i).GetVerticesCount() = 0 then begin;
       if not _data.Meshes().Remove(i) then begin
-        r:=r+'Failed to remove collapsed mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
+        r:=r+'Failed to remove collapsed child #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
         result:=false;
       end else begin
-        r:=r+'Removed collapsed mesh #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
+        r:=r+'Removed collapsed child #'+inttostr(i)+' ('+texture+' : '+shader+')'+chr($0d)+chr($0a);
       end;
     end;
   end;
@@ -735,7 +759,6 @@ var
   obb:FObb;
   shape:TOgfBoneShape;
   v1, v2:FVector3;
-  trm:FMatrix4x4;
   n:single;
 begin
   result:=false;
@@ -747,10 +770,11 @@ begin
     r:=r+'- Parent: '+_data.Skeleton().GetBoneParentName(idx)+chr($0d)+chr($0a);
     r:=r+'- Material: '+data.Skeleton().GetBoneMaterial(idx)+chr($0d)+chr($0a);
 
-    v1:=data.Skeleton().GetBoneBindPosition(idx);
-    r:=r+'- Bind position: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
+    if  _data.Skeleton().GetGlobalBonePositionInPose(idx, '', -1, v1) then begin
+      r:=r+'- Bind position: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
+    end;
 
-    if data.Skeleton().GetBoneLocalTransform(idx, v1, v2) then begin
+    if data.Skeleton().GetBoneBindTransformInParentSpace(idx, v1, v2) then begin
       r:=r+'- Offset: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
       r:=r+'- Rotate: '+floattostr(v2.x)+', '+floattostr(v2.y)+', '+floattostr(v2.z)+chr($0d)+chr($0a);
     end;
@@ -773,63 +797,106 @@ begin
       r:=r+'( '+floattostr(obb.m_rotate.k.x)+', '+floattostr(obb.m_rotate.k.y)+', '+floattostr(obb.m_rotate.k.z)+' )'+chr($0d)+chr($0a);
     end;
 
-    if data.Skeleton().GetBoneLocalTransformMatrix(idx, trm) then begin
-      r:=r+'- Local Transform Matrix: '+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.i.x)+', '+floattostr(trm.i.y)+', '+floattostr(trm.i.z)+', '+floattostr(trm.i.w)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.j.x)+', '+floattostr(trm.j.y)+', '+floattostr(trm.j.z)+', '+floattostr(trm.j.w)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.k.x)+', '+floattostr(trm.k.y)+', '+floattostr(trm.k.z)+', '+floattostr(trm.k.w)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.c.x)+', '+floattostr(trm.c.y)+', '+floattostr(trm.c.z)+', '+floattostr(trm.c.w)+' )'+chr($0d)+chr($0a);
-    end;
-
-    if data.Skeleton().GetBoneBindPoseToGlobalMatrix(idx, trm) then begin
-      r:=r+'- Global Bind pose Matrix: '+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.i.x)+', '+floattostr(trm.i.y)+', '+floattostr(trm.i.z)+', '+floattostr(trm.i.w)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.j.x)+', '+floattostr(trm.j.y)+', '+floattostr(trm.j.z)+', '+floattostr(trm.j.w)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.k.x)+', '+floattostr(trm.k.y)+', '+floattostr(trm.k.z)+', '+floattostr(trm.k.w)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(trm.c.x)+', '+floattostr(trm.c.y)+', '+floattostr(trm.c.z)+', '+floattostr(trm.c.w)+' )'+chr($0d)+chr($0a);
-    end;
-
     result_description.SetDescription(r);
     result:=true;
   end;
 end;
 
+type
+TSkeletonHierarchyCallbackData = record
+  skeleton:TOgfSkeleton;
+  parent_bonename:string;
+  headerstr:string;
+  resstr:string;
+  cb:TBonesIterationCallback;
+end;
+pSkeletonHierarchyCallbackData = ^TSkeletonHierarchyCallbackData;
+
+function SkeletonHierarchyCallback(bone_id:integer; bone_data:pTBoneUnitedData; userdata:pointer):boolean;
+var
+  cbdata:pSkeletonHierarchyCallbackData;
+  new_data:TSkeletonHierarchyCallbackData;
+
+begin
+  result:=true;
+  if (userdata = nil) or (bone_data = nil) then exit;
+
+  cbdata:=pSkeletonHierarchyCallbackData(userdata);
+
+  if cbdata^.parent_bonename = bone_data^.parent_name then begin
+    cbdata^.resstr:= cbdata^.resstr+cbdata^.headerstr+bone_data^.name+chr($0a)+chr($0d);
+
+    new_data.headerstr:=cbdata^.headerstr;
+    new_data.headerstr:=StringReplace(new_data.headerstr,'-',' ',[rfReplaceAll])+'|-- ';
+    new_data.parent_bonename:=bone_data^.name;
+    new_data.resstr:='';
+    new_data.skeleton:=cbdata^.skeleton;
+    new_data.cb:=cbdata^.cb;
+
+    new_data.skeleton.IterateBones(new_data.cb, @new_data);
+
+    cbdata^.resstr:=cbdata^.resstr+new_data.resstr;
+  end;
+end;
+
+
+function TModelSlot._CmdSkeletonHierarchy(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  cbdata:TSkeletonHierarchyCallbackData;
+begin
+  result:=true;
+
+  cbdata.headerstr:='';
+  cbdata.parent_bonename:='';
+  cbdata.resstr:='';
+  cbdata.skeleton:=_data.Skeleton();
+  cbdata.cb:=@SkeletonHierarchyCallback;
+
+  _data.Skeleton().IterateBones(@SkeletonHierarchyCallback, @cbdata);
+  result_description.SetDescription(cbdata.resstr);
+end;
+
 function TModelSlot._CmdBoneReparent(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
-  new_parent_id:TBoneId;
-  r:string;
-  n:integer;
+  argsparser:TCommandsArgumentsParser;
   preserve_pos:boolean;
+  boneids:string;
+  new_parent_bone_id:TBoneId;
 begin
   result:=false;
+  preserve_pos:=true;
+  new_parent_bone_id:=INVALID_BONE_ID;
+
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-    if not ExtractBoneIdFromString(args, new_parent_id) then begin
-      result_description.SetDescription('can''t extract new parent bone id from argument #1');
-      exit;
-    end;
 
-    args:=trim(args);
-    preserve_pos:=true;
-    if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      args:=trim(rightstr(args, length(args)-1));
-      n:=strtointdef(args, -1);
-      if (n < 0) or (n > 1) then begin
-        result_description.SetDescription('the second argument must be 1 (preserve global position) or 0 (not preserve)');
-        exit;
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'bone name or index');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'preserve global bone position');
+      if argsparser.Parse(args) and
+         argsparser.GetAsString(0, boneids) and
+         argsparser.GetAsBool(1, preserve_pos, true)
+      then begin
+        if not ExtractBoneIdFromString(boneids, new_parent_bone_id) then begin
+          result_description.SetDescription('invalid parent bone ID');
+        end else begin
+          if not _data.Skeleton().ReparentBone(idx, new_parent_bone_id, preserve_pos) then begin
+            result_description.SetDescription('error while reparenting bone '+_data.Skeleton().GetBoneName(idx));
+          end else begin
+            result_description.SetDescription('bone '+_data.Skeleton().GetBoneName(idx)+' successfully reparented');
+            result:=true;
+          end;
+        end;
       end else begin
-        preserve_pos:=(n>0);
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
       end;
-    end else if (length(args) > 0) then begin
-      result_description.SetDescription('Please use comma to split arguments');
-    end;
-
-    if not _data.Skeleton().ReparentBone(idx, new_parent_id, preserve_pos) then begin
-      result_description.SetDescription('error while reparenting bone '+_data.Skeleton().GetBoneName(idx));
-    end else begin
-      result_description.SetDescription('bone '+_data.Skeleton().GetBoneName(idx)+' reparented');
-      result:=true;
+    finally
+      FreeAndNil(argsparser);
     end;
   end;
 end;
@@ -837,40 +904,127 @@ end;
 function TModelSlot._CmdBoneRename(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
-  i:integer;
-  old_name:string;
-const
-  SYMBOLS:string='abcdefghijklmnopqrstuvwxyz0123456789_+-';
-
+  new_name, old_name:string;
+  argsparser:TCommandsArgumentsParser;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-    args:=trim(args);
-    if length(args)=0 then begin
-      result_description.SetDescription('expected new bone name in argument');
-    end else begin
-      for i:=1 to length(args) do begin
-        if pos(lowercase(args[i]), SYMBOLS) = 0 then begin
-          result_description.SetDescription('new bone name is invalid');
-          break;
-        end
-      end;
-
-      if (length(result_description.GetDescription()) = 0) then begin
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'new bone name');
+      if argsparser.Parse(args) and argsparser.GetAsString(0, new_name) then begin
         old_name:=_data.Skeleton().GetBoneName(idx);
-        if (_data.Skeleton().GetBoneIdxByName(args) <> INVALID_BONE_ID) then begin
-          result_description.SetDescription('bone with name '+args+' already present in the skeleton');
-        end else if _data.Skeleton().RenameBone(old_name, args) then begin
-          result_description.SetDescription('bone '+old_name+' successfully renamed to '+args);
+        if (_data.Skeleton().GetBoneIdxByName(new_name) <> INVALID_BONE_ID) then begin
+          result_description.SetDescription('bone with name '+new_name+' already present in the skeleton');
+        end else if _data.Skeleton().RenameBone(old_name, new_name) then begin
+          result_description.SetDescription('bone '+old_name+' successfully renamed to '+new_name);
           result:=true;
         end else begin
-          result_description.SetDescription('error while renaming bone '+old_name+' to '+args);
+          result_description.SetDescription('error while renaming bone '+old_name+' to '+new_name);
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
         end;
       end;
+
+    finally
+      FreeAndNil(argsparser);
     end;
   end;
+end;
 
+function TModelSlot._CmdBoneSetBindTransform(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+
+  offset, rotate:FVector3;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X component of offset vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y component of offset vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z component of offset vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X component of rotation vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y component of rotation vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z component of rotation vector');
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, offset.x) and
+         argsparser.GetAsSingle(1, offset.y) and
+         argsparser.GetAsSingle(2, offset.z) and
+         argsparser.GetAsSingle(3, rotate.x) and
+         argsparser.GetAsSingle(4, rotate.y) and
+         argsparser.GetAsSingle(5, rotate.z)
+      then begin
+        if _data.Skeleton().ForceSetBoneBindPoseTransform(idx, offset, rotate) then begin
+          result_description.SetDescription('bind transform successfully changed for bone '+_data.Skeleton().GetBoneName(idx));
+          result:=true;
+        end else begin
+          result_description.SetDescription('can''t change bind transform for bone '+_data.Skeleton().GetBoneName(idx));
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
+end;
+
+function TModelSlot._CmdBoneBindPoseMove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+
+  v:FVector3;
+  is_absolute_coords:boolean;
+  recalc_anims:boolean;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X component of movement vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y component of movement vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z component of movement vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'absolute coordinates flag');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'recalculate coordinates in animations');
+
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, v.x) and
+         argsparser.GetAsSingle(1, v.y) and
+         argsparser.GetAsSingle(2, v.z) and
+         argsparser.GetAsBool(3, is_absolute_coords, false) and
+         argsparser.GetAsBool(4, recalc_anims, true)
+      then begin
+        if _data.Skeleton().MoveBoneInBindPose(idx, v, is_absolute_coords, recalc_anims) then begin
+          result_description.SetDescription('bind pose position successfully changed for bone '+_data.Skeleton().GetBoneName(idx));
+          result:=true;
+        end else begin
+          result_description.SetDescription('failed to change bind pose position for bone '+_data.Skeleton().GetBoneName(idx));
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
 end;
 
 function TModelSlot._CmdAnimInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -973,8 +1127,9 @@ begin
             r:=r+'Bone '+s+' data in key '+inttostr(keyid)+':'+chr($0d)+chr($0a);
             r:=r+'- Local position: '+floattostr(key.T.x)+', '+floattostr(key.T.y)+', '+floattostr(key.T.z)+chr($0d)+chr($0a);
 
-            pos:=_data.Skeleton().GetBoneMotionKeyPosition(i, defs.name,keyid);
-            r:=r+'- Global position: '+floattostr(pos.x)+', '+floattostr(pos.y)+', '+floattostr(pos.z)+chr($0d)+chr($0a);
+            if _data.Skeleton().GetGlobalBonePositionInPose(i, defs.name, keyid, pos) then begin
+              r:=r+'- Global position: '+floattostr(pos.x)+', '+floattostr(pos.y)+', '+floattostr(pos.z)+chr($0d)+chr($0a);
+            end;
             result:=true;
           end;
         end;
@@ -987,6 +1142,7 @@ end;
 function TModelSlot._CmdAnimAddMotionMark(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
+  argsparser:TCommandsArgumentsParser;
   name:string;
   interval:TOgfMotionMarkInterval;
   animdata:TOgfMotionDefData;
@@ -995,51 +1151,42 @@ begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-    name:=ExtractABNString(args);
 
-    args:=trim(args);
-    if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      result_description.SetDescription('procedure expects 3 arguments');
-      exit;
-    end;
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'name of motion mark');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'start time of marked interval');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'end time of marked interval');
 
-    args:=trim(rightstr(args, length(args)-1));
-    if not ExtractFloatFromString(args, interval.start) then begin
-      result_description.SetDescription('can''t parse 2nd argument - start time of marked interval');
-      exit;
-    end;
+      if argsparser.Parse(args) and
+         argsparser.GetAsString(0, name) and
+         argsparser.GetAsSingle(1, interval.start) and
+         argsparser.GetAsSingle(2, interval.finish)
+      then begin
+        if interval.start > interval.finish then begin
+          t:=interval.start;
+          interval.start:=interval.finish;
+          interval.finish:=t;
+        end;
+        animdata:=_data.Animations().GetAnimationParams(idx);
+        if animdata.marks<>nil then begin
+          result:=animdata.marks.Add(name, interval)>=0;
+          if result then begin
+            result_description.SetDescription('Successfully added new motion mark interval '+name+' to '+animdata.name);
+          end;
+        end;
 
-    args:=trim(args);
-    if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      result_description.SetDescription('procedure expects 3 arguments');
-      exit;
-    end;
-
-    args:=trim(rightstr(args, length(args)-1));
-    if not ExtractFloatFromString(args, interval.start) then begin
-      result_description.SetDescription('can''t parse 3rd argument - end time of marked interval');
-      exit;
-    end;
-
-    if interval.start > interval.finish then begin
-      t:=interval.start;
-      interval.start:=interval.finish;
-      interval.finish:=t;
-    end;
-
-    animdata:=_data.Animations().GetAnimationParams(idx);
-    if animdata.marks<>nil then begin
-      result:=animdata.marks.Add(name, interval)>=0;
-      if result then begin
-        result_description.SetDescription('Successfully added interval to motion mark '+name+' of '+animdata.name);
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
       end;
+
+    finally
     end;
-  end;
 
-  if not result then begin
-    result_description.SetDescription('can''t add motion mark');
   end;
-
 end;
 
 
@@ -1104,10 +1251,10 @@ begin
     texdata:=_data.Meshes().Get(idx).GetTextureData();
     texdata.texture:=trim(args);
     if _data.Meshes().Get(idx).SetTextureData(texdata) then begin
-      result_description.SetDescription('texture successfully updated for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result_description.SetDescription('texture successfully updated for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
       result:=true;
     end else begin
-      result_description.SetDescription('can''t update texture for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result_description.SetDescription('can''t update texture for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
     end;
   end;
 end;
@@ -1126,10 +1273,10 @@ begin
     texdata:=_data.Meshes().Get(idx).GetTextureData();
     texdata.shader:=trim(args);
     if _data.Meshes().Get(idx).SetTextureData(texdata) then begin
-      result_description.SetDescription('texture shader updated for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result_description.SetDescription('texture shader updated for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
       result:=true;
     end else begin
-      result_description.SetDescription('can''t update shader for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result_description.SetDescription('can''t update shader for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
     end;
   end;
 end;
@@ -1146,9 +1293,9 @@ begin
     shader:=_data.Meshes().Get(idx).GetTextureData().shader;
     texture:=_data.Meshes().Get(idx).GetTextureData().texture;
     if not _data.Meshes().Remove(idx) then begin
-      result_description.SetDescription('remove operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result_description.SetDescription('remove operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
     end else begin
-      result_description.SetDescription('successfully removed mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+      result_description.SetDescription('successfully removed child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
       result:=true;
     end;
   end;
@@ -1167,11 +1314,11 @@ begin
     texture:=_data.Meshes().Get(idx).GetTextureData().texture;
     s:=_data.Meshes().Get(idx).Serialize();
     if length(s) = 0 then begin
-      result_description.SetDescription('cannot serialize mesh #'+inttostr(idx)+' ('+texture+' : '+shader+'), buffer cleared');
+      result_description.SetDescription('cannot serialize child #'+inttostr(idx)+' ('+texture+' : '+shader+'), buffer cleared');
       _container.GetTempBuffer().Clear();
     end else begin
       _container.GetTempBuffer().SetData(s, BUFFER_TYPE_CHILDMESH);
-      result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully saved to temp buffer');
+      result_description.SetDescription('child #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully saved to temp buffer');
       result:=true;
     end;
   end;
@@ -1196,7 +1343,7 @@ begin
       end else begin
         shader:=_data.Meshes().Get(meshid).GetTextureData().shader;
         texture:=_data.Meshes().Get(meshid).GetTextureData().texture;
-        result_description.SetDescription('mesh #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully inserted');
+        result_description.SetDescription('child #'+inttostr(meshid)+' ('+texture+' : '+shader+') successfully inserted');
         result:=true;
       end;
     end else begin
@@ -1301,13 +1448,13 @@ begin
          cbdata.selection_area:=_selectionarea;
          cbdata.vcnt:=0;
          if not _data.Meshes().Get(idx).Move(v, @VertexSelectionCallback, @cbdata) then begin
-           result_description.SetDescription('move operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+           result_description.SetDescription('move operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else if cbdata.vcnt = 0 then begin
            result_description.SetDescription('no vertices were found in the selection area');
            result_description.SetWarningFlag(true);
            result:=true;
          end else begin
-           result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
+           result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully moved');
            result:=true;
          end;
        end;
@@ -1318,7 +1465,9 @@ end;
 function TModelSlot._CmdChildRotateSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
+  argsparser:TCommandsArgumentsParser;
   amount:single;
+  s:string;
   axis:TOgfRotationAxis;
   shader, texture:string;
   cbdata:TVertexSelectionCallbackData;
@@ -1327,57 +1476,59 @@ begin
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
 
-    if not ExtractFloatFromString(args, amount) then begin
-      result_description.SetDescription('cannot extract argument #1 (rotation angle in degrees)');
-      exit;
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'rotation angle in degrees');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'rotation axis');
+
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, amount) and
+         argsparser.GetAsString(1, s)
+      then begin
+         if (s='x') or (s='X') then begin
+           axis:=OgfRotationAxisX;
+         end else if (s='y') or (s='Y') then begin
+           axis:=OgfRotationAxisY;
+         end else if (s='z') or (s='Z') then begin
+           axis:=OgfRotationAxisZ;
+         end else begin
+           result_description.SetDescription('rotation axis must be a letter (X, Y or Z)');
+           exit;
+         end;
+
+         amount:=amount*pi/180;
+         cbdata.selection_area:=_selectionarea;
+         cbdata.vcnt:=0;
+         if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
+           result_description.SetDescription('rotate operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+         end else if cbdata.vcnt = 0 then begin
+           result_description.SetDescription('no vertices were found in the selection area');
+           result_description.SetWarningFlag(true);
+           result:=true;
+         end else begin
+           shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+           texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+
+           result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully rotated');
+           result:=true;
+         end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+
+
+    finally
+      FreeAndNil(argsparser);
     end;
-
-    args:=trimleft(args);
-    if (length(args)=0) or (args[1]<>COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      result_description.SetDescription('procedure expects 2 arguments');
-      exit;
-    end;
-
-
-    args:=trim(rightstr(args, length(args)-1));
-    if (length(args)=0) then begin
-      result_description.SetDescription('cannot extract argument #2 (rotation axis)');
-      exit;
-    end;
-
-    if (args[1]='x') or (args[1]='X') then begin
-      axis:=OgfRotationAxisX;
-    end else if (args[1]='y') or (args[1]='Y') then begin
-      axis:=OgfRotationAxisY;
-    end else if (args[1]='z') or (args[1]='Z') then begin
-      axis:=OgfRotationAxisZ;
-    end else begin
-      result_description.SetDescription('rotation axis must be a letter (X, Y or Z)');
-      exit;
-    end;
-
-    amount:=amount*pi/180;
-    cbdata.selection_area:=_selectionarea;
-    cbdata.vcnt:=0;
-    if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
-      result_description.SetDescription('rotate operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
-    end else if cbdata.vcnt = 0 then begin
-      result_description.SetDescription('no vertices were found in the selection area');
-      result_description.SetWarningFlag(true);
-      result:=true;
-    end else begin
-      shader:=_data.Meshes().Get(idx).GetTextureData().shader;
-      texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-
-      result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully rotated');
-      result:=true;
-    end;
-
   end;
 end;
 
 function TModelSlot._CmdChildScaleSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
+  argsparser:TCommandsArgumentsParser;
   v:FVector3;
   shader, texture:string;
   idx:integer;
@@ -1387,30 +1538,40 @@ begin
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
 
-    set_zero(v{%H-});
-     if not ExtractFVector3(args, v) then begin
-       result_description.SetDescription('cannot parse vector components from argument');
-     end else begin
-       shader:=_data.Meshes().Get(idx).GetTextureData().shader;
-       texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-       args:=TrimLeft(args);
-       if length(args)>0 then begin
-         result_description.SetDescription('invalid arguments count, expected 3 floats');
-       end else begin
-         cbdata.selection_area:=_selectionarea;
-         cbdata.vcnt:=0;;
-         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
-           result_description.SetDescription('scale operation failed for mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
-         end else if cbdata.vcnt = 0 then begin
-           result_description.SetDescription('no vertices were found in the selection area');
-           result_description.SetWarningFlag(true);
-           result:=true;
-         end else begin
-           result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
-           result:=true;
-         end;
-       end;
-     end;
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X component of scaling vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y component of scaling vector');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z component of scaling vector');
+
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, v.x) and
+         argsparser.GetAsSingle(1, v.y) and
+         argsparser.GetAsSingle(2, v.z)
+      then begin
+        shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+        texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+        cbdata.selection_area:=_selectionarea;
+        cbdata.vcnt:=0;
+        if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
+          result_description.SetDescription('scale operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+        end else if cbdata.vcnt = 0 then begin
+          result_description.SetDescription('no vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') were found in the selection area');
+          result_description.SetWarningFlag(true);
+          result:=true;
+        end else begin
+          result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully scaled');
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+    end;
+
   end;
 end;
 
@@ -1502,80 +1663,66 @@ end;
 function TModelSlot._CmdChildRebindSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   dest_boneid,  src_boneid:TBoneID;
+  dest_bone_s, src_bone_s:string;
   weight: single;
   shader, texture:string;
   idx:integer;
   cbdata:TVertexSelectiveBindCallbackData;
+  argsparser:TCommandsArgumentsParser;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-
-    result_description.SetDescription('');
     src_boneid:=INVALID_BONE_ID;
     dest_boneid:=INVALID_BONE_ID;
     weight:=-1;
-    if not ExtractBoneIdFromString(args, dest_boneid) then begin
-      result_description.SetDescription('can''t extract target bone id from argument #1');
-      exit;
-    end;
 
-    args:=TrimLeft(args);
-    if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      args:=trim(rightstr(args, length(args)-1));
-      if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
-        // weight omitted - we should use already assigned; just parse 3rd arg
-      end else if not ExtractFloatFromString(args, weight) then begin
-        result_description.SetDescription('can''t extract argument # 2(weight) from arguments');
-        exit;
-      end else if (weight<0) or (weight > 1) then begin
-        result_description.SetDescription('weight must be a number between 0 and 1; if you don''t need weight - just omit it in the command)');
-        exit;
-      end;
-    end else if (length(args) = 0) then begin
-      // 1-arg syntax used, use by default the full weight
-      weight:=1;
-    end else begin
-      result_description.SetDescription('please use comma between arguments #1 and #2');
-      exit;
-    end;
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'target (new) bone');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'weight');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, true, 'source (old) bone');
 
-    args:=TrimLeft(args);
-    if (length(args) > 0) and (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      args:=TrimLeft(rightstr(args, length(args)-1));
-      if (not ExtractBoneIdFromString(args, src_boneid)) then begin
-        result_description.SetDescription('can''t extract source bone id from argument #3');
-        exit;
-      end;
-    end else if (length(args) > 0) then begin
-      result_description.SetDescription('please use comma between arguments #2 and #3');
-      exit;
-    end;
-
-    args:=TrimLeft(args);
-    if length(args) > 0 then begin
-      result_description.SetDescription('the procedure expects 1, 2 or 3 argument(s)');
-      exit;
-    end;
-
-    if (length(result_description.GetDescription()) = 0) then begin
-      shader:=_data.Meshes().Get(idx).GetTextureData().shader;
-      texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-      cbdata.selection_area:=_selectionarea;
-      cbdata.src_boneid:=src_boneid;
-      cbdata.weight:=weight;
-      cbdata.vcnt:=0;
-      if not _data.Meshes().Get(idx).BindVerticesToBone(dest_boneid, @VertexSelectiveBindCallback, @cbdata) then begin
-        result_description.SetDescription('failed to rebind vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
-      end else begin
-        if cbdata.vcnt = 0 then begin
-          result_description.SetDescription('no vertices were found in the selection area');
-          result_description.SetWarningFlag(true);
+      if argsparser.Parse(args) and
+         argsparser.GetAsString(0, dest_bone_s) and
+         argsparser.GetAsSingle(1, weight, 1) and
+         argsparser.GetAsString(2, src_bone_s)
+      then begin
+        if not ExtractBoneIdFromString(dest_bone_s, dest_boneid) then begin
+          result_description.SetDescription('incorrect target bone specified');
+        end else if (weight<0) or (weight > 1) then begin
+          result_description.SetDescription('weight must be a number between 0 and 1; if you don''t need weight - just omit it in the command)');
+        end else if (length(src_bone_s) > 0) and (not ExtractBoneIdFromString(src_bone_s, src_boneid)) then begin
+          result_description.SetDescription('incorrect source bone specified');
         end else begin
-          result_description.SetDescription(inttostr(cbdata.vcnt)+' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') are successfully binded to '+GetBoneNameById(dest_boneid));
+          shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+          texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+          cbdata.selection_area:=_selectionarea;
+          cbdata.src_boneid:=src_boneid;
+          cbdata.weight:=weight;
+          cbdata.vcnt:=0;
+          if not _data.Meshes().Get(idx).BindVerticesToBone(dest_boneid, @VertexSelectiveBindCallback, @cbdata) then begin
+            result_description.SetDescription('failed to rebind vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
+          end else begin
+            if cbdata.vcnt = 0 then begin
+              result_description.SetDescription('no vertices were found in the selection area');
+              result_description.SetWarningFlag(true);
+            end else begin
+              result_description.SetDescription(inttostr(cbdata.vcnt)+' vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') are successfully binded to '+GetBoneNameById(dest_boneid));
+            end;
+            result:=true;
+          end;
         end;
-        result:=true;
+
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
       end;
+
+    finally
+      FreeAndNil(argsparser);
     end;
   end;
 end;
@@ -1612,7 +1759,7 @@ begin
 
     shader:=_data.Meshes().Get(idx).GetTextureData().shader;
     texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-    r:='mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') is assigned to the following bones:'+chr($0d)+chr($0a);
+    r:='child #'+inttostr(idx)+' ('+texture+' : '+shader+') is assigned to the following bones:'+chr($0d)+chr($0a);
     found:=false;
     s:=_data.Skeleton();
     for i:=0 to s.GetBonesCount()-1 do begin
@@ -1625,7 +1772,7 @@ begin
 
     result_description.SetDescription(r);
     if not found then begin
-      result_description.SetDescription('mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') is NOT assigned to any valid bone');
+      result_description.SetDescription('child #'+inttostr(idx)+' ('+texture+' : '+shader+') is NOT assigned to any valid bone');
     end;
 
   end;
@@ -1686,13 +1833,13 @@ begin
         cbdata.flagged_vertices_count:=0;
         cbdata.inverse_flag:=inverse;
         if not _data.Meshes().Get(idx).RemoveVertices(@ChildRemoveVerticesForBoneIdCallback, @cbdata) then begin
-          result_description.SetDescription('error filtering vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+          result_description.SetDescription('error filtering vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
         end else if cbdata.flagged_vertices_count = 0 then begin
-          result_description.SetDescription('no vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+') were removed');
+          result_description.SetDescription('no vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') were removed');
           result_description.SetWarningFlag(true);
           result:=true;
         end else begin
-          result_description.SetDescription('successfully removed '+inttostr(cbdata.flagged_vertices_count)+' vertices of mesh #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+          result_description.SetDescription('successfully removed '+inttostr(cbdata.flagged_vertices_count)+' vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
           if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
             result_description.SetDescription(result_description.GetDescription()+chr($0d)+chr($0a)+'mesh is fully collapsed (no vertices left), please remove it'+chr($0d)+chr($0a));
           end;
@@ -1861,7 +2008,7 @@ begin
           if not result then begin
             result_description.SetDescription('can''t remove vertices from source child');
           end else begin
-            result_description.SetDescription(inttostr(cbdata_sel.vcnt)+' vertices successfully extracted into mesh #'+inttostr(newidx));
+            result_description.SetDescription(inttostr(cbdata_sel.vcnt)+' vertices successfully extracted into child #'+inttostr(newidx));
           end;
         end;
       end;
@@ -1936,11 +2083,13 @@ begin
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsModelHasSkeletonPrecondition, _commands_bones, 'access array of bones'));
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from file'), CommandItemTypeCall);
-
+  _commands_skeleton.DoRegister(TCommandSetup.Create('hierarchy', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonHierarchy, 'display bones hierarchy'), CommandItemTypeCall);
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
-  _commands_bones.DoRegister(TCommandSetup.Create('rename', @_IsModelHasSkeletonPrecondition, @_CmdBoneRename, 'rename bone, expects 1 argumanr - new bone name'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('rename', @_IsModelHasSkeletonPrecondition, @_CmdBoneRename, 'rename bone, expects 1 argument - new bone name'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('reparent', @_IsModelHasSkeletonPrecondition, @_CmdBoneReparent, 'change bone parent; arg 1 - new parent, arg 2 (optional) - preserve bone global position (1, default) or not (0)'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('setbindtransform', @_IsModelHasSkeletonPrecondition, @_CmdBoneSetBindTransform, 'directly change bone transform of bind pose (dangerous function, can break anims); args #1, #2, #3 - new offset X,Y,Z; args #4, #5, #6 - new rotation X,Y,Z'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdBoneBindPoseMove, 'move bone changing its bind position; args 1,2,3 - x,y,z components of move, arg 4 (optional) - absolute (1) or relative (0, default) movement, arg 5 (optional) - recalculate anims (1, default) or not (0)'), CommandItemTypeCall);
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('animation', @_IsAnimationsLoadedPrecondition, _commands_animations, 'access group of properties and procedures associated with loaded animations'));
   _commands_animations.DoRegister(TCommandSetup.Create('info', @_IsAnimationsLoadedPrecondition, @_CmdAnimInfo, 'display animations info'), CommandItemTypeCall);
@@ -1949,7 +2098,7 @@ begin
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('marks', @_IsAnimationsLoadedPrecondition, _commands_mmarks, 'access group of properties and procedures associated with motion marks'));
   _commands_mmarks.DoRegister(TCommandSetup.Create('add', @_IsAnimationsLoadedPrecondition, @_CmdAnimAddMotionMark, 'add new interval, expects 3 arguments (mark name, interval start, interval end)'), CommandItemTypeCall);
-  _commands_mmarks.DoRegister(TCommandSetup.Create('reset', @_IsAnimationsLoadedPrecondition, @_CmdAnimResetMotionMarks, 'reset marks fro selected animation'), CommandItemTypeCall);
+  _commands_mmarks.DoRegister(TCommandSetup.Create('reset', @_IsAnimationsLoadedPrecondition, @_CmdAnimResetMotionMarks, 'reset marks for selected animation'), CommandItemTypeCall);
 
 end;
 
