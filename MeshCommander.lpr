@@ -79,7 +79,7 @@ begin
   cmd:='';
   DecimalSeparator{%H-} := '.';
 
-  writeln('OGFCommander by GUNSLINGER Mod Team');
+  writeln('OGFCommander by Sin!');
   writeln('Build: '+{$INCLUDE %DATE%});
   writeln;
 

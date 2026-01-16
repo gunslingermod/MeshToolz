@@ -565,6 +565,9 @@ type
     procedure SetBone(bonename:string; var transform:FMatrix4x4);
     function GetBone(bonename:string; var transform:FMatrix4x4):boolean;
     function BonesCount():integer;
+    function Serialize():string;
+    function Deserialize(var s:string):boolean;
+
     destructor Destroy(); override;
   end;
 
@@ -623,7 +626,7 @@ type
     function SetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):boolean;
 
     function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
-    function MoveBoneInBindPose(idx:TBoneID; v:FVector3; is_absolute:boolean; correct_animations:boolean):boolean;
+    function MoveBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; is_absolute:boolean; fixed_children:boolean):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
@@ -1185,6 +1188,79 @@ end;
 function TOgfSkeletonPose.BonesCount(): integer;
 begin
   result:=length(_bones);
+end;
+
+function TOgfSkeletonPose.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+
+  result:=result+SerializeCardinal(length(_bones));
+  for i:=0 to length(_bones)-1 do begin
+    result:=result+_bones[i].name;
+    result:=result+chr(0);
+    result:=result+SerializeFloat(_bones[i].transform.i.x);
+    result:=result+SerializeFloat(_bones[i].transform.i.y);
+    result:=result+SerializeFloat(_bones[i].transform.i.z);
+    result:=result+SerializeFloat(_bones[i].transform.i.w);
+
+    result:=result+SerializeFloat(_bones[i].transform.j.x);
+    result:=result+SerializeFloat(_bones[i].transform.j.y);
+    result:=result+SerializeFloat(_bones[i].transform.j.z);
+    result:=result+SerializeFloat(_bones[i].transform.j.w);
+
+    result:=result+SerializeFloat(_bones[i].transform.k.x);
+    result:=result+SerializeFloat(_bones[i].transform.k.y);
+    result:=result+SerializeFloat(_bones[i].transform.k.z);
+    result:=result+SerializeFloat(_bones[i].transform.k.w);
+
+    result:=result+SerializeFloat(_bones[i].transform.c.x);
+    result:=result+SerializeFloat(_bones[i].transform.c.y);
+    result:=result+SerializeFloat(_bones[i].transform.c.z);
+    result:=result+SerializeFloat(_bones[i].transform.c.w);
+  end;
+end;
+
+function TOgfSkeletonPose.Deserialize(var s: string): boolean;
+var
+  cnt:cardinal;
+  i:integer;
+begin
+  result:=false;
+  Reset();
+
+  if length(s) < sizeof(cardinal) then exit;
+  cnt:=PCardinal(PAnsiChar(s))^;
+  if not AdvanceString(s, sizeof(cnt)) then exit;
+
+  setlength(_bones, cnt);
+  for i:=0 to cnt-1 do begin
+    if not DeserializeZStringAndSplit(s, _bones[i].name) then exit;
+    if length(s) < sizeof(_bones[i].transform) then exit;
+
+    _bones[i].transform.i.x:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.i.y:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.i.z:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.i.w:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+
+    _bones[i].transform.j.x:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.j.y:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.j.z:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.j.w:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+
+    _bones[i].transform.k.x:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.k.y:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.k.z:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.k.w:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+
+    _bones[i].transform.c.x:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.c.y:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.c.z:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+    _bones[i].transform.c.w:=PSingle(PAnsiChar(s))^; if not AdvanceString(s, sizeof(single)) then exit;
+  end;
+
+  result:=true;
 end;
 
 destructor TOgfSkeletonPose.Destroy();
@@ -3678,7 +3754,7 @@ begin
   for i:=0 to GetBonesCount()-1 do begin
     b:=_GetBone(i);
     if b.bone = nil then continue;
-    b.joint.GetBindTransformData(m);
+    b.joint._GetWrkTransform(m);
     pose.SetBone(b.bone.GetName(), m);
   end;
   result:=true;
@@ -4038,8 +4114,30 @@ begin
 end;
 
 function TOgfSkeleton.SetSkeletonPose(anim_name: string; key_idx: integer; pose: TOgfSkeletonPose): boolean;
+var
+  i:integer;
+  anim_id:integer;
+  bone:TOgfBoneData;
+  key:TMotionKey;
+  m:FMatrix4x4;
 begin
+  result:=false;
+  if (_animations = nil) or not _animations.Loaded() then exit;
 
+  anim_id:=_animations.GetAnimationIdByName(anim_name);
+  if anim_id < 0 then exit;
+
+  _SetWrkPose(pose);
+
+  for i:=0 to GetBonesCount()-1 do begin
+    bone:=_GetBone(i);
+    if bone.joint = nil then continue;
+    bone.joint._GetWrkTransform(m);
+    key:=TransformToMotionKey(m);
+    _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), key_idx, key);
+  end;
+
+  result:=true;
 end;
 
 
@@ -4052,20 +4150,26 @@ begin
   end;
 end;
 
-function TOgfSkeleton.MoveBoneInBindPose(idx: TBoneID; v: FVector3; is_absolute: boolean; correct_animations: boolean): boolean;
+function TOgfSkeleton.MoveBone(idx: TBoneID; v: FVector3; anim_name: string; key_idx: integer; is_absolute: boolean; fixed_children: boolean): boolean;
 var
   b, child_bone:TOgfBoneData;
   original_matrix, temp_matrix, new_matrix, child_matrix:FMatrix4x4;
   position:FVector3;
 
   i:integer;
+  key:TMotionKey;
 begin
   result:=false;
   if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
       b:=_GetBone(idx);
       if b.joint=nil then exit;
 
-      _SetBindPoseForWork();
+
+      if key_idx = -1 then begin
+        if not _SetBindPoseForWork() then exit;
+      end else begin
+        if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+      end;
 
       b.joint._GetWrkTransform(original_matrix);
       if not _GetWrkBoneSpaceToGlobalSpaceMatrix(idx, temp_matrix) then exit;
@@ -4081,23 +4185,34 @@ begin
 
       if not _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(idx, temp_matrix, new_matrix) then exit;
 
-      for i:=0 to GetBonesCount()-1 do begin
-        if i = idx then continue;
-        child_bone:=_GetBone(i);
-        if (child_bone.bone<>nil) and (child_bone.bone.GetParentName() = b.bone.GetName()) then begin
-          b.joint._AssignWrkPose(original_matrix);
-          if not _GetWrkBoneSpaceToGlobalSpaceMatrix(i, child_matrix) then continue;
-          b.joint._AssignWrkPose(new_matrix);
-          if not _ConvertTransformFromGlobalIntoWrkBoneSpace(idx, child_matrix, child_matrix) then exit;
-          child_bone.joint.SetBindTransformData(child_matrix);
+
+      if fixed_children then begin
+        for i:=0 to GetBonesCount()-1 do begin
+          if i = idx then continue;
+          child_bone:=_GetBone(i);
+          if (child_bone.bone<>nil) and (child_bone.bone.GetParentName() = b.bone.GetName()) then begin
+            b.joint._AssignWrkPose(original_matrix);
+            if not _GetWrkBoneSpaceToGlobalSpaceMatrix(i, child_matrix) then continue;
+            b.joint._AssignWrkPose(new_matrix);
+            if not _ConvertTransformFromGlobalIntoWrkBoneSpace(idx, child_matrix, child_matrix) then exit;
+            if key_idx = -1 then begin
+              child_bone.joint.SetBindTransformData(child_matrix);
+            end else begin
+              key:=TransformToMotionKey(child_matrix);
+              _animations.SetAnimationKeyForBone(anim_name, child_bone.bone.GetName(), key_idx, key);
+            end;
+          end;
         end;
       end;
 
-      b.joint.SetBindTransformData(new_matrix);
-
+      if key_idx = -1 then begin
+        b.joint.SetBindTransformData(new_matrix);
+      end else begin
+        key:=TransformToMotionKey(new_matrix);
+        _animations.SetAnimationKeyForBone(anim_name, b.bone.GetName(), key_idx, key);
+      end;
 
       // TODO: correct OBB, center of mass and shape?
-
 
       result:=true;
   end;
