@@ -356,6 +356,7 @@ type
 
     procedure _SetName(name:string);
     procedure _SetParentName(name:string);
+    procedure _InitDefault(name:string; parent_name:string);
   public
     // Common
     constructor Create;
@@ -396,16 +397,19 @@ type
   pTOgfJointLimit = ^TOgfJointLimit;
 
   { TOgfJointIKData }
+  TOgfJointIKDataRawData = record
+    jointtype:cardinal;
+    limits:array [0..2] of TOgfJointLimit;
+    spring_factor:single;
+    damping_factor:single;
+    ik_flags:cardinal;
+    break_force:single;
+    break_torque:single;
+    friction:single;
+  end;
 
   TOgfJointIKData = class
-    _type:cardinal;
-    _limits:array [0..2] of TOgfJointLimit;
-    _spring_factor:single;
-    _damping_factor:single;
-    _ik_flags:cardinal;
-    _break_force:single;
-    _break_torque:single;
-    _friction:single;
+    _data:TOgfJointIKDataRawData;
   public
     // Common
     constructor Create;
@@ -414,6 +418,10 @@ type
     function Loaded():boolean;
     function Deserialize(rawdata:string; version:cardinal):integer;
     function Serialize():string;
+
+    function GetData():TOgfJointIKDataRawData;
+    procedure SetData(d:TOgfJointIKDataRawData);
+    class function GetDefault():TOgfJointIKDataRawData;
   end;
 
   { TOgfJointData }
@@ -428,7 +436,6 @@ type
     _mass:single;
     _center_of_mass:FVector3;
 
-
     // Transformation matrix for temp work & calculations
     // assign just from TOgfSkeleton before actual bone calculations
     _wrk_transform:FMatrix4x4;
@@ -436,6 +443,8 @@ type
     procedure _AssignWrkPose(var m:FMatrix4x4);
     procedure _AssignBindWrkPose();
     procedure _GetWrkTransform(var m:FMatrix4x4);
+
+    procedure _InitDefault(offset:FVector3; rotate:FVector3);
   public
     // Common
     constructor Create;
@@ -471,6 +480,7 @@ type
     _loaded:boolean;
     _data:array of TOgfJointData;
 
+    function _RegisterJoint(joint:TOgfJointData):TBoneId;
   public
     // Common
     constructor Create;
@@ -492,6 +502,8 @@ type
   TOgfBonesContainer = class
     _loaded:boolean;
     _bones:array of TOgfBone;
+
+    function _RegisterBone(b:TOgfBone):TBoneId;
   public
     // Common
     constructor Create;
@@ -529,7 +541,7 @@ type
 
   TOgfSkeletonData = packed record
     bones:TOgfBonesContainer;
-    ik:TOgfJointsDataContainer;
+    joints:TOgfJointsDataContainer;
   end;
 
   TOgfBoneData = record
@@ -613,6 +625,7 @@ type
     function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
     function MoveBoneInBindPose(idx:TBoneID; v:FVector3; is_absolute:boolean; correct_animations:boolean):boolean;
 
+    function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
     function ReparentBone(idx:TBoneID; new_parent_idx:TBoneID; preserve_global_pos:boolean):boolean;
 
@@ -3541,7 +3554,7 @@ end;
 procedure TOgfSkeleton.Reset;
 begin
   _loaded:=false;
-  _data.ik:=nil;
+  _data.joints:=nil;
   _data.bones:=nil;
   _animations:=nil;
 end;
@@ -3563,7 +3576,7 @@ begin
   result:=false;
   if desc.Count()<>ik.Count() then exit;
   Reset();
-  _data.ik:=ik;
+  _data.joints:=ik;
   _data.bones:=desc;
 
   _SetBindPoseForWork();
@@ -3594,7 +3607,7 @@ begin
   if not Loaded() then exit;
 
   result.bone:=_data.bones.Bone(id);
-  result.joint:=_data.ik.Get(id);
+  result.joint:=_data.joints.Get(id);
 end;
 
 function TOgfSkeleton._GetBoneByName(name: string; var output: TOgfBoneData): boolean;
@@ -3605,7 +3618,7 @@ begin
   idx:=GetBoneIdxByName(name);
   if idx >= 0 then begin
     output.bone:=_data.bones.Bone(idx);
-    output.joint:=_data.ik.Get(idx);
+    output.joint:=_data.joints.Get(idx);
     result:=true;
   end;
 end;
@@ -4090,6 +4103,65 @@ begin
   end;
 end;
 
+function TOgfSkeleton.AddBone(name: string; parent_id: TBoneId; pos: FVector3; dir: FVector3; is_in_global_space: boolean; force_bind_pose:boolean): TBoneId;
+var
+  parent_bone:TOgfBoneData;
+  joint:TOgfJointData;
+  bone:TOgfBone;
+  m:FMatrix4x4;
+  parent_name:string;
+  i,j:integer;
+  newidx:integer;
+  key:TMotionKey;
+begin
+  result:=INVALID_BONE_ID;
+  if GetBoneIdxByName(name) <> INVALID_BONE_ID then exit;
+
+  parent_name:='';
+  if parent_id <> INVALID_BONE_ID then begin
+    parent_bone:=_GetBone(parent_id);
+    if parent_bone.bone = nil then exit;
+    parent_name:=parent_bone.bone.GetName();
+  end;
+
+  if force_bind_pose then begin
+    _SetBindPoseForWork();
+  end;
+
+  if (is_in_global_space) and (parent_bone.bone<>nil) then begin
+    m_setXYZ(m, dir);
+    m_translate_over(m, pos);
+    if not _ConvertTransformFromGlobalIntoWrkBoneSpace(parent_id, m, m) then exit;
+
+    m_getXYZi(m, dir);
+    m_get_translation(m, pos);
+  end;
+
+  joint:=TOgfJointData.Create();
+  joint._InitDefault(pos, dir);
+
+  bone:=TOgfBone.Create();
+  bone._InitDefault(name, parent_name);
+
+  i:=_data.bones._RegisterBone(bone);
+  j:=_data.joints._RegisterJoint(joint);
+
+  if (i=j) and (i<>INVALID_BONE_ID) then begin
+    newidx:=i;
+  end else begin
+    exit;
+  end;
+
+  if (_animations<>nil) and (_animations.Loaded()) then begin
+    m_setXYZ(m, dir);
+    m_translate_over(m, pos);
+    key:=TransformToMotionKey(m);
+    if not _animations.AddBone(name, key) then exit;
+  end;
+
+  result:=newidx;
+end;
+
 
 function TOgfSkeleton.GetBoneMassParams(idx: TBoneID; var center: FVector3; var mass: single): boolean;
 begin
@@ -4171,7 +4243,7 @@ function TOgfSkeleton.UniformScale(k: single): boolean;
 begin
   result:=false;
   if not Loaded() then exit;
-  result:= _data.bones.UniformScale(k) and _data.ik.UniformScale(k);
+  result:= _data.bones.UniformScale(k) and _data.joints.UniformScale(k);
 end;
 
 
@@ -4255,6 +4327,18 @@ begin
 end;
 
 { TOgfJointsDataContainer }
+
+function TOgfJointsDataContainer._RegisterJoint(joint: TOgfJointData): TBoneId;
+var
+  i:integer;
+begin
+  _loaded:=true;
+  i:=length(_data);
+  setlength(_data, i+1);
+  _data[i]:=joint;
+
+  result:=i;
+end;
 
 constructor TOgfJointsDataContainer.Create;
 begin
@@ -4366,25 +4450,25 @@ procedure TOgfJointIKData.Reset;
 var
   i:integer;
 begin
-  _type:=OGF_JOINT_TYPE_INVALID;
-  _ik_flags:=0;
+  _data.jointtype:=OGF_JOINT_TYPE_INVALID;
+  _data.ik_flags:=0;
 
-  _spring_factor:=0;
-  _damping_factor:=0;
-  _break_force:=0;
-  _break_torque:=0;
-  _friction:=0;
+  _data.spring_factor:=0;
+  _data.damping_factor:=0;
+  _data.break_force:=0;
+  _data.break_torque:=0;
+  _data.friction:=0;
 
-  for i:=0 to length(_limits)-1 do begin
-    _limits[i].damping_factor:=0;
-    _limits[i].spring_factor:=0;
-    set_zero(_limits[i].limit);
+  for i:=0 to length(_data.limits)-1 do begin
+    _data.limits[i].damping_factor:=0;
+    _data.limits[i].spring_factor:=0;
+    set_zero(_data.limits[i].limit);
   end;
 end;
 
 function TOgfJointIKData.Loaded(): boolean;
 begin
-  result:=(_type<>OGF_JOINT_TYPE_INVALID);
+  result:=(_data.jointtype<>OGF_JOINT_TYPE_INVALID);
 end;
 
 function TOgfJointIKData.Deserialize(rawdata: string; version: cardinal): integer;
@@ -4396,41 +4480,41 @@ begin
   result:=-1;
   Reset();
 
-  sz:=sizeof(_type) +sizeof(_limits)+sizeof(_spring_factor)+sizeof(_damping_factor)+sizeof(_ik_flags)+sizeof(_break_force)+sizeof(_break_torque);
+  sz:=sizeof(_data.jointtype) +sizeof(_data.limits)+sizeof(_data.spring_factor)+sizeof(_data.damping_factor)+sizeof(_data.ik_flags)+sizeof(_data.break_force)+sizeof(_data.break_torque);
   if version > OGF_JOINT_IK_VERSION_0 then begin
-    sz:=sz+sizeof(_friction);
+    sz:=sz+sizeof(_data.friction);
   end;
   if length(rawdata)<sz then exit;
 
   ptr:=PAnsiChar(@rawdata[1]);
   i:=0;
 
-  _type:=pcardinal(@ptr[i])^;
-  i:=i+sizeof(_type);
+  _data.jointtype:=pcardinal(@ptr[i])^;
+  i:=i+sizeof(_data.jointtype);
 
-  for j:=0 to length(_limits)-1 do begin
-    _limits[j]:=pTOgfJointLimit(@ptr[i])^;
-    i:=i+sizeof(_limits[j]);
+  for j:=0 to length(_data.limits)-1 do begin
+    _data.limits[j]:=pTOgfJointLimit(@ptr[i])^;
+    i:=i+sizeof(_data.limits[j]);
   end;
 
-  _spring_factor:=psingle(@ptr[i])^;
-  i:=i+sizeof(_spring_factor);
+  _data.spring_factor:=psingle(@ptr[i])^;
+  i:=i+sizeof(_data.spring_factor);
 
-  _damping_factor:=psingle(@ptr[i])^;
-  i:=i+sizeof(_damping_factor);
+  _data.damping_factor:=psingle(@ptr[i])^;
+  i:=i+sizeof(_data.damping_factor);
 
-  _ik_flags:=pcardinal(@ptr[i])^;
-  i:=i+sizeof(_ik_flags);
+  _data.ik_flags:=pcardinal(@ptr[i])^;
+  i:=i+sizeof(_data.ik_flags);
 
-  _break_force:=psingle(@ptr[i])^;
-  i:=i+sizeof(_break_force);
+  _data.break_force:=psingle(@ptr[i])^;
+  i:=i+sizeof(_data.break_force);
 
-  _break_torque:=psingle(@ptr[i])^;
-  i:=i+sizeof(_break_torque);
+  _data.break_torque:=psingle(@ptr[i])^;
+  i:=i+sizeof(_data.break_torque);
 
   if version > OGF_JOINT_IK_VERSION_0 then begin
-    _friction:=psingle(@ptr[i])^;
-    i:=i+sizeof(_friction);
+    _data.friction:=psingle(@ptr[i])^;
+    i:=i+sizeof(_data.friction);
   end;
 
   assert(sz = i);
@@ -4444,19 +4528,48 @@ begin
   result:='';
   if not Loaded() then exit;
 
-  result:=result+SerializeCardinal(_type);
-  for i:=0 to length(_limits)-1 do begin
-    result:=result+SerializeVector2(_limits[i].limit);
-    result:=result+SerializeFloat(_limits[i].spring_factor);
-    result:=result+SerializeFloat(_limits[i].damping_factor);
+  result:=result+SerializeCardinal(_data.jointtype);
+  for i:=0 to length(_data.limits)-1 do begin
+    result:=result+SerializeVector2(_data.limits[i].limit);
+    result:=result+SerializeFloat(_data.limits[i].spring_factor);
+    result:=result+SerializeFloat(_data.limits[i].damping_factor);
   end;
 
-  result:=result+SerializeFloat(_spring_factor);
-  result:=result+SerializeFloat(_damping_factor);
-  result:=result+SerializeCardinal(_ik_flags);
-  result:=result+SerializeFloat(_break_force);
-  result:=result+SerializeFloat(_break_torque);
-  result:=result+SerializeFloat(_friction);
+  result:=result+SerializeFloat(_data.spring_factor);
+  result:=result+SerializeFloat(_data.damping_factor);
+  result:=result+SerializeCardinal(_data.ik_flags);
+  result:=result+SerializeFloat(_data.break_force);
+  result:=result+SerializeFloat(_data.break_torque);
+  result:=result+SerializeFloat(_data.friction);
+end;
+
+function TOgfJointIKData.GetData(): TOgfJointIKDataRawData;
+begin
+  result:=_data;
+end;
+
+procedure TOgfJointIKData.SetData(d: TOgfJointIKDataRawData);
+begin
+  _data:=d;
+end;
+
+class function TOgfJointIKData.GetDefault(): TOgfJointIKDataRawData;
+var
+  i:integer;
+begin
+  result.jointtype:=OGF_JOINT_TYPE_RIGID;
+  result.spring_factor:=1;
+  result.damping_factor:=1;
+  result.ik_flags:=0;
+  result.break_force:=0;
+  result.break_torque:=0;
+
+  for i:=0 to length(result.limits)-1 do begin
+    result.limits[i].limit.x:=0;
+    result.limits[i].limit.y:=0;
+    result.limits[i].damping_factor:=1;
+    result.limits[i].spring_factor:=1;
+  end;
 end;
 
 { TOgfJointData }
@@ -4509,6 +4622,19 @@ begin
   set_zero(_rest_offset);
   _mass:=0;
   set_zero(_center_of_mass);
+end;
+
+procedure TOgfJointData._InitDefault(offset: FVector3; rotate: FVector3);
+begin
+  Reset();
+
+  _material:='default_object';
+  _shape.shape_type:=OGF_SHAPE_TYPE_NONE;
+  _rest_offset:=offset;
+  _rest_rotate:=rotate;
+  _ikdata.SetData(TOgfJointIKData.GetDefault());
+  _mass:=10;
+  _loaded:=true;
 end;
 
 function TOgfJointData.Loaded(): boolean;
@@ -4711,6 +4837,13 @@ begin
   _parent_name:=name;
 end;
 
+procedure TOgfBone._InitDefault(name: string; parent_name: string);
+begin
+  Reset();
+  _SetName(name);
+  _SetParentName(parent_name);
+end;
+
 procedure TOgfBone.MoveObb(var delta: FVector3);
 begin
   _obb.m_translate:=v_add(_obb.m_translate, delta);
@@ -4801,6 +4934,17 @@ begin
 end;
 
 { TOgfBonesContainer }
+
+function TOgfBonesContainer._RegisterBone(b: TOgfBone): TBoneId;
+var
+  i:integer;
+begin
+  _loaded:=true;
+  i:=length(_bones);
+  setlength(_bones, i+1);
+  _bones[i]:=b;
+  result:=i;
+end;
 
 constructor TOgfBonesContainer.Create;
 begin

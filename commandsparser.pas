@@ -120,6 +120,7 @@ TModelSlot = class
 
   function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSkeletonHierarchy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSkeletonAddBone(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneReparent(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneRename(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -854,6 +855,65 @@ begin
 
   _data.Skeleton().IterateBones(@SkeletonHierarchyCallback, @cbdata);
   result_description.SetDescription(cbdata.resstr);
+end;
+
+function TModelSlot._CmdSkeletonAddBone(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  argsparser:TCommandsArgumentsParser;
+  new_bone_name:string;
+  parent_bone_s:string;
+  parent_bone_id:TBoneID;
+  pos, dir:FVector3;
+  is_global:boolean;
+  newidx:TBoneID;
+begin
+  result:=false;
+
+  parent_bone_id:=INVALID_BONE_ID;
+    argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'new bone name');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, true, 'parent bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'X coordinate of the new bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'Y coordinate of the new bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'Z coordinate of the new bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'heading of the new bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'pitch of the new bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'bank of the new bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'global coordinates space flag');
+        if argsparser.Parse(args) and
+       argsparser.GetAsString(0, new_bone_name) and
+       argsparser.GetAsString(1, parent_bone_s, '') and
+       argsparser.GetAsSingle(2, pos.x, 0) and
+       argsparser.GetAsSingle(3, pos.y, 0) and
+       argsparser.GetAsSingle(4, pos.z, 0) and
+       argsparser.GetAsSingle(5, dir.x, 0) and
+       argsparser.GetAsSingle(6, dir.y, 0) and
+       argsparser.GetAsSingle(7, dir.z, 0) and
+       argsparser.GetAsBool(8, is_global, true)
+    then begin
+      if _data.Skeleton().GetBoneIdxByName(new_bone_name) <> INVALID_BONE_ID then begin
+        result_description.SetDescription('Bone "'+new_bone_name+'" is already exists in the skeleton, please use unique name');
+      end else if (length(parent_bone_s) > 0) and not ExtractBoneIdFromString(parent_bone_s, parent_bone_id) then begin
+        result_description.SetDescription('Can''t find the specidied parent bone');
+      end else begin
+        newidx:=_data.Skeleton().AddBone(new_bone_name, parent_bone_id, pos, dir, is_global, true);
+          result:=(newidx <> INVALID_BONE_ID);
+        if result then begin
+          result_description.SetDescription('Bone "'+new_bone_name+'" successfully created with bone id =  '+inttostr(newidx));
+        end else begin
+          result_description.SetDescription('Error while creating bone "'+new_bone_name+'"');
+        end;
+      end;
+      end else begin
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
+    end;
+    finally
+    FreeAndNil(argsparser);
+  end;
 end;
 
 function TModelSlot._CmdBoneReparent(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -2084,6 +2144,7 @@ begin
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('hierarchy', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonHierarchy, 'display bones hierarchy'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('addbone', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonAddBone, 'add a new bone, arguments - new bone name, parent bone, optional X, Y, Z, H, P, B, is in global space flag'), CommandItemTypeCall);
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('rename', @_IsModelHasSkeletonPrecondition, @_CmdBoneRename, 'rename bone, expects 1 argument - new bone name'), CommandItemTypeCall);

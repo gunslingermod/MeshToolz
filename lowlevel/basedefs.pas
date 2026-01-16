@@ -155,7 +155,7 @@ end;
 
 procedure set_zero(var o: FObb);
 begin
-  set_zero(o.m_rotate);
+  m_identity(o.m_rotate);
   set_zero(o.m_translate);
   set_zero(o.m_halfsize);
 end;
