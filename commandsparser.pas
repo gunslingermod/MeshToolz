@@ -1856,7 +1856,7 @@ begin
 
       for i:=0 to links.TotalLinkedBonesCount()-1 do begin
         if i = target_idx then continue;
-        bone:=links.GetBoneParams(target_idx);
+        bone:=links.GetBoneParams(i);
         if bone.bone_id = target_boneid then begin
           bone.weight:=0;
           links.SetBoneParams(target_idx, bone, false);
