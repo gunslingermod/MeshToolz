@@ -632,6 +632,9 @@ type
     function RenameBone(old_name:string; new_name:string):boolean;
     function ReparentBone(idx:TBoneID; new_parent_idx:TBoneID; preserve_global_pos:boolean):boolean;
 
+    function CopyBoneParameters(idx:TBoneID):string;
+    function ApplyBoneParameters(idx:TBoneID; s:string): boolean;
+
 
 
     function UniformScale(k:single):boolean;
@@ -4031,6 +4034,54 @@ begin
 
     result:=true;
   end;
+end;
+
+function TOgfSkeleton.CopyBoneParameters(idx: TBoneID): string;
+var
+  bone:TOgfBoneData;
+  s1, s2:string;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  bone:=_GetBone(idx);
+  if (bone.bone = nil) or (bone.joint=nil) then exit;
+
+  s1:=bone.bone.Serialize();
+  if length(s1)=0 then exit;
+
+  s2:=bone.joint.Serialize();
+  if length(s2)=0 then exit;
+
+  result:=s1+s2;
+end;
+
+function TOgfSkeleton.ApplyBoneParameters(idx: TBoneID; s: string): boolean;
+var
+  name, parent:string;
+  bone:TOgfBoneData;
+  i:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  bone:=_GetBone(idx);
+  if (bone.bone = nil) or (bone.joint=nil) then exit;
+
+  name:=bone.bone.GetName();
+  parent:=bone.bone.GetParentName();
+
+  i:=bone.bone.Deserialize(s);
+  bone.bone._SetName(name);
+  bone.bone._SetParentName(parent);
+
+  if i <= 0 then exit;
+  if not AdvanceString(s, i) then exit;
+
+  i:=bone.joint.Deserialize(s);
+  if i <= 0 then exit;
+
+  result:=true;
 end;
 
 

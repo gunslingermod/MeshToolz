@@ -89,6 +89,7 @@ TModelSlot = class
   function _CmdLoadFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdLoadAnimsFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSaveAnimsToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdUnload(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdClipboardMode(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -127,6 +128,8 @@ TModelSlot = class
   function _CmdBoneRename(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneSetBindTransform(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneBindPoseMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneCopySettings(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneApplySettings(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -164,7 +167,8 @@ uses sysutils, strutils, ChunkedFileParser;
 
 const
   BUFFER_TYPE_CHILDMESH:integer=100;
-  BUFFER_TYPE_BONEIKDATA:integer=101;
+  BUFFER_TYPE_BONEDATA:integer=101;
+  BUFFER_TYPE_SKELETONPOSE:integer=101;
 
 { TSlotFilteringCommands }
 
@@ -654,6 +658,26 @@ begin
   end;
 end;
 
+function TModelSlot._CmdSaveAnimsToFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  path:string;
+begin
+  result:=false;
+
+  path:=args;
+  if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
+    path:=rightstr(path, length(path)-1);
+  end;
+  if (length(path)>0) and ((path[length(path)] = '"') or (path[length(path)] = '''')) then begin
+    path:=leftstr(path, length(path)-1);
+  end;
+
+  result:=_data.Animations().SaveToFile(path);
+  if not result then begin
+    result_description.SetDescription('Can''t save motions to "'+path+'"');
+  end;
+end;
+
 function TModelSlot._CmdUnload(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=false;
@@ -1092,6 +1116,46 @@ begin
   end;
 end;
 
+function TModelSlot._CmdBoneCopySettings(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  s:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    s:=_data.Skeleton().CopyBoneParameters(idx);
+    if length(s)=0 then begin
+      result_description.SetDescription('can''t serialize bone data');
+    end else begin
+      _container.GetTempBuffer().SetData(s, BUFFER_TYPE_BONEDATA);
+      result:=true;
+    end;
+  end;
+
+end;
+
+function TModelSlot._CmdBoneApplySettings(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  s:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    if not _container.GetTempBuffer().GetData(s, BUFFER_TYPE_BONEDATA) then begin
+      result_description.SetDescription('can''t get data from the temp buffer');
+    end else if not _data.Skeleton().ApplyBoneParameters(idx, s) then begin
+      result_description.SetDescription('can''t apply data from the temp buffer');
+    end else begin
+      result:=true;
+    end;
+  end;
+
+end;
+
 function TModelSlot._CmdAnimInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
@@ -1237,7 +1301,7 @@ begin
           if length(s)=0 then begin
             result_description.SetDescription('can''t serialize pose');
           end else begin
-            _container.GetTempBuffer().SetData(s, BUFFER_TYPE_STRING);
+            _container.GetTempBuffer().SetData(s, BUFFER_TYPE_SKELETONPOSE);
             result:=true;
           end;
         end;
@@ -1271,7 +1335,7 @@ begin
     defs:=_data.Animations().GetAnimationParams(idx);
     if length(defs.name)=0 then exit;
 
-    if not _container.GetTempBuffer().GetData(s, BUFFER_TYPE_STRING) then begin
+    if not _container.GetTempBuffer().GetData(s, BUFFER_TYPE_SKELETONPOSE) then begin
       result_description.SetDescription('can''t get serialized pose from the temp buffer');
       exit;
     end;
@@ -2070,7 +2134,11 @@ begin
         cbdata.boneid:=boneid;
         cbdata.flagged_vertices_count:=0;
         cbdata.inverse_flag:=inverse;
-        if not _data.Meshes().Get(idx).RemoveVertices(@ChildRemoveVerticesForBoneIdCallback, @cbdata) then begin
+        if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
+          result_description.SetDescription('child #'+inttostr(idx)+' ('+texture+' : '+shader+') is collapsed - skipping');
+          result_description.SetWarningFlag(true);
+          result:=true;
+        end else if not _data.Meshes().Get(idx).RemoveVertices(@ChildRemoveVerticesForBoneIdCallback, @cbdata) then begin
           result_description.SetDescription('error filtering vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
         end else if cbdata.flagged_vertices_count = 0 then begin
           result_description.SetDescription('no vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') were removed');
@@ -2320,7 +2388,8 @@ begin
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsModelHasSkeletonPrecondition, _commands_bones, 'access array of bones'));
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
-  _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from file'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from the specified file'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('saveomf', @_IsModelHasSkeletonPrecondition, @_CmdSaveAnimsToFile, 'save animations to the specified file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('hierarchy', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonHierarchy, 'display bones hierarchy'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('addbone', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonAddBone, 'add a new bone, arguments - new bone name, parent bone, optional X, Y, Z, H, P, B, is in global space flag'), CommandItemTypeCall);
 
@@ -2329,6 +2398,8 @@ begin
   _commands_bones.DoRegister(TCommandSetup.Create('reparent', @_IsModelHasSkeletonPrecondition, @_CmdBoneReparent, 'change bone parent; arg 1 - new parent, arg 2 (optional) - preserve bone global position (1, default) or not (0)'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('setbindtransform', @_IsModelHasSkeletonPrecondition, @_CmdBoneSetBindTransform, 'directly change bone transform of bind pose (dangerous function, can break anims); args #1, #2, #3 - new offset X,Y,Z; args #4, #5, #6 - new rotation X,Y,Z'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdBoneBindPoseMove, 'move bone changing its bind position; args 1,2,3 - x,y,z components of move, arg 4 (optional) - absolute (1) or relative (0, default) movement, arg 5 (optional) - fixed children (1) or not (0, default)'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('copysettings', @_IsModelHasSkeletonPrecondition, @_CmdBoneCopySettings, 'copy bone settings into temp buffer, no arguments'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('applysettings', @_IsModelHasSkeletonPrecondition, @_CmdBoneApplySettings, 'apply previously copied bone settings, no arguments'), CommandItemTypeCall);
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('animation', @_IsAnimationsLoadedPrecondition, _commands_animations, 'access group of properties and procedures associated with loaded animations'));
   _commands_animations.DoRegister(TCommandSetup.Create('info', @_IsAnimationsLoadedPrecondition, @_CmdAnimInfo, 'display animations info'), CommandItemTypeCall);
