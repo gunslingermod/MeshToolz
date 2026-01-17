@@ -96,6 +96,8 @@ TModelSlot = class
 
   function _CmdPasteMeshFromTempBuf(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdRemoveCollapsedMeshes(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAddMotionRef(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdResetMotionRefs(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 
   function _CmdChildInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -661,8 +663,10 @@ end;
 function TModelSlot._CmdSaveAnimsToFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   path:string;
+  r:string;
 begin
   result:=false;
+  r:='';
 
   path:=args;
   if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
@@ -672,10 +676,21 @@ begin
     path:=leftstr(path, length(path)-1);
   end;
 
-  result:=_data.Animations().SaveToFile(path);
-  if not result then begin
-    result_description.SetDescription('Can''t save motions to "'+path+'"');
+  if _data.IsAnimationsEmbedded() then begin
+    if not _data.SplitEmbeddedMotionsIntoSeparateSource() then begin
+      r:=r+'Splitting motions into the separate source failed'+chr($0d)+chr($0a);
+    end else begin
+      r:=r+'Motions successfully splitted, don''t forget to set up motion refs!'+chr($0d)+chr($0a);
+      result:=_data.Animations().SaveToFile(path);
+    end;
+  end else begin
+    result:=_data.Animations().SaveToFile(path);
   end;
+
+  if not result then begin
+    r:=r+'Can''t save motions to "'+path+'"';
+  end;
+  result_description.SetDescription(r);
 end;
 
 function TModelSlot._CmdUnload(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -1434,6 +1449,35 @@ var
       result_description.SetDescription('motion marks successfully reset for '+animdata.name);
       result:=true;
     end;
+  end;
+end;
+
+function TModelSlot._CmdAddMotionRef(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=false;
+  if _data.IsAnimationsEmbedded() then begin
+    result_description.SetDescription('OGF has embeded animations, please split them before operating with motion refs');
+  end else begin
+   args:=trim(args);
+    if _data.AddMotionRef(args) >= 0 then begin
+      result_description.SetDescription('Motion ref entry "'+args+'" successfully added');
+      result:=true;
+    end else begin
+      result_description.SetDescription('Failed to add motion ref entry "'+args+'"');
+    end;
+
+  end;
+end;
+
+function TModelSlot._CmdResetMotionRefs(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=false;
+  if _data.IsAnimationsEmbedded() then begin
+    result_description.SetDescription('OGF has embeded animations, please split them before operating with motion refs');
+   end else begin
+    _data.ResetMotionRefs();
+    result_description.SetDescription('Motion refs reset');
+    result:=true;
   end;
 end;
 
@@ -2363,6 +2407,7 @@ begin
   _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf, 'paste child previously copied into temp buffer'), CommandItemTypeCall);
   _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes, 'remove all children without real mesh (without vertices)'), CommandItemTypeCall);
 
+
   _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo, 'show info'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('settexture', @_IsModelLoadedPrecondition, @_CmdChildSetTexture, 'change assigned shader, expects string argument'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('setshader', @_IsModelLoadedPrecondition, @_CmdChildSetShader, 'change assigned shader, expects string argument'), CommandItemTypeCall);
@@ -2392,6 +2437,8 @@ begin
   _commands_skeleton.DoRegister(TCommandSetup.Create('saveomf', @_IsModelHasSkeletonPrecondition, @_CmdSaveAnimsToFile, 'save animations to the specified file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('hierarchy', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonHierarchy, 'display bones hierarchy'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('addbone', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonAddBone, 'add a new bone, arguments - new bone name, parent bone, optional X, Y, Z, H, P, B, is in global space flag'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('addmotionref', @_IsModelLoadedPrecondition, @_CmdAddMotionRef, 'add motion ref to the file from argument, requires animations to be stored in the separate OMF'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('resetmotionrefs', @_IsModelLoadedPrecondition, @_CmdResetMotionRefs, 'reset all motion refs, requires animations to be stored in the separate OMF'), CommandItemTypeCall);
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('rename', @_IsModelHasSkeletonPrecondition, @_CmdBoneRename, 'rename bone, expects 1 argument - new bone name'), CommandItemTypeCall);

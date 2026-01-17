@@ -672,6 +672,25 @@ type
     function Serialize():string;
   end;
 
+  { TOgfMotionRefs }
+
+  TOgfMotionRefs = class
+    _loaded:boolean;
+    _refs:array of string;
+    _chunk_id:word;
+  public
+    // Common
+    constructor Create;
+    destructor Destroy; override;
+    procedure Reset;
+    function Loaded():boolean;
+    function Deserialize(rawdata:string; chunk_id:word):boolean;
+    function Serialize():string;
+    function GetChunkId():word;
+    function AddRef(filename:string):integer;
+    function RefsCount():integer;
+  end;
+
   { TOgfMotionBoneTrack }
 
   TOgfMotionBoneTrack = class
@@ -971,6 +990,7 @@ type
     function _GetMotionTrackByName(name:string):TOgfMotionTrack;
     function _SwapIdxInTracksForBones(idx1:integer; idx2:integer):boolean;
     function _GenerateAnimationName(target_name:string):string;
+    function _SplitCommonSource():boolean;
   public
     // Common
     constructor Create;
@@ -1007,6 +1027,8 @@ type
 
  TOgfParser = class(TOgfBaseFileParser)
  private
+   _header:TOgfHeader;
+
    _children:TOgfChildrenContainer;
    _bone_names:TOgfBonesContainer;
    _joints:TOgfJointsDataContainer;
@@ -1014,7 +1036,10 @@ type
    _lodref:TOgfLodRefsContainer;
    _skeleton:TOgfSkeleton;
    _animations:TOgfAnimationsParser;
+   _motionrefs:TOgfMotionRefs;
 
+   function _DeserializeHeader(rawdata:string):boolean;
+   function _SerializeHeader():string;
  public
    // Common
    constructor Create;
@@ -1027,6 +1052,11 @@ type
    function Meshes():TOgfChildrenContainer;
    function Skeleton():TOgfSkeleton;
    function Animations():TOgfAnimationsParser;
+
+   function IsAnimationsEmbedded():boolean;
+   function SplitEmbeddedMotionsIntoSeparateSource():boolean;
+   function AddMotionRef(filename:string):integer;
+   procedure ResetMotionRefs();
 end;
 
 function QrToQuat(pqr:pTOgfMotionKeyQR):Fquaternion;
@@ -1058,7 +1088,9 @@ const
   CHUNK_OGF_S_SMPARAMS:word=15;
   CHUNK_OGF_S_IKDATA:word=16;
   CHUNK_OGF_S_USERDATA:word=17;
+  CHUNK_OGF_S_MOTION_REFS:word=19;
   CHUNK_OGF_S_LODS:word=23;
+  CHUNK_OGF_S_MOTION_REFS2:word=24;
 
   OGF_JOINT_TYPE_RIGID:cardinal = 0;
   OGF_JOINT_TYPE_CLOTH:cardinal = 1;
@@ -1083,6 +1115,9 @@ const
 
   MT_SKELETON_GEOMDEF_PM = 4;
   MT_SKELETON_GEOMDEF_ST = 5;
+
+  MT_SKELETON_ANIM = 3;
+  MT_SKELETON_RIGID = 10;
 
 implementation
 uses sysutils, FastCrc, math;
@@ -1136,6 +1171,136 @@ begin
   end else if s.shape_type = OGF_SHAPE_TYPE_NONE then begin;
     result:=true;
   end;
+end;
+
+{ TOgfMotionRefs }
+
+constructor TOgfMotionRefs.Create;
+begin
+  Reset();
+end;
+
+destructor TOgfMotionRefs.Destroy;
+begin
+  inherited Destroy;
+end;
+
+procedure TOgfMotionRefs.Reset;
+begin
+  _loaded:=false;
+  setlength(_refs, 0);
+end;
+
+function TOgfMotionRefs.Loaded(): boolean;
+begin
+  result:=_loaded;
+end;
+
+function TOgfMotionRefs.Deserialize(rawdata: string; chunk_id: word): boolean;
+var
+  s:string;
+  i,j:integer;
+  cnt:cardinal;
+  item:string;
+begin
+  Reset();
+  result:=false;
+  _chunk_id:=chunk_id;
+
+  if chunk_id = CHUNK_OGF_S_MOTION_REFS then begin
+    if not DeserializeZStringAndSplit(rawdata, s) then exit;
+    item:='';
+    for i:=1 to length(s) do begin
+      if (i=length(s)) or (s[i]=',') then begin
+        if (i=length(s)) then begin
+          item:=item+s[i];
+        end;
+
+        item:=trim(item);
+        if length(item)=0 then continue;
+
+        j:=length(_refs);
+        setlength(_refs, j+1);
+        _refs[j]:=item;
+
+        item:='';
+      end else begin
+        item:=item+s[i];
+      end;
+    end;
+
+
+    _loaded:=true;
+  end else if chunk_id = CHUNK_OGF_S_MOTION_REFS2 then begin
+    if length(rawdata) < sizeof(cardinal) then exit;
+    cnt:= pcardinal(@PAnsiChar(rawdata)[0])^;
+    AdvanceString(rawdata, sizeof(cardinal));
+
+    for i:=0 to cnt-1 do begin
+      if not DeserializeZStringAndSplit(rawdata, item) then exit;
+      j:=length(_refs);
+      setlength(_refs, j+1);
+      _refs[j]:=item;
+    end;
+
+    _loaded:=true;
+  end;
+
+  result:=_loaded;
+end;
+
+function TOgfMotionRefs.Serialize(): string;
+var
+  i:integer;
+begin
+  result:='';
+  if not Loaded() then exit;
+
+  if _chunk_id = CHUNK_OGF_S_MOTION_REFS then begin
+    for i:=0 to length(_refs)-1 do begin
+      result:=result+_refs[i];
+      if i<length(_refs)-1 then begin
+        result:=result+',';
+      end else begin
+        result:=result+chr(0);
+      end;
+    end;
+  end else if _chunk_id = CHUNK_OGF_S_MOTION_REFS2 then begin
+    result:=result+SerializeCardinal(length(_refs));
+    for i:=0 to length(_refs)-1 do begin
+      result:=result+_refs[i]+chr(0);
+    end;
+  end;
+end;
+
+function TOgfMotionRefs.GetChunkId(): word;
+begin
+  result:=INVALID_CHUNK;
+  if not Loaded() then exit;
+
+  result:=_chunk_id;
+end;
+
+function TOgfMotionRefs.AddRef(filename: string): integer;
+var
+  i:integer;
+begin
+  i:=length(_refs);
+  setlength(_refs, i+1);
+  _refs[i]:=filename;
+
+  if not Loaded() then begin
+    _chunk_id:=CHUNK_OGF_S_MOTION_REFS2;
+    _loaded:=true;
+  end;
+end;
+
+function TOgfMotionRefs.RefsCount(): integer;
+begin
+  result:=0;
+  if not Loaded() then exit;
+
+  result:=length(_refs);
 end;
 
 { TOgfSkeletonPose }
@@ -7252,6 +7417,34 @@ begin
 
 end;
 
+function TOgfAnimationsParser._SplitCommonSource(): boolean;
+var
+  chunk:TChunkedOffset;
+  rawdata, data:string;
+begin
+  result:=false;
+  if _owns_source then exit;
+
+  rawdata:='';
+  chunk:=_source.FindSubChunk(CHUNK_OGF_S_SMPARAMS);
+  if (chunk = INVALID_CHUNK) or not _source.EnterSubChunk(chunk) then exit;
+  data:=_source.GetCurrentChunkRawDataAsString();
+  rawdata:=rawdata+SerializeChunkHeader(CHUNK_OGF_S_SMPARAMS, length(data))+data;
+  if not _source.RemoveCurrentChunk() then exit;
+
+  chunk:=_source.FindSubChunk(CHUNK_OGF_S_MOTIONS);
+  if (chunk = INVALID_CHUNK) or not _source.EnterSubChunk(chunk) then exit;
+  data:=_source.GetCurrentChunkRawDataAsString();
+  rawdata:=rawdata+SerializeChunkHeader(CHUNK_OGF_S_MOTIONS, length(data))+data;
+  if not _source.RemoveCurrentChunk() then exit;
+
+  _source:=TChunkedMemory.Create();
+  _owns_source:=true;
+  if not _source.LoadFromString(rawdata) then exit;
+
+  result:=true;
+end;
+
 constructor TOgfAnimationsParser.Create;
 begin
   inherited;
@@ -7776,6 +7969,26 @@ end;
 
 { TOgfParser }
 
+function TOgfParser._DeserializeHeader(rawdata: string): boolean;
+begin
+  result:=false;
+  if length(rawdata)<>sizeof(TOgfHeader) then exit;
+  _header:=pTOgfHeader(@PAnsiChar(rawdata)[0])^;
+  result:=true;
+end;
+
+function TOgfParser._SerializeHeader(): string;
+var
+  tmpchr:PAnsiChar;
+  i:integer;
+begin
+  result:='';
+  tmpchr:=PAnsiChar(@_header);
+  for i:=0 to sizeof(_header)-1 do begin
+    result:=result+tmpchr[i];
+  end;
+end;
+
 constructor TOgfParser.Create;
 begin
   inherited;
@@ -7785,6 +7998,7 @@ begin
   _joints:=TOgfJointsDataContainer.Create();
   _userdata:=TOgfUserdataContainer.Create();
   _lodref:=TOgfLodRefsContainer.Create();
+  _motionrefs:=TOgfMotionRefs.Create();
 
   _skeleton:=TOgfSkeleton.Create();
   _animations:=TOgfAnimationsParser.Create();
@@ -7799,6 +8013,7 @@ begin
   _joints.Free();
   _userdata.Free();
   _lodref.Free();
+  _motionrefs.Free();
 
   inherited Destroy;
 end;
@@ -7814,6 +8029,7 @@ begin
   _joints.Reset();
   _userdata.Reset();
   _lodref.Reset();
+  _motionrefs.Reset();
 
   inherited Reset;
 end;
@@ -7830,6 +8046,14 @@ begin
   mem:=TChunkedMemory.Create();
   mem.LoadFromString(rawdata);
   try
+      chunk:=mem.FindSubChunk(CHUNK_OGF_HEADER);
+      if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
+      r:=_DeserializeHeader(mem.GetCurrentChunkRawDataAsString());
+      mem.LeaveSubChunk();
+      if not r then exit;
+
+      if (_header.ogf_type<>MT_SKELETON_ANIM) and (_header.ogf_type<>MT_SKELETON_RIGID) then exit;
+
       chunk:=mem.FindSubChunk(CHUNK_OGF_CHILDREN);
       if (chunk = INVALID_CHUNK) or not mem.EnterSubChunk(chunk) then exit;
       r:=_children.Deserialize(mem.GetCurrentChunkRawDataAsString());
@@ -7864,7 +8088,24 @@ begin
 
       if not _skeleton._Build(_bone_names, _joints) then exit;
 
-      if _animations.LoadFromChunkedMem(mem) then begin
+      chunk:=mem.FindSubChunk(CHUNK_OGF_S_MOTION_REFS);
+      if (chunk <> INVALID_CHUNK) and mem.EnterSubChunk(chunk) then begin
+        _motionrefs.Deserialize(mem.GetCurrentChunkRawDataAsString(), CHUNK_OGF_S_MOTION_REFS);
+        mem.LeaveSubChunk();
+        if not r then exit;
+      end else begin
+        chunk:=mem.FindSubChunk(CHUNK_OGF_S_MOTION_REFS2);
+        if (chunk <> INVALID_CHUNK) and mem.EnterSubChunk(chunk) then begin
+          _motionrefs.Deserialize(mem.GetCurrentChunkRawDataAsString(), CHUNK_OGF_S_MOTION_REFS2);
+          mem.LeaveSubChunk();
+          if not r then exit;
+        end;
+      end;
+
+      if _motionrefs.Loaded() then begin
+        _animations.Free();
+        _animations:=TOgfAnimationsParser.Create();
+      end else if _animations.LoadFromChunkedMem(mem) then begin
         _animations.ResetSource(_source);
       end else begin
         _animations.Free();
@@ -7886,11 +8127,15 @@ end;
 
 function TOgfParser.UpdateSource(): boolean;
 var
+  header:string;
   children:string;
   bone_names:string;
   ikdata:string;
   userdata:string;
   lodref:string;
+  motionrefs:string;
+
+  rawstr:string;
 begin
   result:=false;
   if not Loaded() then exit;
@@ -7900,14 +8145,32 @@ begin
   ikdata:=_joints.Serialize();
   userdata:=_userdata.Serialize();
   lodref:=_lodref.Serialize();
+  motionrefs:=_motionrefs.Serialize();
 
+  if (length(motionrefs)>0) or ((_animations.Loaded() and (_animations.AnimationsCount()>0) and IsAnimationsEmbedded() )) then begin
+    _header.ogf_type:=MT_SKELETON_ANIM;
+  end else begin
+    _header.ogf_type:=MT_SKELETON_RIGID;
+  end;
+
+  header:=_SerializeHeader();
+
+  if not _UpdateChunk(CHUNK_OGF_HEADER, header) then exit;
   if not _UpdateChunk(CHUNK_OGF_CHILDREN, children) then exit;
   if not _UpdateChunk(CHUNK_OGF_S_BONE_NAMES, bone_names) then exit;
   if not _UpdateChunk(CHUNK_OGF_S_IKDATA, ikdata) then exit;
   if not _UpdateChunk(CHUNK_OGF_S_USERDATA, userdata) then exit;
   if not _UpdateChunk(CHUNK_OGF_S_LODS, lodref) then exit;
 
-  if _animations.Loaded() then begin
+  if length(motionrefs)>0 then begin
+    if _source.FindSubChunk(_motionrefs.GetChunkId())<>INVALID_CHUNK then begin
+      if not _UpdateChunk(_motionrefs.GetChunkId(), motionrefs) then exit;
+    end else begin
+      rawstr:=_source.GetCurrentChunkRawDataAsString();
+      rawstr:=rawstr+SerializeChunkHeader(_motionrefs.GetChunkId(), length(motionrefs))+motionrefs;
+      _source.LoadFromString(rawstr);
+    end;
+  end else if _animations.Loaded() then begin
     _animations.UpdateSource();
   end;
 
@@ -7945,6 +8208,36 @@ begin
   if not Loaded() then exit;
 
   result:=_animations;
+end;
+
+function TOgfParser.IsAnimationsEmbedded(): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if _animations=nil then exit;
+  result:=_source = _animations._source;
+end;
+
+function TOgfParser.SplitEmbeddedMotionsIntoSeparateSource(): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if not IsAnimationsEmbedded() then exit;
+
+  result:=_animations._SplitCommonSource() and not IsAnimationsEmbedded();
+end;
+
+function TOgfParser.AddMotionRef(filename: string): integer;
+begin
+  result:=-1;
+  if not Loaded() then exit;
+  if IsAnimationsEmbedded() then exit;
+  result:=_motionrefs.AddRef(filename);
+end;
+
+procedure TOgfParser.ResetMotionRefs();
+begin
+  _motionrefs.Reset;
 end;
 
 
