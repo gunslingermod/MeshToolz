@@ -6775,11 +6775,11 @@ begin
         if not selection_callback(i, v, puv, b, userdata) then continue;
       end;
 
-      v_sub(v^.pos, pivot_point^);
+      v^.pos:=v_sub(v^.pos, pivot_point^);
       v^.pos.x:=v^.pos.x*factors^.x;
       v^.pos.y:=v^.pos.y*factors^.y;
       v^.pos.z:=v^.pos.z*factors^.z;
-      v_add(v^.pos, pivot_point^)
+      v^.pos:=v_add(v^.pos, pivot_point^)
     end;
 
   finally
