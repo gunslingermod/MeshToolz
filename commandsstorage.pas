@@ -125,7 +125,7 @@ public
 
   function GetFilteringItemTypeName(item_id:integer):string; virtual; abstract;
   function GetFilteringItemsCount():integer; virtual; abstract;
-  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; virtual; abstract;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters; var filter_passed:boolean):boolean; virtual; abstract;
 end;
 
 implementation
@@ -554,6 +554,7 @@ var
   cnt:integer;
   indexarg:TCommandIndexArg;
   filters:TIndexFilters;
+  filter_passed:boolean;
 begin
   result:=TCommandResult.Create();
 
@@ -573,29 +574,36 @@ begin
         cnt:=0;
         result.SetSuccess(true);
         for i:=GetFilteringItemsCount()-1 downto 0 do begin
-          if CheckFiltersForItem(i, filters) then begin
-            cnt:=cnt+1;
-            indexarg:=TCommandIndexArg.Create(i, userdata);
-            tmpstr:=args;
-            try
-              inherited Execute(tmpstr, indexarg);
-            finally
-              FreeAndNil(indexarg);
-            end;
+          filter_passed:=false;
+          if CheckFiltersForItem(i, filters, filter_passed) then begin
+            if filter_passed then begin
+              cnt:=cnt+1;
+              indexarg:=TCommandIndexArg.Create(i, userdata);
+              tmpstr:=args;
+              try
+                inherited Execute(tmpstr, indexarg);
+              finally
+                FreeAndNil(indexarg);
+              end;
 
-            if not _result_desc.IsSuccess() then begin
-              result.SetSuccess(false);
-              if length(_result_desc.GetDescription())>0 then begin;
-                r:=r+'!' +GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
+              if not _result_desc.IsSuccess() then begin
+                result.SetSuccess(false);
+                if length(_result_desc.GetDescription())>0 then begin;
+                  r:=r+'!' +GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
+                end;
+              end else if _result_desc.IsWarning() then begin
+                result.SetWarningFlag(true);
+                if length(_result_desc.GetDescription())>0 then begin;
+                  r:=r+'#'+GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
+                end;
+              end else if length(_result_desc.GetDescription())>0 then begin;
+                  r:=r+GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
               end;
-            end else if _result_desc.IsWarning() then begin
-              result.SetWarningFlag(true);
-              if length(_result_desc.GetDescription())>0 then begin;
-                r:=r+'#'+GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
-              end;
-            end else if length(_result_desc.GetDescription())>0 then begin;
-                r:=r+GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
             end;
+          end else begin
+            r:=r+'error while filtering item #'+inttostr(i)+chr($0d)+chr($0a);
+            result.SetSuccess(false);
+            break;
           end;
         end;
 

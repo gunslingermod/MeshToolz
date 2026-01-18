@@ -27,7 +27,7 @@ public
   constructor Create(slot:TModelSlot);
   function GetFilteringItemTypeName(item_id:integer):string; override;
   function GetFilteringItemsCount():integer; override;
-  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters; var filter_passed:boolean):boolean; override;
 end;
 
 { TBonesCommands }
@@ -37,7 +37,7 @@ public
   constructor Create(slot:TModelSlot);
   function GetFilteringItemTypeName(item_id:integer):string; override;
   function GetFilteringItemsCount():integer; override;
-  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters; var filter_passed:boolean):boolean; override;
 end;
 
 { TAnimationsCommands }
@@ -47,9 +47,33 @@ public
   constructor Create(slot:TModelSlot);
   function GetFilteringItemTypeName(item_id:integer):string; override;
   function GetFilteringItemsCount():integer; override;
-  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters):boolean; override;
+  function CheckFiltersForItem(item_id:integer; filters:TIndexFilters; var filter_passed:boolean):boolean; override;
 end;
 
+TParsedBonesExpressionMode = (ParsedBoneExpressionModeDefault, ParsedBoneExpressionModeAnd, ParsedBoneExpressionModeOr);
+
+{ TParsedBonesExpression }
+
+TParsedBonesExpression = class
+  _ids:array of TBoneID;
+  _inversed: array of boolean;
+  _mode:TParsedBonesExpressionMode;
+public
+  constructor Create();
+  destructor Destroy; override;
+
+  procedure AddParsed(boneid:TBoneId; is_inversed:boolean);
+  function ParsedCount():integer;
+  function GetParsedBoneId(parsedid:integer):TBoneID;
+  function IsParsedBoneIdInversed(parsedid:integer):boolean;
+
+  function GetMode():TParsedBonesExpressionMode;
+  procedure SetMode(m:TParsedBonesExpressionMode);
+
+  function IsLinksMatch(links:TVertexBones):boolean;
+  function IsBoneIdMatches(boneid:TBoneID):boolean;
+  function GetBoneIdIndexInParsed(boneid:TBoneID):integer;
+end;
 
 { TModelSlot }
 
@@ -84,6 +108,7 @@ TModelSlot = class
   function _IsAnimationsLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function ExtractBoneIdFromString(var inoutstr:string; var boneid:TBoneId):boolean;
+  function ExtractMultipleBoneIdsFromString(var inoutstr:string; out_data:TParsedBonesExpression):boolean;
   function GetBoneNameById(boneid: TBoneId): string;
 
   function _CmdLoadFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -137,10 +162,13 @@ TModelSlot = class
   function _CmdAnimKeyInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyPoseCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyPosePaste(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimTrackDuplicate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimTrackSetLength(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimAddMotionMark(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimResetMotionMarks(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimBoneMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimBoneCopyKeyToKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -171,6 +199,135 @@ const
   BUFFER_TYPE_CHILDMESH:integer=100;
   BUFFER_TYPE_BONEDATA:integer=101;
   BUFFER_TYPE_SKELETONPOSE:integer=101;
+
+{ TParsedBonesExpression }
+
+constructor TParsedBonesExpression.Create();
+begin
+  setlength(_ids, 0);
+  setlength(_inversed, 0);
+  _mode:=ParsedBoneExpressionModeDefault;
+end;
+
+destructor TParsedBonesExpression.Destroy;
+begin
+  setlength(_ids, 0);
+  setlength(_inversed, 0);
+  inherited Destroy;
+end;
+
+procedure TParsedBonesExpression.AddParsed(boneid: TBoneId; is_inversed: boolean);
+var
+  i:integer;
+begin
+  i:=length(_ids);
+  setlength(_ids, i+1);
+  setlength(_inversed, i+1);
+
+  _ids[i]:=boneid;
+  _inversed[i]:=is_inversed;
+end;
+
+function TParsedBonesExpression.ParsedCount(): integer;
+begin
+  result:=length(_ids);
+end;
+
+function TParsedBonesExpression.GetParsedBoneId(parsedid: integer): TBoneID;
+begin
+  result:=INVALID_BONE_ID;
+  if (parsedid>=0) and (parsedid < length(_ids)) then begin
+    result:=_ids[parsedid];
+  end;
+end;
+
+function TParsedBonesExpression.IsParsedBoneIdInversed(parsedid: integer): boolean;
+begin
+  result:=false;
+  if (parsedid>=0) and (parsedid < length(_inversed)) then begin
+    result:=_inversed[parsedid];
+  end;
+end;
+
+function TParsedBonesExpression.GetMode(): TParsedBonesExpressionMode;
+begin
+  result:=_mode;
+end;
+
+procedure TParsedBonesExpression.SetMode(m: TParsedBonesExpressionMode);
+begin
+  _mode:=m;
+end;
+
+function TParsedBonesExpression.IsLinksMatch(links: TVertexBones): boolean;
+var
+  mode:TParsedBonesExpressionMode;
+  boneid:TBoneID;
+  matches_filter:boolean;
+  i:integer;
+begin
+  mode:=GetMode();
+
+  if (mode = ParsedBoneExpressionModeOr) then begin
+    result:=false;
+  end else if (mode = ParsedBoneExpressionModeAnd) then begin
+    result:=true;
+  end else begin
+    result:=true;
+    exit;
+  end;
+
+  for i:=0 to ParsedCount()-1 do begin
+    boneid:=GetParsedBoneId(i);
+    if boneid= INVALID_BONE_ID then continue;
+
+    matches_filter:=links.GetWeightForBoneId(boneid)>0;
+    if IsParsedBoneIdInversed(i) then begin
+      matches_filter:=not matches_filter;
+    end;
+
+    if matches_filter and (mode = ParsedBoneExpressionModeOr) then begin
+      result:=true;
+      break;
+    end else if not matches_filter and (mode = ParsedBoneExpressionModeAnd) then begin
+      result:=false;
+      break;
+    end;
+  end;
+
+end;
+
+function TParsedBonesExpression.IsBoneIdMatches(boneid: TBoneID): boolean;
+var
+  links:TVertexBones;
+  bone:TVertexBone;
+begin
+  result:=false;
+  links:=TVertexBones.Create();
+  try
+    bone.bone_id:=boneid;
+    bone.weight:=1.0;
+    if links.AddBone(bone, false) then begin
+      result:=IsLinksMatch(links);
+    end;
+  finally
+    FreeAndNil(links);
+  end;
+end;
+
+function TParsedBonesExpression.GetBoneIdIndexInParsed(boneid: TBoneID): integer;
+var
+  i:integer;
+begin
+  result:=-1;
+
+  for i:=0 to length(_ids)-1 do begin
+    if _ids[i]=boneid then begin
+      result:=i;
+      break;
+    end;
+  end;
+end;
 
 { TSlotFilteringCommands }
 
@@ -209,10 +366,11 @@ begin
   end;
 end;
 
-function TChildrenCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilters): boolean;
+function TChildrenCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilters; var filter_passed:boolean): boolean;
 begin
-  result:= IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().texture, filters[0], FILTER_MODE_EXACT)
-       and IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().shader,  filters[1], FILTER_MODE_EXACT)
+  filter_passed:= IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().texture, filters[0], FILTER_MODE_EXACT)
+              and IsMatchFilter(_slot.Data().Meshes().Get(item_id).GetTextureData().shader,  filters[1], FILTER_MODE_EXACT);
+  result:=true;
 end;
 
 { TBonesCommands }
@@ -223,6 +381,7 @@ begin
 
   RegisterFilter('name');
   RegisterFilter('id');
+  RegisterFilter('expr');
 end;
 
 function TBonesCommands.GetFilteringItemTypeName(item_id: integer): string;
@@ -240,10 +399,33 @@ begin
   end;
 end;
 
-function TBonesCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilters): boolean;
+function TBonesCommands.CheckFiltersForItem(item_id: integer; filters:TIndexFilters; var filter_passed:boolean): boolean;
+var
+  parsed_bones:TParsedBonesExpression;
+  expr:string;
 begin
-  result:=IsMatchFilter(_slot.Data().Skeleton().GetBoneName(item_id), filters[0], FILTER_MODE_EXACT)
-       and IsMatchFilter(inttostr(item_id), filters[1], FILTER_MODE_EXACT)
+  result:=true;
+  filter_passed:=IsMatchFilter(_slot.Data().Skeleton().GetBoneName(item_id), filters[0], FILTER_MODE_EXACT)
+             and IsMatchFilter(inttostr(item_id), filters[1], FILTER_MODE_EXACT);
+
+  expr:=filters[2].value;
+  if filter_passed and (length(expr)>0) then begin
+    parsed_bones:=TParsedBonesExpression.Create();
+    try
+      if _slot.ExtractMultipleBoneIdsFromString(expr, parsed_bones) then begin
+        filter_passed:=parsed_bones.IsBoneIdMatches(item_id);
+        if filters[2].inverse then begin
+          filter_passed:=not filter_passed;
+        end;
+      end else begin
+        filter_passed:=false;
+        result:=false;
+      end;
+    finally
+      FreeAndNil(parsed_bones);
+    end;
+  end;
+
 end;
 
 { TAnimationsCommands }
@@ -270,9 +452,10 @@ begin
   end;
 end;
 
-function TAnimationsCommands.CheckFiltersForItem(item_id: integer; filters: TIndexFilters): boolean;
+function TAnimationsCommands.CheckFiltersForItem(item_id: integer; filters: TIndexFilters; var filter_passed:boolean): boolean;
 begin
-  result:=IsMatchFilter(_slot.Data().Animations().GetAnimationParams(item_id).name, filters[0], FILTER_MODE_EXACT);
+  result:=true;
+  filter_passed:=IsMatchFilter(_slot.Data().Animations().GetAnimationParams(item_id).name, filters[0], FILTER_MODE_EXACT);
 end;
 
 
@@ -357,6 +540,86 @@ begin
   if result then begin
     inoutstr:=tmpstr;
     boneid:=tmp_num;
+  end;
+end;
+
+function TModelSlot.ExtractMultipleBoneIdsFromString(var inoutstr: string; out_data: TParsedBonesExpression): boolean;
+var
+  inversed:boolean;
+  c:char;
+  boneid:TBoneID;
+  mode:TParsedBonesExpressionMode;
+  wait_boolop:boolean;
+begin
+  result:=false;
+
+  inversed:=false;
+  inoutstr:=TrimLeft(inoutstr);
+  mode:=ParsedBoneExpressionModeDefault;
+  wait_boolop:=false;
+
+  while(length(inoutstr) > 0) do begin
+    c:=inoutstr[1];
+    if c = '&' then begin
+      if not wait_boolop then begin
+        result:=false;
+        break;
+      end;
+
+      if (mode <> ParsedBoneExpressionModeDefault) and (mode <> ParsedBoneExpressionModeAnd) then begin
+        result:=false;
+        break;
+      end;
+      mode:=ParsedBoneExpressionModeAnd;
+      out_data.SetMode(mode);
+
+      inversed:=false;
+      wait_boolop:=false;
+      AdvanceString(inoutstr, 1);
+      inoutstr:=TrimLeft(inoutstr);
+      continue;
+    end else if c = '|' then begin
+      if not wait_boolop then begin
+        result:=false;
+        break;
+      end;
+
+      if (mode <> ParsedBoneExpressionModeDefault) and (mode <> ParsedBoneExpressionModeOr) then begin
+        result:=false;
+        break;
+      end;
+      mode:=ParsedBoneExpressionModeOr;
+      out_data.SetMode(mode);
+
+      inversed:=false;
+      wait_boolop:=false;
+      AdvanceString(inoutstr, 1);
+      inoutstr:=TrimLeft(inoutstr);
+      continue;
+    end else if c = COMMANDS_ARGUMENTS_SEPARATOR then begin
+      break;
+    end else if wait_boolop then begin
+      result:=false;
+      break;
+    end else if c = COMMANDS_ARGUMENT_INVERSE then begin
+      inversed:=true;
+      AdvanceString(inoutstr, 1);
+    end;
+
+    inoutstr:=TrimLeft(inoutstr);
+    if ExtractBoneIdFromString(inoutstr, boneid) and (boneid<>INVALID_BONE_ID) then begin
+      out_data.AddParsed(boneid, inversed);
+      wait_boolop:=true;
+      result:=true;
+    end else begin
+      result:=false;
+      break;
+    end;
+  end;
+
+
+  if result and (out_data.GetMode() = ParsedBoneExpressionModeDefault) then begin
+    out_data.SetMode(ParsedBoneExpressionModeOr);
   end;
 end;
 
@@ -1215,72 +1478,77 @@ begin
       result_description.SetDescription(r);
       result:=true;
     end;
-
   end;
-
 end;
+
 
 function TModelSlot._CmdAnimKeyInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
+  argsparser:TCommandsArgumentsParser;
   keyid:integer;
-  bonename:string;
+  bones_s, r, s:string;
   defs:TOgfMotionDefData;
-  frames_count:integer;
-  key:TMotionKey;
+  parsed_bones:TParsedBonesExpression;
   i:integer;
-  s,r:string;
+  key:TMotionKey;
   pos:FVector3;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-    defs:=_data.Animations().GetAnimationParams(idx);
-    frames_count:=_data.Animations().GetAnimationFramesCount(defs.name);
 
-    keyid:=strtointdef(ExtractNumericString(args, false), -1);
-    if keyid<0 then begin
-      result_description.SetDescription('first argument is an index of key');
-      exit;
-    end else if keyid > frames_count then begin
-      result_description.SetDescription('animation '+defs.name+' has only '+inttostr(frames_count)+' frames');
-      exit;
-    end;
+    argsparser:=TCommandsArgumentsParser.Create();
+    parsed_bones:=TParsedBonesExpression.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'frame index');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgAnyString, true, 'bones expression');
 
-    args:=trim(args);
-    if (length(args)=0) then begin
-      bonename:='';
-    end else if (args[1]=COMMANDS_ARGUMENTS_SEPARATOR) then begin
-      args:=trim(rightstr(args, length(args)-1));
-      bonename:=args;
-      if length(bonename)=0 then begin
-        result_description.SetDescription('bone name expected in optional second argument');
-        exit;
-      end;
-    end else begin
-      result_description.SetDescription('can''t extract 2nd argument');
-      exit;
-    end;
+      if argsparser.Parse(args) and
+         argsparser.GetAsInt(0, keyid) and
+         argsparser.GetAsString(1, bones_s, '')
+      then begin
+        defs:=_data.Animations().GetAnimationParams(idx);
+        if (keyid <0) or (keyid >= _data.Animations().GetAnimationFramesCount(defs.name)) then begin
+          result_description.SetDescription('invalid frame index');
+        end else if (length(bones_s) > 0) and not ExtractMultipleBoneIdsFromString(bones_s, parsed_bones) then begin
+          result_description.SetDescription('invalid bones expression');
+        end else begin
+          r:='';
+          for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
+            s:=_data.Skeleton().GetBoneName(i);
+            if length(s)>0 then begin
+              if (parsed_bones.ParsedCount()=0) or parsed_bones.IsBoneIdMatches(i) then begin
+                if _data.Animations().GetAnimationKeyForBone(defs.name, s, keyid, key) then begin
+                  r:=r+'Bone '+s+' data in key '+inttostr(keyid)+':'+chr($0d)+chr($0a);
+                  r:=r+'- Local position: '+floattostr(key.T.x)+', '+floattostr(key.T.y)+', '+floattostr(key.T.z)+chr($0d)+chr($0a);
 
-    r:='';
-    for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
-      s:=_data.Skeleton().GetBoneName(i);
-      if length(s)>0 then begin
-        if (length(bonename)=0) or (s=bonename) then begin
-          if _data.Animations().GetAnimationKeyForBone(defs.name, s, keyid, key) then begin
-            r:=r+'Bone '+s+' data in key '+inttostr(keyid)+':'+chr($0d)+chr($0a);
-            r:=r+'- Local position: '+floattostr(key.T.x)+', '+floattostr(key.T.y)+', '+floattostr(key.T.z)+chr($0d)+chr($0a);
-
-            if _data.Skeleton().GetGlobalBonePositionInPose(i, defs.name, keyid, pos) then begin
-              r:=r+'- Global position: '+floattostr(pos.x)+', '+floattostr(pos.y)+', '+floattostr(pos.z)+chr($0d)+chr($0a);
+                  if _data.Skeleton().GetGlobalBonePositionInPose(i, defs.name, keyid, pos) then begin
+                    r:=r+'- Global position: '+floattostr(pos.x)+', '+floattostr(pos.y)+', '+floattostr(pos.z)+chr($0d)+chr($0a);
+                  end;
+                end;
+              end;
             end;
-            result:=true;
           end;
+          if length(r)=0 then begin
+            r:='no bones match the specified expression';
+            result_description.SetWarningFlag(true);
+          end;
+          result_description.SetDescription(r);
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
         end;
       end;
+
+    finally
+      FreeAndNil(argsparser);
+      FreeAndNil(parsed_bones);
     end;
-    result_description.SetDescription(r);
-  end;
+  end
 end;
 
 function TModelSlot._CmdAnimKeyPoseCopy(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -1290,7 +1558,13 @@ var
   frameid:integer;
   defs:TOgfMotionDefData;
   pose:TOgfSkeletonPose;
+  bones_s:string;
   s:string;
+  parsed_bones:TParsedBonesExpression;
+  i, cnt:integer;
+  bonename:string;
+  boneid:TBoneID;
+  bonematrix:FMatrix4x4;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -1302,22 +1576,44 @@ begin
 
     argsparser:=TCommandsArgumentsParser.Create();
     pose:=TOgfSkeletonPose.Create();
+    parsed_bones:=TParsedBonesExpression.Create();
     try
-      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'frame index (or -1 for bind pose)');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'frame index or -1 for bind pose');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgAnyString, true, 'bones');
       if argsparser.Parse(args) and
-         argsparser.GetAsInt(0, frameid)
+         argsparser.GetAsInt(0, frameid) and
+         argsparser.GetAsString(1, bones_s)
       then begin
         if (frameid < -1) or (frameid >= _data.Animations().GetAnimationFramesCount(defs.name)) then begin
           result_description.SetDescription('invalid frame index');
         end else if not _data.Skeleton().GetSkeletonPose(defs.name, frameid, pose) then begin
           result_description.SetDescription('can''t get skeleton pose');
+        end else if (length(bones_s)>0) and not ExtractMultipleBoneIdsFromString(bones_s, parsed_bones) then begin
+          result_description.SetDescription('can''t parse bones');
         end else begin
-          s:=pose.Serialize();
-          if length(s)=0 then begin
-            result_description.SetDescription('can''t serialize pose');
-          end else begin
-            _container.GetTempBuffer().SetData(s, BUFFER_TYPE_SKELETONPOSE);
+          cnt:=0;
+          for i:=0 to _data.Skeleton().GetBonesCount()-1 do begin
+            if (parsed_bones.ParsedCount() > 0) and not parsed_bones.IsBoneIdMatches(i) then begin
+              bonename:=_data.Skeleton().GetBoneName(i);
+              pose.ForgetBone(bonename);
+            end else begin
+              cnt := cnt+1;
+            end;
+          end;
+
+          if cnt = 0 then begin
+            result_description.SetDescription('no bones matched the expression, nothing copied');
+            result_description.SetWarningFlag(true);
             result:=true;
+          end else begin
+            s:=pose.Serialize();
+            if length(s)=0 then begin
+              result_description.SetDescription('can''t serialize pose');
+            end else begin
+              _container.GetTempBuffer().SetData(s, BUFFER_TYPE_SKELETONPOSE);
+              result_description.SetDescription('pose of '+inttostr(cnt)+' bone(s) saved into the temp buffer');
+              result:=true;
+            end;
           end;
         end;
       end else begin
@@ -1330,6 +1626,7 @@ begin
     finally
       FreeAndNil(argsparser);
       FreeAndNil(pose);
+      FreeAndNil(parsed_bones);
     end;
   end;
 end;
@@ -1342,6 +1639,7 @@ var
   defs:TOgfMotionDefData;
   pose:TOgfSkeletonPose;
   s:string;
+  cnt:integer;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -1358,7 +1656,7 @@ begin
     argsparser:=TCommandsArgumentsParser.Create();
     pose:=TOgfSkeletonPose.Create();
     try
-      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'frame index (or -1 for bind pose)');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'frame index');
       if argsparser.Parse(args) and
          argsparser.GetAsInt(0, frameid)
       then begin
@@ -1366,10 +1664,14 @@ begin
           result_description.SetDescription('invalid frame index');
         end else if not pose.Deserialize(s) then begin
           result_description.SetDescription('can''t deserialize pose');
-        end else if not _data.Skeleton().SetSkeletonPose(defs.name, frameid, pose) then begin
-          result_description.SetDescription('can''t set pose');
         end else begin
-          result:=true;
+          cnt:=_data.Skeleton().SetSkeletonPose(defs.name, frameid, pose);
+          if cnt = 0 then begin
+            result_description.SetDescription('can''t set pose for any bone');
+          end else begin
+            result_description.SetDescription('pose set for '+inttostr(cnt)+' bone(s)');
+            result:=true;
+          end;
         end;
       end else begin
         result_description.SetDescription(argsparser.GetLastErr());
@@ -1381,6 +1683,87 @@ begin
     finally
       FreeAndNil(argsparser);
       FreeAndNil(pose);
+    end;
+  end;
+end;
+
+function TModelSlot._CmdAnimTrackDuplicate(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  defs:TOgfMotionDefData;
+  newname:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'name of the duplicated animation');
+      if argsparser.Parse(args) and
+         argsparser.GetAsString(0, newname)
+      then begin
+        if _data.Animations().GetAnimationIdByName(newname) >=0 then begin
+          result_description.SetDescription('name '+newname+' already in use');
+        end else begin
+          if _data.Animations().DuplicateAnimation(defs.name, newname) then begin
+            result_description.SetDescription('motion '+defs.name+' successfully duplicated as '+newname);
+            result:=true;
+          end else begin
+            result_description.SetDescription('error while duplicating '+defs.name);
+          end;
+        end;
+
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
+end;
+
+function TModelSlot._CmdAnimTrackSetLength(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  defs:TOgfMotionDefData;
+  newlen:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'new animation length');
+      if argsparser.Parse(args) and
+         argsparser.GetAsInt(0, newlen)
+      then begin
+        if _data.Animations().ChangeAnimationFramesCount(defs.name, newlen) then begin
+          result_description.SetDescription('length of '+defs.name+' successfully changed to '+inttostr(newlen));
+          result:=true;
+        end else begin
+          result_description.SetDescription('error while changing length of '+defs.name);
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
     end;
   end;
 end;
@@ -1508,7 +1891,7 @@ begin
         argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X coordinate');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y coordinate');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z coordinate');
-        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'start frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'start frame index');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'end frame index');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'absolute position flag');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'fixed children flag');
@@ -1517,11 +1900,19 @@ begin
            argsparser.GetAsSingle(0, v.x) and
            argsparser.GetAsSingle(1, v.y) and
            argsparser.GetAsSingle(2, v.z) and
-           argsparser.GetAsInt(3, startframe) and
+           argsparser.GetAsInt(3, startframe, -1) and
            argsparser.GetAsInt(4, endframe, startframe) and
            argsparser.GetAsBool(5, is_absolute_coords, false) and
            argsparser.GetAsBool(6, fixed_children, false)
         then begin
+
+          if startframe < 0 then begin
+             startframe:=0;
+          end;
+
+          if endframe < 0 then begin
+            endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
+          end;
 
           cnt:=0;
           for i:=startframe to endframe do begin
@@ -1532,10 +1923,12 @@ begin
 
           if cnt = 0 then begin
             result:=startframe > endframe;
-            result_description.SetWarningFlag(true);
+            if result then result_description.SetWarningFlag(true);
             result_description.SetDescription('no frames affected');
           end else if cnt <> endframe-startframe+1 then begin
-            result_description.SetDescription('not all frames modified');
+            result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+            result_description.SetWarningFlag(true);
+            result:=true;
           end else begin
             result:=true;
           end;
@@ -1553,6 +1946,69 @@ begin
   end;
 end;
 
+function TModelSlot._CmdAnimBoneCopyKeyToKeys(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bone_idx, anim_idx:integer;
+  upper_ud:TObject;
+  argsparser:TCommandsArgumentsParser;
+  srcframe, startframe, endframe:integer;
+
+  def:TOgfMotionDefData;
+  key:TMotionKey;
+  bonename:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    bone_idx:=(userdata as TCommandIndexArg).Get();
+    upper_ud:=TObject((userdata as TCommandIndexArg).GetUserdata());
+    if upper_ud = nil then exit;
+    if (upper_ud <> nil) and (upper_ud is TCommandIndexArg) then begin
+      anim_idx:=(upper_ud.Create as TCommandIndexArg).Get();
+      def:=_data.Animations().GetAnimationParams(anim_idx);
+      if length(def.name)=0 then exit;
+
+      argsparser:=TCommandsArgumentsParser.Create();
+      try
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'source frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'start target frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'end target frame index');
+
+        if argsparser.Parse(args) and
+           argsparser.GetAsInt(0, srcframe) and
+           argsparser.GetAsInt(1, startframe, -1) and
+           argsparser.GetAsInt(2, endframe, startframe)
+        then begin
+
+          if startframe < 0 then begin
+             startframe:=0;
+          end;
+
+          if endframe < 0 then begin
+            endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
+          end;
+
+          bonename:=_data.Skeleton().GetBoneName(bone_idx);
+
+          if not _data.Animations().GetAnimationKeyForBone(def.name, bonename, srcframe, key) then begin
+            result_description.SetDescription('can''t get source key');
+          end else if not  _data.Animations().SetAnimationMultiframeKeyForBone(def.name, bonename, startframe, endframe, key) then begin
+            result_description.SetDescription('key assigning failed');
+          end else begin
+            result:=true;
+          end;
+
+        end else begin
+          result_description.SetDescription(argsparser.GetLastErr());
+          if length(result_description.GetDescription())=0 then begin
+            result_description.SetDescription('can''t get parsed arguments');
+          end;
+        end;
+      finally
+        FreeAndNil(argsparser);
+      end;
+    end;
+  end;
+end;
 
 function TModelSlot._CmdChildInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
@@ -1925,7 +2381,7 @@ type
   TVertexSelectiveBindCallbackData = record
     selection_area:TSelectionArea;
     weight:single;
-    src_boneid:TBoneID;
+    src_boneids:TParsedBonesExpression;
     vcnt:integer;
   end;
   pTVertexSelectiveBindCallbackData = ^TVertexSelectiveBindCallbackData;
@@ -1934,16 +2390,18 @@ function VertexSelectiveBindCallback(vertex_id:integer; data:pTOgfVertexCommonDa
 var
   cbdata:pTVertexSelectiveBindCallbackData;
   i:integer;
-  bone:TVertexBone;
+  bone, bone2:TVertexBone;
   value:single;
   target_idx:integer;
+
+  parsedid:integer;
 begin
   result:=false;
   if (userdata = nil) or (data = nil) then exit;
   cbdata:=pTVertexSelectiveBindCallbackData(userdata);
   result:=cbdata^.selection_area.IsPointInSelection(data^.pos);
   if result then begin
-    if (cbdata^.src_boneid = INVALID_BONE_ID) then begin
+    if (cbdata^.src_boneids.ParsedCount() = 0) then begin
       // no need to replace any specific bones not specified - just adjust weight of target_boneid or add it by replace binding with the lowest weight
       // weight must be from 0 to 1 in this case!
       target_idx:=0;
@@ -1973,30 +2431,45 @@ begin
 
       links.NormalizeWeights(target_idx);
     end else begin
-      // both src_boneid and target_boneid both present - we need to replace src_boneid links to target_boneid links
-      // if weight >= 0 - also adjust it at the moment of replacing
-      value:=cbdata^.weight;
-      target_idx:=-1;
-      for i:=0 to links.TotalLinkedBonesCount()-1 do begin
-        bone:=links.GetBoneParams(i);
-        if bone.bone_id = cbdata^.src_boneid then begin
-          bone.bone_id:=target_boneid;
-          if cbdata^.weight >= 0 then begin
-            bone.weight:=value;
-          end;
-          links.SetBoneParams(i, bone, false);
-          if target_idx < 0 then begin
-            target_idx:=i;
-            value:=0;
+      // both source expression and target_boneid both present -
+      // for every vertex with links that matched expression we need to replace every boneid which match the expression
+      // if weight >= 0 - set a full new weigth at the moment of the 1st replacing, the next replaces will make corresponding weights zero
+      // if weight == 0 - need to accumulate the full weigth in the single links entry
+
+      if cbdata^.src_boneids.IsLinksMatch(links) then begin
+        value:=cbdata^.weight;
+        target_idx:=-1;
+        for i:=0 to links.TotalLinkedBonesCount()-1 do begin
+          bone:=links.GetBoneParams(i);
+          if cbdata^.src_boneids.IsBoneIdMatches(bone.bone_id) then begin
+            bone.bone_id:=target_boneid;
+            if cbdata^.weight >= 0 then begin
+              // weight is explicitely specified in the command, so the 1st occurence will get the full weight, the next occurences will get zero weight
+              bone.weight:=value;
+              value:=0;
+            end else if (target_idx >=0) and (bone.weight>0) then begin
+              // weight is omitted in the command, so we need to accumulate all weights inside the single link entry
+              bone2:=links.GetBoneParams(target_idx);
+              bone2.weight:=bone2.weight+bone.weight;
+              links.SetBoneParams(target_idx, bone2, false);
+              bone.weight:=0;
+            end;
+            links.SetBoneParams(i, bone, false);
+
+
+            if target_idx < 0 then begin
+              // Remember found 1st index
+              target_idx:=i;
+            end;
           end;
         end;
-      end;
 
-      // Normalize weights if something has been changed
-      if target_idx>=0 then begin
-        links.NormalizeWeights(target_idx);
-      end else begin
-        result:=false;
+        // Normalize weights if something has been changed
+        if target_idx>=0 then begin
+          links.NormalizeWeights(target_idx);
+        end else begin
+          result:=false;
+        end;
       end;
     end;
   end;
@@ -2008,7 +2481,9 @@ end;
 
 function TModelSlot._CmdChildRebindSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
-  dest_boneid,  src_boneid:TBoneID;
+  dest_boneid:TBoneID;
+  src_boneids:TParsedBonesExpression;
+
   dest_bone_s, src_bone_s:string;
   weight: single;
   shader, texture:string;
@@ -2019,11 +2494,11 @@ begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
-    src_boneid:=INVALID_BONE_ID;
     dest_boneid:=INVALID_BONE_ID;
     weight:=-1;
 
     argsparser:=TCommandsArgumentsParser.Create();
+    src_boneids:=TParsedBonesExpression.Create();
     try
       argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'target (new) bone');
       argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'weight');
@@ -2038,17 +2513,17 @@ begin
           result_description.SetDescription('incorrect target bone specified');
         end else if (weight<0) or (weight > 1) then begin
           result_description.SetDescription('weight must be a number between 0 and 1; if you don''t need weight - just omit it in the command)');
-        end else if (length(src_bone_s) > 0) and (not ExtractBoneIdFromString(src_bone_s, src_boneid)) then begin
-          result_description.SetDescription('incorrect source bone specified');
+        end else if (length(src_bone_s) > 0) and (not ExtractMultipleBoneIdsFromString(src_bone_s, src_boneids)) then begin
+          result_description.SetDescription('incorrect source expression specified');
         end else begin
           shader:=_data.Meshes().Get(idx).GetTextureData().shader;
           texture:=_data.Meshes().Get(idx).GetTextureData().texture;
           cbdata.selection_area:=_selectionarea;
-          cbdata.src_boneid:=src_boneid;
+          cbdata.src_boneids:=src_boneids;
           cbdata.weight:=weight;
           cbdata.vcnt:=0;
           if not _data.Meshes().Get(idx).BindVerticesToBone(dest_boneid, @VertexSelectiveBindCallback, @cbdata) then begin
-            result_description.SetDescription('failed to rebind vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') from '+GetBoneNameById(src_boneid)+' to '+GetBoneNameById(dest_boneid));
+            result_description.SetDescription('failed to rebind vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') to '+GetBoneNameById(dest_boneid));
           end else begin
             if cbdata.vcnt = 0 then begin
               result_description.SetDescription('no vertices were found in the selection area');
@@ -2069,6 +2544,7 @@ begin
 
     finally
       FreeAndNil(argsparser);
+      FreeAndNil(src_boneids);
     end;
   end;
 end;
@@ -2124,11 +2600,9 @@ begin
   end;
 end;
 
-
 type
   TChildVertexFilterCallbackData = record
-    boneid:TBoneID;
-    inverse_flag:boolean;
+    parsed_bones:TParsedBonesExpression;
     flagged_vertices_count:integer;
   end;
   pTChildVertexFilterCallbackData = ^TChildVertexFilterCallbackData;
@@ -2138,10 +2612,7 @@ var
   cbdata:pTChildVertexFilterCallbackData;
 begin
   cbdata:=pTChildVertexFilterCallbackData(userdata);
-  result:=(links.GetWeightForBoneId(cbdata^.boneid)>0);
-  if cbdata^.inverse_flag then begin
-    result:=not result;
-  end;
+  result:=cbdata^.parsed_bones.IsLinksMatch(links);
 
   if result then begin
     cbdata^.flagged_vertices_count:=cbdata^.flagged_vertices_count+1;
@@ -2150,55 +2621,51 @@ end;
 
 function TModelSlot._CmdChildFilterBone(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
-  boneid:TBoneID;
   cbdata:TChildVertexFilterCallbackData;
+  parsed_bones:TParsedBonesExpression;
   shader, texture:string;
-  inverse:boolean;
   idx:integer;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
 
-    boneid:=INVALID_BONE_ID;
+    parsed_bones:=TParsedBonesExpression.Create();
 
-    inverse:=false;
-    args:=trimleft(args);
-    if (length(args)>0) and (args[1]=COMMANDS_ARGUMENT_INVERSE) then begin
-      inverse:=true;
-      args:=trimleft(rightstr(args, length(args)-1));
-    end;
-
-    if ExtractBoneIdFromString(args, boneid) then begin
-      shader:=_data.Meshes().Get(idx).GetTextureData().shader;
-      texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-      if length(trimleft(args))>0 then begin
-        result_description.SetDescription('procedure expects 1 argument');
-      end else begin
-        cbdata.boneid:=boneid;
-        cbdata.flagged_vertices_count:=0;
-        cbdata.inverse_flag:=inverse;
-        if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
-          result_description.SetDescription('child #'+inttostr(idx)+' ('+texture+' : '+shader+') is collapsed - skipping');
-          result_description.SetWarningFlag(true);
-          result:=true;
-        end else if not _data.Meshes().Get(idx).RemoveVertices(@ChildRemoveVerticesForBoneIdCallback, @cbdata) then begin
-          result_description.SetDescription('error filtering vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
-        end else if cbdata.flagged_vertices_count = 0 then begin
-          result_description.SetDescription('no vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') were removed');
-          result_description.SetWarningFlag(true);
-          result:=true;
+    try
+      if ExtractMultipleBoneIdsFromString(args, parsed_bones) then begin
+        shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+        texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+        if length(trimleft(args))>0 then begin
+          result_description.SetDescription('procedure expects 1 argument (bone or expression)');
         end else begin
-          result_description.SetDescription('successfully removed '+inttostr(cbdata.flagged_vertices_count)+' vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+          cbdata.flagged_vertices_count:=0;
+          cbdata.parsed_bones:=parsed_bones;
           if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
-            result_description.SetDescription(result_description.GetDescription()+chr($0d)+chr($0a)+'mesh is fully collapsed (no vertices left), please remove it'+chr($0d)+chr($0a));
+            result_description.SetDescription('child #'+inttostr(idx)+' ('+texture+' : '+shader+') is collapsed - skipping');
+            result_description.SetWarningFlag(true);
+            result:=true;
+          end else if not _data.Meshes().Get(idx).RemoveVertices(@ChildRemoveVerticesForBoneIdCallback, @cbdata) then begin
+            result_description.SetDescription('error filtering vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+          end else if cbdata.flagged_vertices_count = 0 then begin
+            result_description.SetDescription('no vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') were removed');
+            result_description.SetWarningFlag(true);
+            result:=true;
+          end else begin
+            result_description.SetDescription('successfully removed '+inttostr(cbdata.flagged_vertices_count)+' vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
+            if _data.Meshes().Get(idx).GetVerticesCount() = 0 then begin
+              result_description.SetDescription(result_description.GetDescription()+chr($0d)+chr($0a)+'mesh is fully collapsed (no vertices left), please remove it'+chr($0d)+chr($0a));
+            end;
+            result:=true;
           end;
-          result:=true;
         end;
+      end else begin
+        result_description.SetDescription('can''t parse bones');
       end;
-    end else begin
-      result_description.SetDescription('can''t extract bone id');
-    end;
+    finally
+      FreeAndNil(parsed_bones);
+    end
+
   end;
 end;
 
@@ -2451,8 +2918,10 @@ begin
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('animation', @_IsAnimationsLoadedPrecondition, _commands_animations, 'access group of properties and procedures associated with loaded animations'));
   _commands_animations.DoRegister(TCommandSetup.Create('info', @_IsAnimationsLoadedPrecondition, @_CmdAnimInfo, 'display animations info'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('keyinfo', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyInfo, 'show bone parameters is specific key; arg 1 - key index, arg 2 (optional) - bone name'), CommandItemTypeCall);
-  _commands_animations.DoRegister(TCommandSetup.Create('keyposecopy', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPoseCopy, 'copy skeleton pose in the specified frame, argument is frame id'), CommandItemTypeCall);
-  _commands_animations.DoRegister(TCommandSetup.Create('keyposepaste', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPosePaste, 'paste previosly copied skeleton pose into the specified frame, argument is frame id'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('copykey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPoseCopy, 'copy skeleton pose in the specified frame, argument 1 is frame id, argument 2 (optional) is bones'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('pastekey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPosePaste, 'paste previosly copied skeleton pose into the specified frame, argument is frame id'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setlength', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackSetLength, 'set new frames count for animation, argument is new frames count'), CommandItemTypeCall);
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('marks', @_IsAnimationsLoadedPrecondition, _commands_mmarks, 'access group of properties and procedures associated with motion marks'));
   _commands_mmarks.DoRegister(TCommandSetup.Create('add', @_IsAnimationsLoadedPrecondition, @_CmdAnimAddMotionMark, 'add new interval, expects 3 arguments (mark name, interval start, interval end)'), CommandItemTypeCall);
@@ -2460,7 +2929,7 @@ begin
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);
-
+  _commands_animbones.DoRegister(TCommandSetup.Create('clonekey', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneCopyKeyToKeys, 'replace bone keys with data from another bone key, arguments: source key id, first target key id, last target key id'), CommandItemTypeCall);
 
 end;
 

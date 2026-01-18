@@ -564,6 +564,7 @@ type
     procedure Reset();
     procedure SetBone(bonename:string; var transform:FMatrix4x4);
     function GetBone(bonename:string; var transform:FMatrix4x4):boolean;
+    function ForgetBone(bonename:string):boolean;
     function BonesCount():integer;
     function Serialize():string;
     function Deserialize(var s:string):boolean;
@@ -623,7 +624,7 @@ type
     function GetGlobalSpaceToBoneSpaceMatrixInPose(bone_idx:TBoneId; anim_name:string; key_idx:integer; var m:FMatrix4x4): boolean;
     function GetBoneSpaceToGlobalSpaceMatrixInPose(bone_idx:TBoneId; anim_name:string; key_idx:integer; var m:FMatrix4x4): boolean;
     function GetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):boolean;
-    function SetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):boolean;
+    function SetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):integer;
 
     function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
     function MoveBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; is_absolute:boolean; fixed_children:boolean):boolean;
@@ -733,6 +734,8 @@ type
     function GetKey(idx:integer; var key:TMotionKey):boolean;
     function SetKey(idx:integer; key:TMotionKey):boolean;
 
+    function MakeStatic(key:TMotionKey):boolean;
+
     function ChangeFramesCount(new_frames_count:integer):boolean;
 
     function Copy(from:TOgfMotionBoneTrack):boolean;
@@ -765,6 +768,7 @@ type
 
     function GetBoneKey(track_bone_idx:integer; key_idx:integer; var k:TMotionKey):boolean;
     function SetBoneKey(track_bone_idx:integer; key_idx:integer; k:TMotionKey):boolean;
+    function MakeBoneStatic(track_bone_idx:integer; k:TMotionKey):boolean;
 
     function Copy(from:TOgfMotionTrack):boolean;
     function MergeWithTrack(second:TOgfMotionTrack):boolean;
@@ -1015,6 +1019,7 @@ type
 
     function GetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; var k:TMotionKey):boolean;
     function SetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; k:TMotionKey):boolean;
+    function SetAnimationMultiframeKeyForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; k:TMotionKey):boolean;
 
     function DuplicateAnimation(old_name:string; new_name:string):boolean;
     function MergeAnimations(name_of_new:string; name_of_first:string; name_of_second:string):boolean;
@@ -1122,7 +1127,12 @@ const
 implementation
 uses sysutils, FastCrc, math;
 
-const EPS:single = 0.00001;
+const
+
+EPS:single = 0.00001;
+KEY_Quant16:integer=32767;
+KEY_Quant8:integer=127;
+KEY_QuantI: single = 1/32767;
 
 function SerializeVector3(v:FVector3):string;
 begin
@@ -1293,6 +1303,7 @@ begin
     _chunk_id:=CHUNK_OGF_S_MOTION_REFS2;
     _loaded:=true;
   end;
+  result:=i;
 end;
 
 function TOgfMotionRefs.RefsCount(): integer;
@@ -1349,6 +1360,20 @@ begin
   idx:=_IdxByName(bonename);
   if idx>=0 then begin
     transform:=_bones[idx].transform;
+    result:=true;
+  end;
+end;
+
+function TOgfSkeletonPose.ForgetBone(bonename: string): boolean;
+var
+  idx:integer;
+begin
+  result:=false;
+  idx:=_IdxByName(bonename);
+  if idx>=0 then begin
+    _bones[idx] := _bones[length(_bones)-1];
+    setlength(_bones, length(_bones)-1);
+
     result:=true;
   end;
 end;
@@ -2518,24 +2543,24 @@ begin
     max_limit:=_initT;
 
     if _is16bittransform then begin
-      min16.x1:=-32767;
-      min16.y1:=-32767;
-      min16.z1:=-32767;
+      min16.x1:=-KEY_Quant16;
+      min16.y1:=-KEY_Quant16;
+      min16.z1:=-KEY_Quant16;
 
-      max16.x1:=32767;
-      max16.y1:=32767;
-      max16.z1:=32767;
+      max16.x1:=KEY_Quant16;
+      max16.y1:=KEY_Quant16;
+      max16.z1:=KEY_Quant16;
 
       min_limit:=Qt16ToT(@min16, @_sizeT, @_initT);
       max_limit:=Qt16ToT(@max16, @_sizeT, @_initT);
     end else begin
-      min8.x1:=-127;
-      min8.y1:=-127;
-      min8.z1:=-127;
+      min8.x1:=-KEY_Quant8;
+      min8.y1:=-KEY_Quant8;
+      min8.z1:=-KEY_Quant8;
 
-      max8.x1:=127;
-      max8.y1:=127;
-      max8.z1:=127;
+      max8.x1:=KEY_Quant8;
+      max8.y1:=KEY_Quant8;
+      max8.z1:=KEY_Quant8;
 
       min_limit:=Qt8ToT(@min8, @_sizeT, @_initT);
       max_limit:=Qt8ToT(@max8, @_sizeT, @_initT);
@@ -2620,7 +2645,7 @@ begin
   d:=v_sub(max_limit, min_limit);
   d2:=v_mul(d, 0.5);
   new_initt:=v_add(min_limit, d2);
-  new_sizet:=v_mul(d2, 1/32767);
+  new_sizet:=v_mul(d2, 1/KEY_Quant16);
 
   setlength(new_data, _frames_count);
 
@@ -2645,21 +2670,21 @@ begin
 
       if abs(d.x)>EPS then begin
         qt_value:= trans.x / new_sizet.x;
-        new_data[i].x1:=clamp(qt_value, -32767, 32767);
+        new_data[i].x1:=clamp(qt_value, -KEY_Quant16, KEY_Quant16);
       end else begin
         new_data[i].x1:=0;
       end;
 
       if abs(d.y)>EPS then begin
         qt_value:= trans.y / new_sizet.y;
-        new_data[i].y1:=clamp(qt_value, -32767, 32767);
+        new_data[i].y1:=clamp(qt_value, -KEY_Quant16, KEY_Quant16);
       end else begin
         new_data[i].y1:=0;
       end;
 
       if abs(d.z)>EPS then begin
         qt_value:= trans.z / new_sizet.z;
-        new_data[i].z1:=clamp(qt_value, -32767, 32767);
+        new_data[i].z1:=clamp(qt_value, -KEY_Quant16, KEY_Quant16);
       end else begin
         new_data[i].z1:=0;
       end;
@@ -2737,8 +2762,6 @@ end;
 constructor TOgfMotionBoneTrack.Create(default_key: TMotionKey; frames_count: integer);
 var
   pqr:pTOgfMotionKeyQR;
-const
-  KEY_Quant:integer=32767;
 begin
   Create();
 
@@ -2746,10 +2769,10 @@ begin
   setlength(_rot_keys_rawdata, sizeof(TOgfMotionKeyQR));
 
   pqr:=pTOgfMotionKeyQR(@_rot_keys_rawdata[0]);
-  pqr^.w:= clamp(default_key.q.w * KEY_Quant, -KEY_Quant, KEY_Quant);
-  pqr^.x:= clamp(default_key.q.x * KEY_Quant, -KEY_Quant, KEY_Quant);
-  pqr^.y:= clamp(default_key.q.y * KEY_Quant, -KEY_Quant, KEY_Quant);
-  pqr^.z:= clamp(default_key.q.z * KEY_Quant, -KEY_Quant, KEY_Quant);
+  pqr^.w:= clamp(default_key.q.w * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+  pqr^.x:= clamp(default_key.q.x * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+  pqr^.y:= clamp(default_key.q.y * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+  pqr^.z:= clamp(default_key.q.z * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
 
 
   _trans_keys_present:=false;
@@ -2911,8 +2934,6 @@ begin
 end;
 
 function QrToQuat(pqr:pTOgfMotionKeyQR):Fquaternion;
-const
-  KEY_QuantI: single = 1/32767;
 begin
   result.x:=pqr^.x * KEY_QuantI;
   result.y:=pqr^.y * KEY_QuantI;
@@ -2989,10 +3010,6 @@ var
 
   trans:FVector3;
   qt_value:single;
-const
-  KEY_Quant16:integer=32767;
-  KEY_Quant8:integer=127;
-
 begin
   result:=false;
   if not Loaded() then exit;
@@ -3084,6 +3101,37 @@ begin
     end;
 
   end;
+
+  result:=true;
+end;
+
+function TOgfMotionBoneTrack.MakeStatic(key: TMotionKey): boolean;
+var
+  l:integer;
+  pqr:pTOgfMotionKeyQR;
+begin
+  result:=false;
+  l:=FramesCount();
+
+  Reset();
+
+  _loaded:=true;
+  _is16bittransform:=true;
+  _rot_keys_present:=false;
+  _trans_keys_present:=false;
+  _frames_count:=l;
+
+  setlength(_rot_keys_rawdata, sizeof(TOgfMotionKeyQR));
+  pqr:=pTOgfMotionKeyQR(@_rot_keys_rawdata[0]);
+  pqr^.w:= clamp(key.q.w * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+  pqr^.x:= clamp(key.q.x * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+  pqr^.y:= clamp(key.q.y * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+  pqr^.z:= clamp(key.q.z * KEY_Quant16, -KEY_Quant16, KEY_Quant16);
+
+  setlength(_trans_keys_rawdata, sizeof(TOgfMotionKeyQT16));
+  FillChar(_trans_keys_rawdata[0], length(_trans_keys_rawdata), 0);
+  set_zero(_sizeT);
+  _initT:=key.T;
 
   result:=true;
 end;
@@ -3389,6 +3437,16 @@ begin
 
   if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
     result:=_bone_tracks[track_bone_idx].SetKey(key_idx, k);
+  end;
+end;
+
+function TOgfMotionTrack.MakeBoneStatic(track_bone_idx: integer; k: TMotionKey): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
+    result:=_bone_tracks[track_bone_idx].MakeStatic(k);
   end;
 end;
 
@@ -4329,7 +4387,7 @@ begin
   result:=_GetWrkPose(pose);
 end;
 
-function TOgfSkeleton.SetSkeletonPose(anim_name: string; key_idx: integer; pose: TOgfSkeletonPose): boolean;
+function TOgfSkeleton.SetSkeletonPose(anim_name: string; key_idx: integer; pose: TOgfSkeletonPose): integer;
 var
   i:integer;
   anim_id:integer;
@@ -4337,13 +4395,13 @@ var
   key:TMotionKey;
   m:FMatrix4x4;
 begin
-  result:=false;
+  result:=0;
   if (_animations = nil) or not _animations.Loaded() then exit;
 
   anim_id:=_animations.GetAnimationIdByName(anim_name);
   if anim_id < 0 then exit;
 
-  _SetWrkPose(pose);
+  result:=_SetWrkPose(pose);
 
   for i:=0 to GetBonesCount()-1 do begin
     bone:=_GetBone(i);
@@ -4352,8 +4410,6 @@ begin
     key:=TransformToMotionKey(m);
     _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), key_idx, key);
   end;
-
-  result:=true;
 end;
 
 
@@ -4449,6 +4505,8 @@ begin
   if GetBoneIdxByName(name) <> INVALID_BONE_ID then exit;
 
   parent_name:='';
+  parent_bone.bone:=nil;
+  parent_bone.joint:=nil;
   if parent_id <> INVALID_BONE_ID then begin
     parent_bone:=_GetBone(parent_id);
     if parent_bone.bone = nil then exit;
@@ -4846,6 +4904,8 @@ begin
   if version > OGF_JOINT_IK_VERSION_0 then begin
     _data.friction:=psingle(@ptr[i])^;
     i:=i+sizeof(_data.friction);
+  end else begin
+    _data.friction:=1;
   end;
 
   assert(sz = i);
@@ -4894,6 +4954,7 @@ begin
   result.ik_flags:=0;
   result.break_force:=0;
   result.break_torque:=0;
+  result.friction:=0;
 
   for i:=0 to length(result.limits)-1 do begin
     result.limits[i].limit.x:=0;
@@ -6029,7 +6090,6 @@ end;
 
 function TOgfTextureDataContainer.Deserialize(rawdata: string): boolean;
 var
-  i:integer;
   tex_name, shader_name:string;
 begin
   result:=false;
@@ -6830,7 +6890,6 @@ end;
 function TOgfVertsContainer.BindVerticesToBone(new_bone_index: TBoneID; selection_callback: TVerticesBindCallback; userdata: pointer): boolean;
 var
   i,j,k:integer;
-  w:single;
   b:TVertexBones;
   v:pTOgfVertexCommonData;
   puv:pFVector2;
@@ -6980,7 +7039,6 @@ var
   b:TVertexBones;
   new_data:array of byte;
   phdr:pTOgfVertsHeader;
-  bone:TVertexBone;
   pvert1link:pTOgfVertex1link;
   pvert2link:pTOgfVertex2link;
   pvert3link:pTOgfVertex3link;
@@ -7523,7 +7581,7 @@ end;
 
 procedure TOgfAnimationsParser.Sanitize(skeleton: TOgfSkeleton);
 var
- i, j, n:integer;
+ i, j:integer;
  is_broken:boolean;
  used_motion_ids:array of word;
  def:TOgfMotionDefData;
@@ -7707,6 +7765,35 @@ begin
     if bone<>nil then begin
       bone_id_in_track:=bone.GetIdxInTracks();
       result:=track.SetBoneKey(bone_id_in_track, key_idx, k);
+    end;
+  end;
+end;
+
+function TOgfAnimationsParser.SetAnimationMultiframeKeyForBone(anim_name: string; bone_name: string; start_key: integer; end_key: integer; k: TMotionKey): boolean;
+var
+  track:TOgfMotionTrack;
+  bone:TOgfMotionBoneParams;
+  part_id, bone_id, bone_id_in_track:integer;
+  i:integer;
+begin
+  result:=false;
+  track:=_GetMotionTrackByName(anim_name);
+  if track = nil then exit;
+  if (start_key > end_key) then exit;
+  if (start_key < 0) then exit;
+  if (end_key >= track.GetFramesCount()) then exit;
+
+  if not _params.FindBoneIdxsByName(bone_name, part_id, bone_id) then exit;
+  bone:=_params.GetBone(part_id, bone_id);
+  if bone=nil then exit;
+  bone_id_in_track:=bone.GetIdxInTracks();
+
+  if (start_key = 0) and (end_key >= track.GetFramesCount()-1) then begin
+    result:=track.MakeBoneStatic(bone_id_in_track, k);
+  end else begin
+    result:=true;
+    for i:=start_key to end_key do begin
+      result:=track.SetBoneKey(bone_id_in_track, i, k) and result;
     end;
   end;
 end;
