@@ -733,6 +733,7 @@ type
     function FramesCount():integer;
     function GetKey(idx:integer; var key:TMotionKey):boolean;
     function SetKey(idx:integer; key:TMotionKey):boolean;
+    function SlerpBetweenKeys(start_idx:integer; end_idx:integer):boolean;
 
     function MakeStatic(key:TMotionKey):boolean;
 
@@ -740,6 +741,8 @@ type
 
     function Copy(from:TOgfMotionBoneTrack):boolean;
     function MergeWithTrack(second:TOgfMotionBoneTrack):boolean;
+
+    class procedure KeysSlerp(var k_out:TMotionKey; k1:TMotionKey; k2:TMotionKey; tm:single);
   end;
 
   { TOgfMotionTrack }
@@ -769,6 +772,7 @@ type
     function GetBoneKey(track_bone_idx:integer; key_idx:integer; var k:TMotionKey):boolean;
     function SetBoneKey(track_bone_idx:integer; key_idx:integer; k:TMotionKey):boolean;
     function MakeBoneStatic(track_bone_idx:integer; k:TMotionKey):boolean;
+    function InterpolateBoneKeys(track_bone_idx:integer; start_key_idx:integer; end_key_idx:integer):boolean;
 
     function Copy(from:TOgfMotionTrack):boolean;
     function MergeWithTrack(second:TOgfMotionTrack):boolean;
@@ -1020,6 +1024,7 @@ type
     function GetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; var k:TMotionKey):boolean;
     function SetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; k:TMotionKey):boolean;
     function SetAnimationMultiframeKeyForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; k:TMotionKey):boolean;
+    function InterpotateAnimationKeysForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer):boolean;
 
     function DuplicateAnimation(old_name:string; new_name:string):boolean;
     function MergeAnimations(name_of_new:string; name_of_first:string; name_of_second:string):boolean;
@@ -3105,6 +3110,32 @@ begin
   result:=true;
 end;
 
+function TOgfMotionBoneTrack.SlerpBetweenKeys(start_idx: integer; end_idx: integer): boolean;
+var
+  i:integer;
+  k1, k2, kr:TMotionKey;
+  tm:single;
+begin
+  result:=false;
+  if (start_idx<0) or (start_idx>=FramesCount()) then exit;
+  if (end_idx<0) or (end_idx>=FramesCount()) then exit;
+  if abs(start_idx - end_idx)<2 then exit;
+  if start_idx > end_idx then begin
+    i:=start_idx;
+    start_idx:=end_idx;
+    end_idx:=i;
+  end;
+  if not GetKey(start_idx, k1) then exit;
+  if not GetKey(end_idx, k2) then exit;
+
+  result:=true;
+  for i:=start_idx+1 to end_idx-1 do begin
+    tm:= (i-start_idx)/(end_idx-start_idx);
+    KeysSlerp(kr, k1, k2, tm);
+    result:=SetKey(i, kr) and result;
+  end;
+end;
+
 function TOgfMotionBoneTrack.MakeStatic(key: TMotionKey): boolean;
 var
   l:integer;
@@ -3255,6 +3286,26 @@ begin
   end;
 
   result:=true;
+end;
+
+class procedure TOgfMotionBoneTrack.KeysSlerp(var k_out: TMotionKey; k1: TMotionKey; k2: TMotionKey; tm: single);
+var
+  dt:FVector3;
+begin
+  if (abs(k1.Q.x - k2.Q.x)>EPS) or (abs(k1.Q.y - k2.Q.y)>EPS) or (abs(k1.Q.z - k2.Q.z)>EPS) or (abs(k1.Q.w - k2.Q.w)>EPS) then begin
+    q_slerp(k_out.Q, k1.Q, k2.Q, tm);
+  end else begin
+    k_out.Q:=k1.Q;
+  end;
+
+
+  dt:=v_sub(k2.T, k1.T);
+  if (abs(dt.x)>EPS) or (abs(dt.y)>EPS) or (abs(dt.z)>EPS) then begin
+    dt:=v_mul(dt, tm);
+    k_out.T:=v_add(k1.T, dt);
+  end else begin
+    k_out.T:=k1.T;
+  end;
 end;
 
 { TOgfMotionTrack }
@@ -3447,6 +3498,16 @@ begin
 
   if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
     result:=_bone_tracks[track_bone_idx].MakeStatic(k);
+  end;
+end;
+
+function TOgfMotionTrack.InterpolateBoneKeys(track_bone_idx: integer; start_key_idx: integer; end_key_idx: integer): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
+    result:=_bone_tracks[track_bone_idx].SlerpBetweenKeys(start_key_idx, end_key_idx);
   end;
 end;
 
@@ -7794,6 +7855,28 @@ begin
     result:=true;
     for i:=start_key to end_key do begin
       result:=track.SetBoneKey(bone_id_in_track, i, k) and result;
+    end;
+  end;
+end;
+
+function TOgfAnimationsParser.InterpotateAnimationKeysForBone(anim_name: string; bone_name: string; start_key: integer; end_key: integer): boolean;
+var
+  track:TOgfMotionTrack;
+  bone:TOgfMotionBoneParams;
+  part_id, bone_id:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  track:=_GetMotionTrackByName(anim_name);
+  if (start_key > end_key) then exit;
+  if (start_key < 0) then exit;
+  if (end_key >= track.GetFramesCount()) then exit;
+
+  if _params.FindBoneIdxsByName(bone_name, part_id, bone_id) then begin
+    bone:=_params.GetBone(part_id, bone_id);
+    if bone<>nil then begin
+      result:=track.InterpolateBoneKeys(bone.GetIdxInTracks(), start_key, end_key);
     end;
   end;
 end;

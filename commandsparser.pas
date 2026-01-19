@@ -174,6 +174,7 @@ TModelSlot = class
 
   function _CmdAnimBoneMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneCopyKeyToKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimBoneSlerpKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 public
   constructor Create(id:TSlotId; container:TSlotsContainer);
@@ -2166,6 +2167,68 @@ begin
   end;
 end;
 
+function TModelSlot._CmdAnimBoneSlerpKeys(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bone_idx, anim_idx:integer;
+  upper_ud:TObject;
+  argsparser:TCommandsArgumentsParser;
+  startframe, endframe:integer;
+
+  def:TOgfMotionDefData;
+  key:TMotionKey;
+  bonename:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    bone_idx:=(userdata as TCommandIndexArg).Get();
+    upper_ud:=TObject((userdata as TCommandIndexArg).GetUserdata());
+    if upper_ud = nil then exit;
+    if (upper_ud <> nil) and (upper_ud is TCommandIndexArg) then begin
+      anim_idx:=(upper_ud.Create as TCommandIndexArg).Get();
+      def:=_data.Animations().GetAnimationParams(anim_idx);
+      if length(def.name)=0 then exit;
+
+      argsparser:=TCommandsArgumentsParser.Create();
+      try
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'start frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'end frame index');
+
+        if argsparser.Parse(args) and
+           argsparser.GetAsInt(0, startframe) and
+           argsparser.GetAsInt(1, endframe)
+        then begin
+
+          if startframe < 0 then begin
+             startframe:=0;
+          end;
+
+          if endframe < 0 then begin
+            endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
+          end;
+
+          bonename:=_data.Skeleton().GetBoneName(bone_idx);
+
+          if not _data.Animations().GetAnimationKeyForBone(def.name, bonename, startframe, key) then begin
+            result_description.SetDescription('can''t get source key');
+          end else if not  _data.Animations().InterpotateAnimationKeysForBone(def.name, bonename, startframe, endframe) then begin
+            result_description.SetDescription('key interpolation failed');
+          end else begin
+            result:=true;
+          end;
+
+        end else begin
+          result_description.SetDescription(argsparser.GetLastErr());
+          if length(result_description.GetDescription())=0 then begin
+            result_description.SetDescription('can''t get parsed arguments');
+          end;
+        end;
+      finally
+        FreeAndNil(argsparser);
+      end;
+    end;
+  end;
+end;
+
 function TModelSlot._CmdChildInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
@@ -3090,6 +3153,7 @@ begin
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('clonekey', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneCopyKeyToKeys, 'replace bone keys with data from another bone key, arguments: source key id, first target key id, last target key id'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('interpolate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSlerpKeys, 'interpolate between two keys, arguments: first key id, last key id'), CommandItemTypeCall);
 
 end;
 

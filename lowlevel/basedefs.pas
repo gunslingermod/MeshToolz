@@ -104,6 +104,7 @@ type
   procedure q_rotation(var q:Fquaternion; var m:FMatrix4x4);
   procedure q_set(var q:Fquaternion; x:single; y:single; z:single; w:single);
   procedure q_scale(var q:Fquaternion; n:single);
+  procedure q_slerp(var r:Fquaternion; q0:Fquaternion; q1:Fquaternion; tm:single);
 
 
   function distance_between(var point1:FVector3; var point2:FVector3):single;
@@ -496,6 +497,40 @@ begin
   dz:=point2.z-point1.z;
 
   result:=sqrt(dx*dx+dy*dy+dz*dz);
+end;
+
+procedure q_slerp(var r: Fquaternion; q0: Fquaternion; q1: Fquaternion; tm: single);
+var
+  Scale0,Scale1,sign,cosom:single;
+  omega,i_sinom,t_omega:single;
+const
+  EPS: single = 0.00001;
+begin
+  cosom := (q0.w * q1.w) + (q0.x * q1.x) + (q0.y * q1.y) + (q0.z * q1.z);
+  if (cosom < 0) then begin
+    cosom := -cosom;
+    sign := -1;
+  end else begin
+    sign := 1;
+  end;
+
+  if ( (1 - cosom) > EPS ) then begin
+    omega := arccos(cosom);
+    i_sinom := 1 / sin(omega);
+    t_omega := tm*omega;
+    Scale0 := sin(omega - t_omega) * i_sinom;
+    Scale1 := sin(t_omega) * i_sinom;
+  end else begin
+    Scale0 := 1 - tm;
+    Scale1 := tm;
+  end;
+  Scale1 := Scale1 * sign;
+
+  r.x := Scale0 * q0.x + Scale1 * q1.x;
+  r.y := Scale0 * q0.y + Scale1 * q1.y;
+  r.z := Scale0 * q0.z + Scale1 * q1.z;
+  r.w := Scale0 * q0.w + Scale1 * q1.w;
+
 end;
 
 end.
