@@ -159,6 +159,11 @@ TModelSlot = class
   function _CmdBoneApplySettings(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimSetAccrue(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimSetFalloff(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimSetPower(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimSetSpeed(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+
   function _CmdAnimKeyInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyPoseCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyPosePaste(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1481,6 +1486,157 @@ begin
   end;
 end;
 
+function TModelSlot._CmdAnimSetAccrue(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  value:single;
+  defs:TOgfMotionDefData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'new value');
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, value)
+      then begin
+        defs.accrue:=value;
+        if not _data.Animations().UpdateAnimationParams(idx, defs) then begin
+          result_description.SetDescription('can''t update animation params');
+        end else begin
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end
+end;
+
+function TModelSlot._CmdAnimSetFalloff(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  value:single;
+  defs:TOgfMotionDefData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'new value');
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, value)
+      then begin
+        defs.falloff:=value;
+        if not _data.Animations().UpdateAnimationParams(idx, defs) then begin
+          result_description.SetDescription('can''t update animation params');
+        end else begin
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end
+end;
+
+function TModelSlot._CmdAnimSetPower(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  value:single;
+  defs:TOgfMotionDefData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'new value');
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, value)
+      then begin
+        defs.power:=value;
+        if not _data.Animations().UpdateAnimationParams(idx, defs) then begin
+          result_description.SetDescription('can''t update animation params');
+        end else begin
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end
+end;
+
+function TModelSlot._CmdAnimSetSpeed(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  value:single;
+  defs:TOgfMotionDefData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'new value');
+      if argsparser.Parse(args) and
+         argsparser.GetAsSingle(0, value)
+      then begin
+        defs.speed:=value;
+        if not _data.Animations().UpdateAnimationParams(idx, defs) then begin
+          result_description.SetDescription('can''t update animation params');
+        end else begin
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end
+end;
 
 function TModelSlot._CmdAnimKeyInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
@@ -2922,6 +3078,10 @@ begin
   _commands_animations.DoRegister(TCommandSetup.Create('pastekey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPosePaste, 'paste previosly copied skeleton pose into the specified frame, argument is frame id'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setlength', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackSetLength, 'set new frames count for animation, argument is new frames count'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setaccrue', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetAccrue, 'set animation accrue parameter value, argument is a number'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setfalloff', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetFalloff, 'set animation falloff parameter value, argument is a number'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setpower', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetPower, 'set animation power parameter value, argument is a number'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setspeed', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetSpeed, 'set animation speed parameter value, argument is a number'), CommandItemTypeCall);
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('marks', @_IsAnimationsLoadedPrecondition, _commands_mmarks, 'access group of properties and procedures associated with motion marks'));
   _commands_mmarks.DoRegister(TCommandSetup.Create('add', @_IsAnimationsLoadedPrecondition, @_CmdAnimAddMotionMark, 'add new interval, expects 3 arguments (mark name, interval start, interval end)'), CommandItemTypeCall);
