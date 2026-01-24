@@ -613,6 +613,7 @@ type
     function GetBoneIdxByName(name:string):TBoneID; overload;
     function GetBoneName(idx:TBoneID):string;
     function GetBoneParentName(idx:TBoneID):string;
+    function IsBoneHasSuchParentOrGrandParent(idx:TBoneID; idx_to_check_if_parent:TBoneID):boolean;
     function GetBoneParentIdx(idx:TBoneID):TBoneId;
     function GetBoneMaterial(idx:TBoneID):string;
     function GetBoneMassParams(idx:TBoneID; var center:FVector3; var mass:single):boolean;
@@ -630,6 +631,7 @@ type
     function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
     function MoveBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; is_absolute:boolean; fixed_children:boolean):boolean;
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer):boolean;
+    function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
@@ -4396,6 +4398,22 @@ begin
   end;
 end;
 
+function TOgfSkeleton.IsBoneHasSuchParentOrGrandParent(idx: TBoneID; idx_to_check_if_parent: TBoneID): boolean;
+var
+  current_parent_idx:TBoneID;
+begin
+  result:=false;
+
+  current_parent_idx:=GetBoneParentIdx(idx);
+  if current_parent_idx <> INVALID_BONE_ID then begin
+    if current_parent_idx = idx_to_check_if_parent then begin
+      result:=true;
+    end else begin
+      result:=IsBoneHasSuchParentOrGrandParent(current_parent_idx, idx_to_check_if_parent);
+    end
+  end;
+end;
+
 function TOgfSkeleton.GetBoneParentIdx(idx: TBoneID): TBoneId;
 var
   parent_name:string;
@@ -4606,6 +4624,56 @@ begin
       end;
 
       result:=true;
+  end;
+end;
+
+function TOgfSkeleton.FollowBone(bone_idx: TBoneID; anim_name: string; source_bone_idx: TBoneID; source_key_idx: integer; target_key_idx: integer): boolean;
+var
+  old_parent_name :string;
+  old_parent_idx:TBoneID;
+  bone, source_bone:TOgfBoneData;
+  m_global:FMatrix4x4;
+  m:FMatrix4x4;
+  k:TMotionKey;
+begin
+  result:=false;
+  bone:=_GetBone(bone_idx);
+  if bone.bone = nil then exit;
+  source_bone:=_GetBone(source_bone_idx);
+  if source_bone.bone = nil then exit;
+  if IsBoneHasSuchParentOrGrandParent(bone_idx, source_bone_idx) then exit;
+
+  old_parent_idx:=INVALID_BONE_ID;
+  old_parent_name:=bone.bone.GetParentName();
+  if length(old_parent_name) > 0 then begin
+    old_parent_idx:=GetBoneIdxByName(old_parent_name);
+  end;
+
+  // temporarily reparent to source bone in source key, remember bone transform
+  if not _SetKeyPoseForWork(anim_name, source_key_idx) then exit;
+  if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m_global) then exit;
+  if not _ConvertTransformFromGlobalIntoWrkBoneSpace(source_bone_idx, m_global, m) then exit;
+  bone.bone._SetParentName(source_bone.bone.GetName());
+
+  try
+    //go to target key pose, apply the same transform to the bone
+    if not _SetKeyPoseForWork(anim_name, target_key_idx) then exit;
+    bone.joint._AssignWrkPose(m);
+
+    //calculate new matrix of the bone when it's parented to the source and reparent the bone back using new transform
+    if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m_global) then exit;
+
+    if old_parent_idx<>INVALID_BONE_ID then begin
+      if not _ConvertTransformFromGlobalIntoWrkBoneSpace(old_parent_idx, m_global, m) then exit;
+    end;
+
+    k:=TransformToMotionKey(m);
+    _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), target_key_idx, k);
+
+    result:=true;
+
+  finally
+    bone.bone._SetParentName(old_parent_name);
   end;
 end;
 
