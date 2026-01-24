@@ -441,35 +441,130 @@ end;
 
 procedure q_rotation(var q: Fquaternion; var m: FMatrix4x4);
 var
-  tr,s:single;
-begin
-  tr:=m.i.x+m.j.y+m.k.z+1;
-  if tr > 0 then begin
-    s := 0.5 / sqrt(tr);
-    q.w := 0.25 / S;
-    q.x := ( m.k.y - m.j.z ) * S;
-    q.y := ( m.i.z - m.k.x ) * S;
-    q.z := ( m.j.x - m.i.y ) * S;
-  end else if (m.i.x > m.j.y ) and ( m.i.x > m.k.z)  then begin
-    s := sqrt( 1.0 + m.i.x - m.j.y - m.k.z ) * 2;
-    q.x := 0.5 / S;
-    q.y := (m.i.y + m.j.x ) / S;
-    q.z := (m.i.z + m.k.x ) / S;
-    q.w := (m.j.z + m.k.y ) / S;
-  end else if ( m.j.y > m.k.z ) then begin
-    s  := sqrt( 1.0 + m.j.y - m.i.x - m.k.z ) * 2;
-    q.x := (m.i.y + m.j.x ) / S;
-    q.y := 0.5 / S;
-    q.z := (m.j.z + m.k.y ) / S;
-    q.w := (m.i.z + m.k.x ) / S;
-  end else begin
-    s  := sqrt( 1.0 + m.k.z - m.i.x - m.j.y ) * 2;
-    q.x := (m.i.z + m.k.x ) / S;
-    q.y := (m.j.z + m.k.y ) / S;
-    q.z := 0.5 / S;
-    q.w := (m.i.y + m.j.x ) / S;
-  end;
+  trace,s:single;
+  biggest:integer;
+const
+  BIGGEST_I: integer = 0;
+  BIGGEST_E: integer = 1;
+  BIGGEST_A: integer = 2;
 
+  TRACE_QZERO_TOLERANCE:single = 0.1;
+begin
+  trace := M.i.x + M.j.y + M.k.z;
+
+  if (trace > 0) then begin
+    s := sqrt(trace + 1);
+    q.w := s * 0.5;
+    s := 0.5 / s;
+    q.x := (M.k.y - M.j.z) * s;
+    q.y := (M.i.z - M.k.x) * s;
+    q.z := (M.j.x - M.i.y) * s;
+  end else begin
+    if (M.i.x > M.j.y) then begin
+      if (M.k.z > M.i.x) then begin
+        biggest := BIGGEST_I;
+      end else begin
+        biggest := BIGGEST_A;
+      end;
+    end else begin
+      if (M.k.z > M.i.x) then begin
+        biggest := BIGGEST_I;
+      end else begin
+        biggest := BIGGEST_E;
+      end;
+    end;
+
+    if biggest = BIGGEST_A then begin
+      s := sqrt( M.i.x - (M.j.y + M.k.z) + 1);
+      if (s > TRACE_QZERO_TOLERANCE) then begin
+        q.x := s * 0.5;
+        s := 0.5 / s;
+        q.w := (M.k.y - M.j.z) * s;
+        q.y := (M.i.y + M.j.x) * s;
+        q.z := (M.i.z + M.k.x) * s;
+      end else begin
+        // I
+        s := sqrt( M.k.z - (M.i.x + M.j.y) + 1);
+        if (s > TRACE_QZERO_TOLERANCE) then begin
+          q.z := s * 0.5;
+          s := 0.5 / s;
+          q.w := (M.j.x - M.i.y) * s;
+          q.x := (M.k.x + M.i.z) * s;
+          q.y := (M.k.y + M.j.z) * s;
+        end else begin
+          // E
+          s := sqrt( M.j.y - (M.k.z + M.i.x) + 1);
+          if (s > TRACE_QZERO_TOLERANCE) then begin
+            q.y := s * 0.5;
+            s := 0.5 / s;
+            q.w := (M.i.z - M.k.x) * s;
+            q.z := (M.j.z + M.k.y) * s;
+            q.x := (M.j.x + M.i.y) * s;
+          end;
+        end;
+      end;
+
+    end else if biggest = BIGGEST_E then begin
+      s := sqrt( M.j.y - (M.k.z + M.i.x) + 1);
+      if (s > TRACE_QZERO_TOLERANCE) then begin
+        q.y := s * 0.5;
+        s := 0.5 / s;
+        q.w := (M.i.z - M.k.x) * s;
+        q.z := (M.j.z + M.k.y) * s;
+        q.x := (M.j.x + M.i.y) * s;
+      end else begin
+        // I
+        s := sqrt( M.k.z - (M.i.x + M.j.y) + 1);
+        if (s > TRACE_QZERO_TOLERANCE) then begin
+          q.z := s * 0.5;
+          s := 0.5 / s;
+          q.w := (M.j.x - M.i.y) * s;
+          q.x := (M.k.x + M.i.z) * s;
+          q.y := (M.k.y + M.j.z) * s;
+        end else begin
+          // A
+          s := sqrt( M.i.x - (M.j.y + M.k.z) + 1);
+          if (s > TRACE_QZERO_TOLERANCE) then begin
+            q.x := s * 0.5;
+            s := 0.5 / s;
+            q.w := (M.k.y - M.j.z) * s;
+            q.y := (M.i.y + M.j.x) * s;
+            q.z := (M.i.z + M.k.x) * s;
+          end;
+        end;
+      end;
+
+    end else if biggest = BIGGEST_I then begin
+      s := sqrt( M.k.z - (M.i.x + M.j.y) + 1);
+      if (s > TRACE_QZERO_TOLERANCE) then begin
+        q.z := s * 0.5;
+        s := 0.5 / s;
+        q.w := (M.j.x - M.i.y) * s;
+        q.x := (M.k.x + M.i.z) * s;
+        q.y := (M.k.y + M.j.z) * s;
+      end else begin
+        // A
+        s := sqrt( M.i.x - (M.j.y + M.k.z) + 1);
+        if (s > TRACE_QZERO_TOLERANCE) then begin
+          q.x := s * 0.5;
+          s := 0.5 / s;
+          q.w := (M.k.y - M.j.z) * s;
+          q.y := (M.i.y + M.j.x) * s;
+          q.z := (M.i.z + M.k.x) * s;
+        end else begin
+          // E
+          s := sqrt( M.j.y - (M.k.z + M.i.x) + 1);
+          if (s > TRACE_QZERO_TOLERANCE) then begin
+            q.y := s * 0.5;
+            s := 0.5 / s;
+            q.w := (M.i.z - M.k.x) * s;
+            q.z := (M.j.z + M.k.y) * s;
+            q.x := (M.j.x + M.i.y) * s;
+	  end;
+        end;
+      end;
+    end;
+  end;
 end;
 
 procedure q_set(var q: Fquaternion; x: single; y: single; z: single; w: single);
