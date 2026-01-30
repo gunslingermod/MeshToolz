@@ -175,6 +175,7 @@ TModelSlot = class
 
   function _CmdAnimBoneMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneRotate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimBoneAim(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneFollow(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneCopyKeyToKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneSlerpKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1725,6 +1726,7 @@ begin
                 if _data.Animations().GetAnimationKeyForBone(defs.name, s, keyid, key) then begin
                   r:=r+'Bone '+s+' data in key '+inttostr(keyid)+':'+chr($0d)+chr($0a);
                   r:=r+'- Local position: '+floattostr(key.T.x)+', '+floattostr(key.T.y)+', '+floattostr(key.T.z)+chr($0d)+chr($0a);
+                  r:=r+'- Local rotation: '+floattostr(key.Q.x)+', '+floattostr(key.Q.y)+', '+floattostr(key.Q.z)+', '+floattostr(key.Q.w)+chr($0d)+chr($0a);
 
                   if _data.Skeleton().GetGlobalBonePositionInPose(i, defs.name, keyid, pos) then begin
                     r:=r+'- Global position: '+floattostr(pos.x)+', '+floattostr(pos.y)+', '+floattostr(pos.z)+chr($0d)+chr($0a);
@@ -2197,6 +2199,83 @@ begin
           cnt:=0;
           for i:=startframe to endframe do begin
             if _data.Skeleton().RotateBone(bone_idx, v, def.name, i) then begin
+              cnt:=cnt+1;
+            end;
+          end;
+
+          if cnt = 0 then begin
+            result:=startframe > endframe;
+            if result then result_description.SetWarningFlag(true);
+            result_description.SetDescription('no frames affected');
+          end else if cnt <> endframe-startframe+1 then begin
+            result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+            result_description.SetWarningFlag(true);
+            result:=true;
+          end else begin
+            result:=true;
+          end;
+
+        end else begin
+          result_description.SetDescription(argsparser.GetLastErr());
+          if length(result_description.GetDescription())=0 then begin
+            result_description.SetDescription('can''t get parsed arguments');
+          end;
+        end;
+      finally
+        FreeAndNil(argsparser);
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdAnimBoneAim(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bone_idx, anim_idx:integer;
+  upper_ud:TObject;
+  argsparser:TCommandsArgumentsParser;
+
+  target:FVector3;
+  startframe, endframe, i:integer;
+
+  def:TOgfMotionDefData;
+  cnt:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    bone_idx:=(userdata as TCommandIndexArg).Get();
+    upper_ud:=TObject((userdata as TCommandIndexArg).GetUserdata());
+    if upper_ud = nil then exit;
+    if (upper_ud <> nil) and (upper_ud is TCommandIndexArg) then begin
+      anim_idx:=(upper_ud.Create as TCommandIndexArg).Get();
+      def:=_data.Animations().GetAnimationParams(anim_idx);
+      if length(def.name)=0 then exit;
+
+      argsparser:=TCommandsArgumentsParser.Create();
+      try
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'target X coordinate');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'target Y coordinate');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'target Z coordinate');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'first frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'last frame index');
+
+        if argsparser.Parse(args) and
+           argsparser.GetAsSingle(0, target.x) and
+           argsparser.GetAsSingle(1, target.y) and
+           argsparser.GetAsSingle(2, target.z) and
+           argsparser.GetAsInt(3, startframe) and
+           argsparser.GetAsInt(4, endframe, startframe)
+        then begin
+          if startframe < 0 then begin
+             startframe:=0;
+          end;
+
+          if endframe < 0 then begin
+            endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
+          end;
+
+          cnt:=0;
+          for i:=startframe to endframe do begin
+            if _data.Skeleton().AimBone(bone_idx, target, def.name, i) then begin
               cnt:=cnt+1;
             end;
           end;
@@ -3346,7 +3425,7 @@ begin
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('animation', @_IsAnimationsLoadedPrecondition, _commands_animations, 'access group of properties and procedures associated with loaded animations'));
   _commands_animations.DoRegister(TCommandSetup.Create('info', @_IsAnimationsLoadedPrecondition, @_CmdAnimInfo, 'display animations info'), CommandItemTypeCall);
-  _commands_animations.DoRegister(TCommandSetup.Create('keyinfo', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyInfo, 'show bone parameters is specific key; arg 1 - key index, arg 2 (optional) - bone name'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('keyinfo', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyInfo, 'show bone parameters is specific key; arg 1 - key index, arg 2 (optional) - bones'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('copykey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPoseCopy, 'copy skeleton pose in the specified frame, argument 1 is frame id, argument 2 (optional) is bones'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('pastekey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPosePaste, 'paste previosly copied skeleton pose into the specified frame, argument is frame id'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
@@ -3363,6 +3442,7 @@ begin
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneRotate, 'rotate bone using its local axes, arguments: X, Y, Z rotation components, start frame index, end frame index'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('aim', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneAim, 'aim bone to the specified target, arguments: X, Y, Z global coordinates of target, start frame index, end frame index'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('followbone', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneFollow, 'folow for the other bone as if it was a parent in a source key, args: source bone, source frame index, first target frame index, last target frame index'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('clonekey', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneCopyKeyToKeys, 'replace bone keys with data from another bone key, arguments: source key id, first target key id, last target key id'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('interpolate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSlerpKeys, 'interpolate between two keys, arguments: first key id, last key id'), CommandItemTypeCall);

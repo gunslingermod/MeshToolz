@@ -84,9 +84,14 @@ type
   function v_add(var v1:FVector3; var v2:FVector3):FVector3;
   function v_sub(var v1:FVector3; var v2:FVector3):FVector3;
   function v_mul(var v:FVector3; n:single):FVector3;
-  function v_crossproduct(v1:pFVector3; v2:pFVector3):FVector3;
+  function v_crossproduct(var v1:FVector3; var v2:FVector3):FVector3;
+  function v_dotproduct(var v1:FVector3; var v2:FVector3):single;
+  function v_magnitude(var v:FVector3):single;
+  function v_angle_between(var v1:FVector3; var v2:FVector3):single;
+  function v_normalize(var v:FVector3):FVector3;
 
   function m_mul(var m:FMatrix3x3; var v:FVector3):FVector3; overload;
+  function m_mul(var m:FMatrix4x4; n:single):FMatrix4x4; overload;
   function m_mul(var m:FMatrix4x4; var q:Fquaternion):Fquaternion; overload;
   function m_mul(var m1:FMatrix4x4; var m2:FMatrix4x4):FMatrix4x4; overload;
   function m_mul4x3(var m1:FMatrix4x4; var m2:FMatrix4x4):FMatrix4x4; overload;
@@ -108,6 +113,7 @@ type
 
 
   function distance_between(var point1:FVector3; var point2:FVector3):single;
+  function rotation_between(var src:FVector3; var dst:FVector3):FMatrix4x4;
 
 implementation
 uses math;
@@ -242,11 +248,52 @@ begin
   result.z:=v.z*n;
 end;
 
-function v_crossproduct(v1: pFVector3; v2: pFVector3): FVector3;
+function v_crossproduct(var v1: FVector3; var v2: FVector3): FVector3;
 begin
-  result.x:=v1^.y * v2^.z - v1^.z * v2^.y;
-  result.y:=v1^.z * v2^.x - v1^.x * v2^.z;
-  result.z:=v1^.x * v2^.y - v1^.y * v2^.x;
+  result.x:=v1.y * v2.z - v1.z * v2.y;
+  result.y:=v1.z * v2.x - v1.x * v2.z;
+  result.z:=v1.x * v2.y - v1.y * v2.x;
+end;
+
+function v_dotproduct(var v1: FVector3; var v2: FVector3): single;
+begin
+  result:=v1.x*v2.x + v1.y*v2.y + v1.z*v2.z;
+end;
+
+function v_magnitude(var v: FVector3): single;
+begin
+  result:= sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+end;
+
+function v_angle_between(var v1: FVector3; var v2: FVector3): single;
+var
+  mag1, mag2, angle_cos:single;
+const
+  EPS: single = 0.000001;
+begin
+  result:=0;
+  mag1:=v_magnitude(v1);
+  mag2:=v_magnitude(v2);
+
+  if ( mag1 < EPS) or (mag2 < EPS) then exit;
+
+  angle_cos := v_dotproduct(v1, v2) / (mag1*mag2);
+  if ( angle_cos < -1 ) then begin
+    angle_cos := -1;
+  end else if ( angle_cos > 1) then begin
+    angle_cos := 1;
+  end;
+
+  result:=arccos(angle_cos);
+end;
+
+function v_normalize(var v: FVector3): FVector3;
+var
+  mag:single;
+begin
+  mag:=v_magnitude(v);
+  mag:=1/mag;
+  result:=v_mul(v, mag);
 end;
 
 function m_mul(var m: FMatrix3x3; var v: FVector3): FVector3;
@@ -254,6 +301,16 @@ begin
   result.x:=m.i.x*v.x+m.i.y*v.y+m.i.z*v.z;
   result.y:=m.j.x*v.x+m.j.y*v.y+m.j.z*v.z;
   result.z:=m.k.x*v.x+m.k.y*v.y+m.k.z*v.z;
+end;
+
+function m_mul(var m: FMatrix4x4; n: single): FMatrix4x4;
+begin
+  result:=m;
+
+  q_scale(m.i, n);
+  q_scale(m.j, n);
+  q_scale(m.k, n);
+  q_scale(m.c, n);
 end;
 
 function m_mul(var m: FMatrix4x4; var q: Fquaternion): Fquaternion;
@@ -592,6 +649,39 @@ begin
   dz:=point2.z-point1.z;
 
   result:=sqrt(dx*dx+dy*dy+dz*dz);
+end;
+
+function rotation_between(var src: FVector3; var dst: FVector3): FMatrix4x4;
+var
+  v:FVector3;
+  c,k:single;
+const
+  EPS:single=0.000001;
+begin
+  src:=v_normalize(src);
+  dst:=v_normalize(dst);
+
+  v:=v_crossproduct(src, dst);
+  c:=v_dotproduct(src, dst);
+
+  m_identity(result);
+  if abs(c-1) < EPS then begin
+    // vectors are almost the same
+  end else if abs(c+1) < EPS then begin
+    //vectors are collinear and have opposite directions
+    m_mul(result, -1);
+  end else begin
+    k := 1/(1 + c);
+
+    result.i.x:=v.x * v.x * k + c;     result.i.y:=v.x * v.y * k + v.z;   result.i.z:=v.x * v.z * k - v.y;
+    result.j.x:=v.y * v.x * k - v.z;   result.j.y:=v.y * v.y * k + c;     result.j.z:=v.y * v.z * k + v.x;
+    result.k.x:=v.z * v.x * k + v.y;   result.k.y:=v.z * v.y * k - v.x;   result.k.z:=v.z * v.z * k + c;
+
+
+    {result.i.x:=v.x * v.x * k + c;     result.i.y:=v.y * v.x * k - v.z;   result.i.z:=v.z * v.x * k + v.y;
+    result.j.x:=v.x * v.y * k + v.z;   result.j.y:=v.y * v.y * k + c;     result.j.z:=v.z * v.y * k - v.x;
+    result.k.x:=v.x * v.z * k - v.y;   result.k.y:=v.y * v.z * k + v.x;   result.k.z:=v.z * v.z * k + c; }
+  end;
 end;
 
 procedure q_slerp(var r: Fquaternion; q0: Fquaternion; q1: Fquaternion; tm: single);

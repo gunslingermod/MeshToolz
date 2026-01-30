@@ -597,6 +597,8 @@ type
     function _ConvertTransformFromGlobalIntoWrkBoneSpace(bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
     function _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(child_bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
     function _GetWrkBoneTransformRelativeToBindPose(bone_idx:TBoneID; var m:FMatrix4x4):boolean;
+
+    function _AimChildBoneTo(bone_idx:TBoneID; global_target_pos:FVector3):boolean;
   public
     constructor Create();
     procedure Reset;
@@ -632,6 +634,7 @@ type
     function MoveBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; is_absolute:boolean; fixed_children:boolean):boolean;
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer):boolean;
+    function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
@@ -4204,6 +4207,51 @@ begin
   result:=true;
 end;
 
+function TOgfSkeleton._AimChildBoneTo(bone_idx: TBoneID; global_target_pos: FVector3): boolean;
+var
+  bone, parent_bone:TOgfBoneData;
+  parent_idx:TBoneID;
+  parent_name:string;
+  wrk_transform:FMatrix4x4;
+  local_target_pos, local_current_pos:FVector3;
+
+  mrot:FMatrix4x4;
+
+  c_to_g, p_to_g:FMatrix4x4;
+  c_pos_g, p_pos_g, cur_dir_g, target_dir_g:FVector3;
+
+begin
+  // rotate PARENT bone in grandparent's space to make CHILD point to target
+
+
+  result:=false;
+  if not Loaded() then exit;
+  bone:=_GetBone(bone_idx);
+  if bone.bone = nil then exit;
+
+  parent_name:=bone.bone.GetParentName();
+  if length(parent_name)=0 then exit;
+
+  parent_idx:=GetBoneIdxByName(parent_name);
+  if parent_idx=INVALID_BONE_ID then exit;
+
+  parent_bone:=_GetBone(parent_idx);
+  if parent_bone.bone = nil then exit;
+
+
+  // parent's space
+  if not _GetWrkBoneLocalTransform(bone_idx, wrk_transform) then exit;
+  m_get_translation(wrk_transform, local_current_pos);
+  if not _ConvertGlobalCoordinatesIntoParentSpaceOfWrkBone(bone_idx, global_target_pos, local_target_pos) then exit;
+  mrot:=rotation_between(local_current_pos, local_target_pos);
+
+  //got rotation matrix in the space of parent bone
+  if not _GetWrkBoneLocalTransform(parent_idx, wrk_transform) then exit;
+  wrk_transform:=m_mul(wrk_transform, mrot);
+  parent_bone.joint._AssignWrkPose(wrk_transform);
+  result:=true;
+end;
+
 function TOgfSkeleton.GetBoneIdxByName(name: string): TBoneID;
 var
   bone:TOgfBone;
@@ -4668,13 +4716,37 @@ begin
     end;
 
     k:=TransformToMotionKey(m);
-    _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), target_key_idx, k);
+    if not _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), target_key_idx, k) then exit;
 
     result:=true;
 
   finally
     bone.bone._SetParentName(old_parent_name);
   end;
+end;
+
+function TOgfSkeleton.AimBone(bone_idx: TBoneID; target: FVector3; anim_name: string; key_idx: integer): boolean;
+var
+  bone:TOgfBoneData;
+  parent_name:string;
+  parent_id:TBoneID;
+  m:FMatrix4x4;
+  k:TMotionKey;
+begin
+  result:=false;
+  bone:=_GetBone(bone_idx);
+  if bone.bone = nil then exit;
+  parent_name:=bone.bone.GetParentName();
+  if length(parent_name) = 0 then exit;
+  parent_id:=GetBoneIdxByName(parent_name);
+  if parent_id = INVALID_BONE_ID then exit;
+
+  if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+  if not _AimChildBoneTo(bone_idx, target) then exit;
+  if not _GetWrkBoneLocalTransform(parent_id, m) then exit;
+  k:=TransformToMotionKey(m);
+  if not _animations.SetAnimationKeyForBone(anim_name, parent_name, key_idx, k) then exit;
+  result:=true;
 end;
 
 function TOgfSkeleton.AddBone(name: string; parent_id: TBoneId; pos: FVector3; dir: FVector3; is_in_global_space: boolean; force_bind_pose:boolean): TBoneId;
