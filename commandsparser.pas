@@ -82,6 +82,7 @@ TModelSlot = class
   _id:TSlotId;
   _container:TSlotsContainer;
   _selectionarea:TSelectionArea;
+  _iksolver:TOgfIKSolverBase;
 
   _commands_selection:TCommandsStorage;
   _commands_upperlevel:TCommandsStorage;
@@ -92,6 +93,7 @@ TModelSlot = class
   _commands_animbones:TBonesCommands;
   _commands_animations:TAnimationsCommands;
   _commands_mmarks:TCommandsStorage;
+  _commands_iksolver:TCommandsStorage;
 
   function _CmdSetPivot(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSelectionSphere(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -172,6 +174,9 @@ TModelSlot = class
   function _CmdAnimTrackSetLength(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimAddMotionMark(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimResetMotionMarks(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+
+  function _CmdIKSolverReset(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdIKSolverSimpleLimb(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimBoneMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneRotate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1386,7 +1391,9 @@ begin
          argsparser.GetAsBool(3, is_absolute_coords, false) and
          argsparser.GetAsBool(4, fix_children, false)
       then begin
-        if _data.Skeleton().MoveBone(idx, v, '', -1, is_absolute_coords, fix_children) then begin
+        if _iksolver<>nil then begin
+          result_description.SetDescription('IK doesn''t supported when changing bind pose, please reset IK solver!');
+        end else if _data.Skeleton().MoveBone(idx, v, '', -1, is_absolute_coords, fix_children, nil) then begin
           result_description.SetDescription('bind pose position successfully changed for bone '+_data.Skeleton().GetBoneName(idx));
           result:=true;
         end else begin
@@ -1428,8 +1435,9 @@ begin
          argsparser.GetAsSingle(2, v.z)
       then begin
         v:=v_mul(v, pi/180);
-
-        if _data.Skeleton().RotateBone(idx, v, '', -1) then begin
+        if _iksolver<>nil then begin
+          result_description.SetDescription('IK doesn''t supported when changing bind pose, please reset IK solver!');
+        end else if _data.Skeleton().RotateBone(idx, v, '', -1, nil) then begin
           result_description.SetDescription('bind pose position successfully changed for bone '+_data.Skeleton().GetBoneName(idx));
           result:=true;
         end else begin
@@ -2018,6 +2026,7 @@ begin
       end;
 
     finally
+      FreeAndNil(argsparser);
     end;
 
   end;
@@ -2037,6 +2046,61 @@ var
       result_description.SetDescription('motion marks successfully reset for '+animdata.name);
       result:=true;
     end;
+  end;
+end;
+
+function TModelSlot._CmdIKSolverReset(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=true;
+  FreeAndNil(_iksolver);
+end;
+
+function TModelSlot._CmdIKSolverSimpleLimb(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bonename:string;
+  argsparser:TCommandsArgumentsParser;
+  accuracy:single;
+  initial_step:single;
+  boneid:TBoneID;
+  iksolver:TOgfSimpleGrandparentIKSolver;
+begin
+  result:=false;
+
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'target bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'initial step');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'accuracy');
+
+
+    if argsparser.Parse(args) and
+       argsparser.GetAsString(0, bonename) and
+       argsparser.GetAsSingle(1, initial_step, 0.1*pi/180) and
+       argsparser.GetAsSingle(2, accuracy, 0.0001)
+    then begin
+      if not ExtractBoneIdFromString(bonename, boneid) or (boneid = INVALID_BONE_ID) then begin
+        result_description.SetDescription('invalid target bone');
+      end else begin
+        iksolver:=TOgfSimpleGrandparentIKSolver.Create(_data.Skeleton(), boneid, initial_step, accuracy);
+        if iksolver.IsProperlyConfigured() then begin
+          FreeAndNil(_iksolver);
+          _iksolver:=iksolver;
+          result:=true;
+        end else begin
+          FreeAndNil(iksolver);
+          result_description.SetDescription('invalid configuration passed');
+        end;
+      end;
+
+    end else begin
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
+    end;
+
+  finally
+    FreeAndNil(argsparser);
   end;
 end;
 
@@ -2119,23 +2183,30 @@ begin
             endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
           end;
 
-          cnt:=0;
-          for i:=startframe to endframe do begin
-            if _data.Skeleton().MoveBone(bone_idx, v, def.name, i, is_absolute_coords, fixed_children) then begin
-              cnt:=cnt+1;
-            end;
-          end;
 
-          if cnt = 0 then begin
-            result:=startframe > endframe;
-            if result then result_description.SetWarningFlag(true);
-            result_description.SetDescription('no frames affected');
-          end else if cnt <> endframe-startframe+1 then begin
-            result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
-            result_description.SetWarningFlag(true);
-            result:=true;
+
+          if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(bone_idx)) then begin
+            result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(bone_idx));
           end else begin
-            result:=true;
+            cnt:=0;
+            for i:=startframe to endframe do begin
+              if _data.Skeleton().MoveBone(bone_idx, v, def.name, i, is_absolute_coords, fixed_children, _iksolver) then begin
+                cnt:=cnt+1;
+              end;
+            end;
+
+            if cnt = 0 then begin
+              result:=startframe > endframe;
+              if result then result_description.SetWarningFlag(true);
+              result_description.SetDescription('no frames affected');
+            end else if cnt <> endframe-startframe+1 then begin
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetWarningFlag(true);
+              result:=true;
+            end else begin
+              result:=true;
+            end;
+
           end;
 
         end else begin
@@ -2194,25 +2265,30 @@ begin
             endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
           end;
 
-          v:=v_mul(v, pi/180);
-
-          cnt:=0;
-          for i:=startframe to endframe do begin
-            if _data.Skeleton().RotateBone(bone_idx, v, def.name, i) then begin
-              cnt:=cnt+1;
-            end;
-          end;
-
-          if cnt = 0 then begin
-            result:=startframe > endframe;
-            if result then result_description.SetWarningFlag(true);
-            result_description.SetDescription('no frames affected');
-          end else if cnt <> endframe-startframe+1 then begin
-            result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
-            result_description.SetWarningFlag(true);
-            result:=true;
+          if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(bone_idx)) then begin
+            result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(bone_idx));
           end else begin
-            result:=true;
+            v:=v_mul(v, pi/180);
+
+            cnt:=0;
+            for i:=startframe to endframe do begin
+              if _data.Skeleton().RotateBone(bone_idx, v, def.name, i, _iksolver) then begin
+                cnt:=cnt+1;
+              end;
+            end;
+
+            if cnt = 0 then begin
+              result:=startframe > endframe;
+              if result then result_description.SetWarningFlag(true);
+              result_description.SetDescription('no frames affected');
+            end else if cnt <> endframe-startframe+1 then begin
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetWarningFlag(true);
+              result:=true;
+            end else begin
+              result:=true;
+            end;
+
           end;
 
         end else begin
@@ -2239,6 +2315,7 @@ var
 
   def:TOgfMotionDefData;
   cnt:integer;
+  parent_bone_idx:TBoneID;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -2273,23 +2350,31 @@ begin
             endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
           end;
 
-          cnt:=0;
-          for i:=startframe to endframe do begin
-            if _data.Skeleton().AimBone(bone_idx, target, def.name, i) then begin
-              cnt:=cnt+1;
-            end;
-          end;
+          parent_bone_idx:=_data.Skeleton().GetBoneParentIdx(bone_idx);
 
-          if cnt = 0 then begin
-            result:=startframe > endframe;
-            if result then result_description.SetWarningFlag(true);
-            result_description.SetDescription('no frames affected');
-          end else if cnt <> endframe-startframe+1 then begin
-            result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
-            result_description.SetWarningFlag(true);
-            result:=true;
+          if parent_bone_idx = INVALID_BONE_ID then begin
+            result_description.SetDescription('bone #'+inttostr(bone_idx) +' must have parent to perforn aim operation');
+          end else if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(parent_bone_idx)) then begin
+            result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(parent_bone_idx));
           end else begin
-            result:=true;
+            cnt:=0;
+            for i:=startframe to endframe do begin
+              if _data.Skeleton().AimBone(bone_idx, target, def.name, i, _iksolver) then begin
+                cnt:=cnt+1;
+              end;
+            end;
+
+            if cnt = 0 then begin
+              result:=startframe > endframe;
+              if result then result_description.SetWarningFlag(true);
+              result_description.SetDescription('no frames affected');
+            end else if cnt <> endframe-startframe+1 then begin
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetWarningFlag(true);
+              result:=true;
+            end else begin
+              result:=true;
+            end;
           end;
 
         end else begin
@@ -2359,23 +2444,27 @@ begin
             endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
           end;
 
-          cnt:=0;
-          for i:=startframe to endframe do begin
-            if _data.Skeleton().FollowBone(bone_idx, def.name, src_bone_idx, srcframe, i) then begin
-              cnt:=cnt+1;
-            end;
-          end;
-
-          if cnt = 0 then begin
-            result:=startframe > endframe;
-            if result then result_description.SetWarningFlag(true);
-            result_description.SetDescription('no frames affected');
-          end else if cnt <> endframe-startframe+1 then begin
-            result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
-            result_description.SetWarningFlag(true);
-            result:=true;
+          if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(bone_idx)) then begin
+            result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(bone_idx));
           end else begin
-            result:=true;
+            cnt:=0;
+            for i:=startframe to endframe do begin
+              if _data.Skeleton().FollowBone(bone_idx, def.name, src_bone_idx, srcframe, i, _iksolver) then begin
+                cnt:=cnt+1;
+              end;
+            end;
+
+            if cnt = 0 then begin
+              result:=startframe > endframe;
+              if result then result_description.SetWarningFlag(true);
+              result_description.SetDescription('no frames affected');
+            end else if cnt <> endframe-startframe+1 then begin
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetWarningFlag(true);
+              result:=true;
+            end else begin
+              result:=true;
+            end;
           end;
 
         end else begin
@@ -3347,6 +3436,7 @@ begin
   _data:=TOgfParser.Create();
   _container:=container;
   _selectionarea:=TSelectionArea.Create();
+  _iksolver:=nil;
 
   _commands_selection:=TCommandsStorage.Create(true);
   _commands_selection.DoRegister(TCommandSetup.Create('pivotpoint', nil, @_CmdSetPivot, 'set pivot point for rotation / scaling commands'), CommandItemTypeCall);
@@ -3362,6 +3452,7 @@ begin
       _commands_children:=TChildrenCommands.Create(self);
     _commands_skeleton:=TCommandsStorage.Create(true);
       _commands_bones:=TBonesCommands.Create(self);
+      _commands_iksolver:=TCommandsStorage.Create(true);
       _commands_animations:=TAnimationsCommands.Create(self);
         _commands_mmarks:=TCommandsStorage.Create(true);
         _commands_animbones:=TBonesCommands.Create(self);
@@ -3439,6 +3530,10 @@ begin
   _commands_mmarks.DoRegister(TCommandSetup.Create('add', @_IsAnimationsLoadedPrecondition, @_CmdAnimAddMotionMark, 'add new interval, expects 3 arguments (mark name, interval start, interval end)'), CommandItemTypeCall);
   _commands_mmarks.DoRegister(TCommandSetup.Create('reset', @_IsAnimationsLoadedPrecondition, @_CmdAnimResetMotionMarks, 'reset marks for selected animation'), CommandItemTypeCall);
 
+  _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('iksolver', @_IsAnimationsLoadedPrecondition, _commands_iksolver, 'access group of properties and procedures associated with inverse kinematics solver'));
+  _commands_iksolver.DoRegister(TCommandSetup.Create('reset', @_IsAnimationsLoadedPrecondition, @_CmdIKSolverReset, 'reset current settings of inverse kinematics solver'), CommandItemTypeCall);
+  _commands_iksolver.DoRegister(TCommandSetup.Create('simplelimb', @_IsAnimationsLoadedPrecondition, @_CmdIKSolverSimpleLimb, 'activate simple 2-bones limb IK solver'), CommandItemTypeCall);
+
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneRotate, 'rotate bone using its local axes, arguments: X, Y, Z rotation components, start frame index, end frame index'), CommandItemTypeCall);
@@ -3451,6 +3546,7 @@ end;
 
 destructor TModelSlot.Destroy;
 begin
+  FreeAndNil(_iksolver);
   FreeAndNil(_commands_children);
   FreeAndNil(_commands_skeleton);
   FreeAndNil(_commands_mesh);

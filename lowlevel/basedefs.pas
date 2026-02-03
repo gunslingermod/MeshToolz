@@ -81,6 +81,7 @@ type
   procedure uniform_scale(var c:FCylinder; k:single); overload;
   procedure uniform_scale(var o:FObb; k:single); overload;
 
+  function v_set(x:single; y:single; z:single):FVector3;
   function v_add(var v1:FVector3; var v2:FVector3):FVector3;
   function v_sub(var v1:FVector3; var v2:FVector3):FVector3;
   function v_mul(var v:FVector3; n:single):FVector3;
@@ -113,7 +114,7 @@ type
 
 
   function distance_between(var point1:FVector3; var point2:FVector3):single;
-  function rotation_between(var src:FVector3; var dst:FVector3):FMatrix4x4;
+  function rotation_between(src:FVector3; dst:FVector3):FMatrix4x4;
 
 implementation
 uses math;
@@ -185,6 +186,7 @@ end;
 
 procedure m_identity(var m: FMatrix4x4);
 begin
+  set_zero(m);
   m.i.x:=1;
   m.j.y:=1;
   m.k.z:=1;
@@ -225,6 +227,13 @@ procedure uniform_scale(var o: FObb; k: single);
 begin
   uniform_scale(o.m_halfsize, k);
   uniform_scale(o.m_translate, k);
+end;
+
+function v_set(x: single; y: single; z: single): FVector3;
+begin
+  result.x:=x;
+  result.y:=y;
+  result.z:=z;
 end;
 
 function v_add(var v1: FVector3; var v2: FVector3): FVector3;
@@ -302,6 +311,7 @@ begin
   result.y:=m.j.x*v.x+m.j.y*v.y+m.j.z*v.z;
   result.z:=m.k.x*v.x+m.k.y*v.y+m.k.z*v.z;
 end;
+
 
 function m_mul(var m: FMatrix4x4; n: single): FMatrix4x4;
 begin
@@ -498,8 +508,10 @@ end;
 
 procedure q_rotation(var q: Fquaternion; var m: FMatrix4x4);
 var
-  trace,s:single;
+  trace,s, val:single;
   biggest:integer;
+
+  ok:boolean;
 const
   BIGGEST_I: integer = 0;
   BIGGEST_E: integer = 1;
@@ -507,6 +519,7 @@ const
 
   TRACE_QZERO_TOLERANCE:single = 0.1;
 begin
+  ok:=false;
   trace := M.i.x + M.j.y + M.k.z;
 
   if (trace > 0) then begin
@@ -516,6 +529,7 @@ begin
     q.x := (M.k.y - M.j.z) * s;
     q.y := (M.i.z - M.k.x) * s;
     q.z := (M.j.x - M.i.y) * s;
+    ok:=true;
   end else begin
     if (M.i.x > M.j.y) then begin
       if (M.k.z > M.i.x) then begin
@@ -532,95 +546,152 @@ begin
     end;
 
     if biggest = BIGGEST_A then begin
-      s := sqrt( M.i.x - (M.j.y + M.k.z) + 1);
+      s:=0;
+      val := M.i.x - (M.j.y + M.k.z) + 1;
+      if val > 0 then begin
+        s := sqrt(val);
+      end;
+
       if (s > TRACE_QZERO_TOLERANCE) then begin
         q.x := s * 0.5;
         s := 0.5 / s;
         q.w := (M.k.y - M.j.z) * s;
         q.y := (M.i.y + M.j.x) * s;
         q.z := (M.i.z + M.k.x) * s;
+        ok:=true;
       end else begin
         // I
-        s := sqrt( M.k.z - (M.i.x + M.j.y) + 1);
+        s:=0;
+        val := M.k.z - (M.i.x + M.j.y) + 1;
+        if val > 0 then begin
+          s := sqrt(val);
+        end;
+
         if (s > TRACE_QZERO_TOLERANCE) then begin
           q.z := s * 0.5;
           s := 0.5 / s;
           q.w := (M.j.x - M.i.y) * s;
           q.x := (M.k.x + M.i.z) * s;
           q.y := (M.k.y + M.j.z) * s;
+          ok:=true;
         end else begin
           // E
-          s := sqrt( M.j.y - (M.k.z + M.i.x) + 1);
+          s:=0;
+          val := M.j.y - (M.k.z + M.i.x) + 1;
+          if val > 0 then begin
+            s := sqrt(val);
+          end;
+
           if (s > TRACE_QZERO_TOLERANCE) then begin
             q.y := s * 0.5;
             s := 0.5 / s;
             q.w := (M.i.z - M.k.x) * s;
             q.z := (M.j.z + M.k.y) * s;
             q.x := (M.j.x + M.i.y) * s;
+            ok:=true;
           end;
         end;
       end;
 
     end else if biggest = BIGGEST_E then begin
-      s := sqrt( M.j.y - (M.k.z + M.i.x) + 1);
+      s:=0;
+      val := M.j.y - (M.k.z + M.i.x) + 1;
+      if val > 0 then begin
+        s := sqrt(val);
+      end;
+
       if (s > TRACE_QZERO_TOLERANCE) then begin
         q.y := s * 0.5;
         s := 0.5 / s;
         q.w := (M.i.z - M.k.x) * s;
         q.z := (M.j.z + M.k.y) * s;
         q.x := (M.j.x + M.i.y) * s;
+        ok:=true;
       end else begin
         // I
-        s := sqrt( M.k.z - (M.i.x + M.j.y) + 1);
+        s:=0;
+        val := M.k.z - (M.i.x + M.j.y) + 1;
+        if val > 0 then begin
+          s := sqrt(val);
+        end;
+
         if (s > TRACE_QZERO_TOLERANCE) then begin
           q.z := s * 0.5;
           s := 0.5 / s;
           q.w := (M.j.x - M.i.y) * s;
           q.x := (M.k.x + M.i.z) * s;
           q.y := (M.k.y + M.j.z) * s;
+          ok:=true;
         end else begin
           // A
-          s := sqrt( M.i.x - (M.j.y + M.k.z) + 1);
+          s:=0;
+          val := M.i.x - (M.j.y + M.k.z) + 1;
+          if val > 0 then begin
+            s := sqrt(val);
+          end;
+
           if (s > TRACE_QZERO_TOLERANCE) then begin
             q.x := s * 0.5;
             s := 0.5 / s;
             q.w := (M.k.y - M.j.z) * s;
             q.y := (M.i.y + M.j.x) * s;
             q.z := (M.i.z + M.k.x) * s;
+            ok:=true;
           end;
         end;
       end;
 
     end else if biggest = BIGGEST_I then begin
-      s := sqrt( M.k.z - (M.i.x + M.j.y) + 1);
+      s:=0;
+      val:=M.k.z - (M.i.x + M.j.y) + 1;
+      if val > 0 then begin
+        s := sqrt(val);
+      end;
+
       if (s > TRACE_QZERO_TOLERANCE) then begin
         q.z := s * 0.5;
         s := 0.5 / s;
         q.w := (M.j.x - M.i.y) * s;
         q.x := (M.k.x + M.i.z) * s;
         q.y := (M.k.y + M.j.z) * s;
+        ok:=true;
       end else begin
         // A
-        s := sqrt( M.i.x - (M.j.y + M.k.z) + 1);
+        s:=0;
+        val := M.i.x - (M.j.y + M.k.z) + 1;
+        if val > 0 then begin
+          s := sqrt(val);
+        end;
         if (s > TRACE_QZERO_TOLERANCE) then begin
           q.x := s * 0.5;
           s := 0.5 / s;
           q.w := (M.k.y - M.j.z) * s;
           q.y := (M.i.y + M.j.x) * s;
           q.z := (M.i.z + M.k.x) * s;
+          ok:=true;
         end else begin
           // E
-          s := sqrt( M.j.y - (M.k.z + M.i.x) + 1);
+          s:=0;
+          val := M.j.y - (M.k.z + M.i.x) + 1;
+          if val > 0 then begin
+            s := sqrt(val);
+          end;
+
           if (s > TRACE_QZERO_TOLERANCE) then begin
             q.y := s * 0.5;
             s := 0.5 / s;
             q.w := (M.i.z - M.k.x) * s;
             q.z := (M.j.z + M.k.y) * s;
             q.x := (M.j.x + M.i.y) * s;
+            ok:=true;
 	  end;
         end;
       end;
     end;
+  end;
+
+  if not ok then begin
+     writeln ('q_rotation FAILED!')
   end;
 end;
 
@@ -651,7 +722,7 @@ begin
   result:=sqrt(dx*dx+dy*dy+dz*dz);
 end;
 
-function rotation_between(var src: FVector3; var dst: FVector3): FMatrix4x4;
+function rotation_between(src: FVector3; dst: FVector3): FMatrix4x4;
 var
   v:FVector3;
   c,k:single;
@@ -661,8 +732,8 @@ begin
   src:=v_normalize(src);
   dst:=v_normalize(dst);
 
-  v:=v_crossproduct(src, dst);
-  c:=v_dotproduct(src, dst);
+  v:=v_crossproduct(dst, src);
+  c:=v_dotproduct(dst, src);
 
   m_identity(result);
   if abs(c-1) < EPS then begin
