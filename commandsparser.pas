@@ -166,6 +166,7 @@ TModelSlot = class
   function _CmdAnimSetFalloff(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimSetPower(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimSetSpeed(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimRemove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimKeyInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyPoseCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1695,6 +1696,26 @@ begin
       FreeAndNil(argsparser);
     end;
   end
+end;
+
+function TModelSlot._CmdAnimRemove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  defs:TOgfMotionDefData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    if _data.Animations().DeleteAnimation(defs.name) then begin
+      result:=true;
+    end else begin
+      result_description.SetDescription('error while removing animation '+defs.name);
+    end;
+
+  end;
 end;
 
 function TModelSlot._CmdAnimKeyInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -3651,6 +3672,7 @@ begin
   _commands_animations.DoRegister(TCommandSetup.Create('copytrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackCopy, 'copy track, arg 1 - start frame id, arg 2 - last frame id to copy'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('pastetrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackPaste, 'paste previously copied track, arg 1 - start frame index to paste, arg 2 - overwrite (0) or insert new (1, default) frames'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('remove', @_IsAnimationsLoadedPrecondition, @_CmdAnimRemove, 'remove animation, no arguments'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setlength', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackSetLength, 'set new frames count for animation, argument is new frames count'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setaccrue', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetAccrue, 'set animation accrue parameter value, argument is a number'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setfalloff', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetFalloff, 'set animation falloff parameter value, argument is a number'), CommandItemTypeCall);

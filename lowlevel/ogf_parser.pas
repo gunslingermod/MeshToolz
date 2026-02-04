@@ -2949,16 +2949,28 @@ end;
 function TOgfMotionParamsContainer.RemoveMotionDef(idx: integer): boolean;
 var
   i:integer;
+  data:TOgfMotionDefData;
+  motionid:integer;
 begin
   result:=false;
   if not Loaded() then exit;
   if (idx < 0) or (idx >= MotionsDefsCount()) then exit;
 
+  motionid:=_defs[idx].GetData().motion_id;
   _defs[idx].Free;
   for i:=idx to length(_defs)-2 do begin
     _defs[idx]:=_defs[idx+1];
   end;
   setlength(_defs, length(_defs)-1);
+
+  for i:=0 to length(_defs)-1 do begin
+    data:=_defs[i].GetData();
+    if data.motion_id>=motionid then begin
+      data.motion_id:=data.motion_id-1;
+      _defs[i].SetData(data);
+    end;
+  end;
+
   result:=true;
 end;
 
@@ -5209,7 +5221,7 @@ end;
 
 function TOgfSkeleton.PasteSkeletonPosesSequence(anim_name: string; first_key_idx: integer; insert_mode: boolean; poses: TOgfSkeletonPoseSeq): boolean;
 var
-  i, oldlen, newlen:integer;
+  i, oldlen, newlen, poseslen:integer;
   pose:TOgfSkeletonPose;
 begin
   result:=false;
@@ -5218,24 +5230,25 @@ begin
   oldlen:=_animations.GetAnimationFramesCount(anim_name);
   if (first_key_idx < 0) or (first_key_idx >= oldlen) then exit;
 
+  poseslen:=poses.Count();
   if insert_mode then begin
-    newlen:=oldlen+poses.Count();
+    newlen:=oldlen+poseslen;
     _animations.ChangeAnimationFramesCount(anim_name, newlen);
 
     pose:=TOgfSkeletonPose.Create();
     try
       for i:=oldlen-1 downto first_key_idx do begin
         if not GetSkeletonPose(anim_name, i, pose) then exit;
-        if SetSkeletonPose(anim_name, i+poses.Count(), pose)<>pose.BonesCount() then exit;
+        if SetSkeletonPose(anim_name, i+poseslen, pose)<>pose.BonesCount() then exit;
       end;
     finally
       FreeAndNil(pose);
     end;
-  end else if first_key_idx + poses.Count() >= oldlen then begin
-    _animations.ChangeAnimationFramesCount(anim_name, first_key_idx + poses.Count()+1);
+  end else if first_key_idx + poseslen >= oldlen then begin
+    _animations.ChangeAnimationFramesCount(anim_name, first_key_idx + poseslen);
   end;
 
-  for i:=0 to poses.Count()-1 do begin
+  for i:=0 to poseslen-1 do begin
     pose:=poses.Get(i);
     SetSkeletonPose(anim_name, first_key_idx+i, pose);
   end;
