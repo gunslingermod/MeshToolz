@@ -572,6 +572,23 @@ type
     destructor Destroy(); override;
   end;
 
+  { TOgfSkeletonPoseSeq }
+
+  TOgfSkeletonPoseSeq = class
+    _poses:array of TOgfSkeletonPose;
+  public
+    constructor Create();
+    procedure Reset();
+    destructor Destroy(); override;
+
+    function Count():integer;
+    function Get(i:integer):TOgfSkeletonPose;
+    procedure Add(pose:TOgfSkeletonPose);
+
+    function Serialize():string;
+    function Deserialize(var s:string):boolean;
+  end;
+
 
   TOgfIkSolvingResult = (IKSolveSuccess, IKSolveNotNeeded, IKSolveFailed);
 
@@ -669,6 +686,9 @@ type
     function GetBoneSpaceToGlobalSpaceMatrixInPose(bone_idx:TBoneId; anim_name:string; key_idx:integer; var m:FMatrix4x4): boolean;
     function GetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):boolean;
     function SetSkeletonPose(anim_name:string; key_idx:integer; pose:TOgfSkeletonPose):integer;
+
+    function GetSkeletonPosesSequence(anim_name:string; first_key_idx:integer; last_key_idx:integer; poses:TOgfSkeletonPoseSeq):boolean;
+    function PasteSkeletonPosesSequence(anim_name:string; first_key_idx:integer; insert_mode:boolean; poses:TOgfSkeletonPoseSeq):boolean;
 
     function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
     function MoveBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; is_absolute:boolean; fixed_children:boolean; iksolver:TOgfIKSolverBase):boolean;
@@ -1227,6 +1247,124 @@ begin
     uniform_scale(s.cylinder, k);
     result:=true;
   end else if s.shape_type = OGF_SHAPE_TYPE_NONE then begin;
+    result:=true;
+  end;
+end;
+
+{ TOgfSkeletonPoseSeq }
+
+constructor TOgfSkeletonPoseSeq.Create();
+begin
+  setlength(_poses, 0);
+end;
+
+procedure TOgfSkeletonPoseSeq.Reset();
+var
+  i:integer;
+begin
+  for i:=0 to length(_poses)-1 do begin
+    FreeAndNil(_poses[i]);
+  end;
+
+  setlength(_poses, 0);
+end;
+
+destructor TOgfSkeletonPoseSeq.Destroy();
+begin
+  Reset();
+  inherited Destroy();
+end;
+
+function TOgfSkeletonPoseSeq.Count(): integer;
+begin
+  result:=length(_poses);
+end;
+
+function TOgfSkeletonPoseSeq.Get(i: integer): TOgfSkeletonPose;
+begin
+  result:=nil;
+  if (i<0) or (i>=Count()) then exit;
+
+  result:=_poses[i];
+end;
+
+procedure TOgfSkeletonPoseSeq.Add(pose: TOgfSkeletonPose);
+var
+  i:integer;
+begin
+  i:=length(_poses);
+  setlength(_poses, i+1);
+  _poses[i]:=pose;
+end;
+
+function TOgfSkeletonPoseSeq.Serialize(): string;
+var
+  pose_s:string;
+  i:integer;
+  res:string;
+begin
+  result:='';
+
+  res:=SerializeCardinal(Count());
+
+  for i:=0 to Count()-1 do begin
+    pose_s:=Get(i).Serialize();
+    if length(pose_s)=0 then exit;
+
+    res:=res+SerializeCardinal(length(pose_s));
+    res:=res+pose_s;
+  end;
+
+  result:=res;
+end;
+
+function TOgfSkeletonPoseSeq.Deserialize(var s: string): boolean;
+var
+  pose:TOgfSkeletonPose;
+  pose_s:string;
+  i:integer;
+  cnt:cardinal;
+  sz:cardinal;
+  isok:boolean;
+begin
+  result:=false;
+  Reset();
+
+  if length(s) < sizeof(cnt) then exit;
+  cnt:=PCardinal(PAnsiChar(s))^;
+  if not AdvanceString(s, sizeof(cnt)) then exit;
+
+  isok:=true;
+  for i:=0 to cnt-1 do begin
+    if length(s) < sizeof(sz) then begin
+      isok:=false;
+      break;
+    end;
+
+    sz:=PCardinal(PAnsiChar(s))^;
+    if not AdvanceString(s, sizeof(sz)) or (length(s)<sz) then begin
+      isok:=false;
+      break;
+    end;
+
+    pose_s:=leftstr(s, sz);
+    if not AdvanceString(s, sz) then begin
+      isok:=false;
+      break;
+    end;
+
+    pose:=TOgfSkeletonPose.Create();
+    if not pose.Deserialize(pose_s) then begin
+      FreeAndNil(pose);
+      isok:=false;
+      break;
+    end;
+    Add(pose);
+  end;
+
+  if not isok then begin
+    Reset();
+  end else begin
     result:=true;
   end;
 end;
@@ -5036,6 +5174,73 @@ begin
     key:=TransformToMotionKey(m);
     _animations.SetAnimationKeyForBone(anim_name, bone_name, key_idx, key);
   end;
+end;
+
+function TOgfSkeleton.GetSkeletonPosesSequence(anim_name: string; first_key_idx: integer; last_key_idx: integer; poses: TOgfSkeletonPoseSeq): boolean;
+var
+  pose:TOgfSkeletonPose;
+  i:integer;
+begin
+  result:=false;
+  poses.Reset();
+
+  if _animations.GetAnimationIdByName(anim_name)<0 then exit;
+  if (first_key_idx < 0) or (first_key_idx >= _animations.GetAnimationFramesCount(anim_name)) then exit;
+  if (last_key_idx < 0) or (last_key_idx >= _animations.GetAnimationFramesCount(anim_name)) then exit;
+
+  if last_key_idx < first_key_idx then begin
+    i:=last_key_idx;
+    last_key_idx:=first_key_idx;
+    first_key_idx:=i;
+  end;
+
+  result:=true;
+  for i:=first_key_idx to last_key_idx  do begin
+    pose:=TOgfSkeletonPose.Create();
+    if GetSkeletonPose(anim_name, i, pose) then begin
+      poses.Add(pose);
+    end else begin
+      FreeAndNil(pose);
+      result:=false;
+      break;
+    end;
+  end;
+end;
+
+function TOgfSkeleton.PasteSkeletonPosesSequence(anim_name: string; first_key_idx: integer; insert_mode: boolean; poses: TOgfSkeletonPoseSeq): boolean;
+var
+  i, oldlen, newlen:integer;
+  pose:TOgfSkeletonPose;
+begin
+  result:=false;
+  if _animations.GetAnimationIdByName(anim_name)<0 then exit;
+
+  oldlen:=_animations.GetAnimationFramesCount(anim_name);
+  if (first_key_idx < 0) or (first_key_idx >= oldlen) then exit;
+
+  if insert_mode then begin
+    newlen:=oldlen+poses.Count();
+    _animations.ChangeAnimationFramesCount(anim_name, newlen);
+
+    pose:=TOgfSkeletonPose.Create();
+    try
+      for i:=oldlen-1 downto first_key_idx do begin
+        if not GetSkeletonPose(anim_name, i, pose) then exit;
+        if SetSkeletonPose(anim_name, i+poses.Count(), pose)<>pose.BonesCount() then exit;
+      end;
+    finally
+      FreeAndNil(pose);
+    end;
+  end else if first_key_idx + poses.Count() >= oldlen then begin
+    _animations.ChangeAnimationFramesCount(anim_name, first_key_idx + poses.Count()+1);
+  end;
+
+  for i:=0 to poses.Count()-1 do begin
+    pose:=poses.Get(i);
+    SetSkeletonPose(anim_name, first_key_idx+i, pose);
+  end;
+
+  result:=true;
 end;
 
 

@@ -171,6 +171,8 @@ TModelSlot = class
   function _CmdAnimKeyPoseCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimKeyPosePaste(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimTrackDuplicate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimTrackCopy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimTrackPaste(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimTrackSetLength(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimAddMotionMark(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimResetMotionMarks(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -213,7 +215,8 @@ uses sysutils, strutils, ChunkedFileParser;
 const
   BUFFER_TYPE_CHILDMESH:integer=100;
   BUFFER_TYPE_BONEDATA:integer=101;
-  BUFFER_TYPE_SKELETONPOSE:integer=101;
+  BUFFER_TYPE_SKELETONPOSE:integer=102;
+  BUFFER_TYPE_SKELETONTRACK:integer=103;
 
 { TParsedBonesExpression }
 
@@ -1943,6 +1946,132 @@ begin
   end;
 end;
 
+function TModelSlot._CmdAnimTrackCopy(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  defs:TOgfMotionDefData;
+  first_key_id:integer;
+  last_key_id:integer;
+  poses:TOgfSkeletonPoseSeq;
+  s:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'first frame index to copy');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'last frame index to copy');
+      if argsparser.Parse(args) and
+         argsparser.GetAsInt(0, first_key_id, -1) and
+         argsparser.GetAsInt(1, last_key_id, -1)
+      then begin
+        if first_key_id < 0 then begin
+          first_key_id:=0;
+        end else if first_key_id >= _data.Animations().GetAnimationFramesCount(defs.name) then begin
+          first_key_id:=_data.Animations().GetAnimationFramesCount(defs.name)-1;
+        end;
+
+        if (last_key_id < 0) or (last_key_id >= _data.Animations().GetAnimationFramesCount(defs.name)) then begin
+          last_key_id:=_data.Animations().GetAnimationFramesCount(defs.name)-1;
+         end;
+
+        poses:=TOgfSkeletonPoseSeq.Create();
+        try
+          if _data.Skeleton().GetSkeletonPosesSequence(defs.name, first_key_id, last_key_id, poses) then begin
+            s:=poses.Serialize();
+            if length(s)=0 then begin
+              result_description.SetDescription('can''t serialize data');
+            end else begin
+              _container.GetTempBuffer().SetData(s, BUFFER_TYPE_SKELETONTRACK);
+              result:=true;
+            end;
+          end else begin
+            result_description.SetDescription('can''t get frames data');
+          end;
+        finally
+          FreeAndNil(poses);
+        end;
+
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
+end;
+
+function TModelSlot._CmdAnimTrackPaste(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  defs:TOgfMotionDefData;
+  first_key_id:integer;
+  is_insert_mode:boolean;
+  poses:TOgfSkeletonPoseSeq;
+  s:string;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'first frame index to paste');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'insert mode (default true)');
+      if argsparser.Parse(args) and
+         argsparser.GetAsInt(0, first_key_id, -1) and
+         argsparser.GetAsBool(1, is_insert_mode, true)
+      then begin
+        if (first_key_id<0) or (first_key_id >= _data.Animations().GetAnimationFramesCount(defs.name)) then begin
+          result_description.SetDescription('invalid frame index');
+          exit;
+        end;
+
+        poses:=TOgfSkeletonPoseSeq.Create();
+        try
+          if _container.GetTempBuffer().GetData(s, BUFFER_TYPE_SKELETONTRACK) then begin
+            if poses.Deserialize(s) then begin
+              if _data.Skeleton().PasteSkeletonPosesSequence(defs.name, first_key_id, is_insert_mode, poses) then begin
+                result:=true;
+              end else begin
+                result_description.SetDescription('can''t paste data');
+              end;
+            end else begin
+              result_description.SetDescription('can''t deserialize data');
+            end;
+          end else begin
+            result_description.SetDescription('can''t get data from temp buffer');
+          end;
+
+        finally
+          FreeAndNil(poses);
+        end;
+
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
+end;
+
 function TModelSlot._CmdAnimTrackSetLength(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
@@ -3519,6 +3648,8 @@ begin
   _commands_animations.DoRegister(TCommandSetup.Create('keyinfo', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyInfo, 'show bone parameters is specific key; arg 1 - key index, arg 2 (optional) - bones'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('copykey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPoseCopy, 'copy skeleton pose in the specified frame, argument 1 is frame id, argument 2 (optional) is bones'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('pastekey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPosePaste, 'paste previosly copied skeleton pose into the specified frame, argument is frame id'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('copytrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackCopy, 'copy track, arg 1 - start frame id, arg 2 - last frame id to copy'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('pastetrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackPaste, 'paste previously copied track, arg 1 - start frame index to paste, arg 2 - overwrite (0) or insert new (1, default) frames'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setlength', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackSetLength, 'set new frames count for animation, argument is new frames count'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setaccrue', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetAccrue, 'set animation accrue parameter value, argument is a number'), CommandItemTypeCall);
