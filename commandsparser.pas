@@ -177,6 +177,7 @@ TModelSlot = class
   function _CmdAnimTrackSetLength(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimAddMotionMark(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimResetMotionMarks(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimIkRefPose(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdIKSolverReset(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdIKSolverSimpleLimb(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -2199,6 +2200,53 @@ var
   end;
 end;
 
+function TModelSlot._CmdAnimIkRefPose(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  defs:TOgfMotionDefData;
+  frame:integer;
+  pose:TOgfSkeletonPose;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'reference frame index');
+      if argsparser.Parse(args) and
+         argsparser.GetAsInt(0, frame)
+      then begin
+        pose:=TOgfSkeletonPose.Create();
+        try
+          if _iksolver=nil then begin
+            result_description.SetDescription('IK solver currently is not set');
+          end else if not _data.Skeleton().GetSkeletonPose(defs.name, frame, pose) then begin
+            result_description.SetDescription('can''t get reference pose for IK solver');
+          end else if _iksolver.SetReferencePose(pose) then begin
+            result:=true;
+          end else begin
+            result_description.SetDescription('IK solver rejected reference pose');
+          end;
+        finally
+          FreeAndNil(pose);
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
+end;
+
 function TModelSlot._CmdIKSolverReset(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=true;
@@ -2210,28 +2258,41 @@ var
   bonename:string;
   argsparser:TCommandsArgumentsParser;
   accuracy:single;
-  initial_step:single;
+  initial_step, minimal_step:single;
   boneid:TBoneID;
   iksolver:TOgfSimpleGrandparentIKSolver;
+  grandparent_flags_s:string;
+  parent_flags_s:string;
+  grandparent_flags:TOgfSimpleGrandparentIKSolverFlags;
+  parent_flags:TOgfSimpleGrandparentIKSolverFlags;
 begin
   result:=false;
 
   argsparser:=TCommandsArgumentsParser.Create();
   try
     argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'target bone');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, true, 'parent restriction flags (xyz)');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, true, 'grandparent restriction flags (xyz)');
     argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'initial step');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'minimal step');
     argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'accuracy');
 
 
     if argsparser.Parse(args) and
        argsparser.GetAsString(0, bonename) and
-       argsparser.GetAsSingle(1, initial_step, 0.1*pi/180) and
-       argsparser.GetAsSingle(2, accuracy, 0.0001)
+       argsparser.GetAsString(1, parent_flags_s, '') and
+       argsparser.GetAsString(2, grandparent_flags_s, '') and
+       argsparser.GetAsSingle(3, initial_step, 0.1*pi/180) and
+       argsparser.GetAsSingle(4, minimal_step, 0.000001) and
+       argsparser.GetAsSingle(5, accuracy, 0.0001)
     then begin
+      grandparent_flags:=TOgfSimpleGrandparentIKSolver.GetFlagsFromString(grandparent_flags_s);
+      parent_flags:=TOgfSimpleGrandparentIKSolver.GetFlagsFromString(parent_flags_s);
+
       if not ExtractBoneIdFromString(bonename, boneid) or (boneid = INVALID_BONE_ID) then begin
         result_description.SetDescription('invalid target bone');
       end else begin
-        iksolver:=TOgfSimpleGrandparentIKSolver.Create(_data.Skeleton(), boneid, initial_step, accuracy);
+        iksolver:=TOgfSimpleGrandparentIKSolver.Create(_data.Skeleton(), boneid, parent_flags, grandparent_flags, initial_step, minimal_step, accuracy);
         if iksolver.IsProperlyConfigured() then begin
           FreeAndNil(_iksolver);
           _iksolver:=iksolver;
@@ -2733,16 +2794,13 @@ begin
             endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
           end;
 
-          bonename:=_data.Skeleton().GetBoneName(bone_idx);
-
-          if not _data.Animations().GetAnimationKeyForBone(def.name, bonename, startframe, key) then begin
-            result_description.SetDescription('can''t get source key');
-          end else if not  _data.Animations().InterpotateAnimationKeysForBone(def.name, bonename, startframe, endframe) then begin
-            result_description.SetDescription('key interpolation failed');
-          end else begin
+          if _data.Skeleton().InterpolateBone(bone_idx, def.name, startframe, endframe, _iksolver) then begin
             result:=true;
+          end else begin
+            result_description.SetDescription('key interpolation failed for bone '+_data.Skeleton().GetBoneName(bone_idx));
           end;
 
+          bonename:=_data.Skeleton().GetBoneName(bone_idx);
         end else begin
           result_description.SetDescription(argsparser.GetLastErr());
           if length(result_description.GetDescription())=0 then begin
@@ -3673,6 +3731,7 @@ begin
   _commands_animations.DoRegister(TCommandSetup.Create('pastetrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackPaste, 'paste previously copied track, arg 1 - start frame index to paste, arg 2 - overwrite (0) or insert new (1, default) frames'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('remove', @_IsAnimationsLoadedPrecondition, @_CmdAnimRemove, 'remove animation, no arguments'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setikrefpose', @_IsAnimationsLoadedPrecondition, @_CmdAnimIkRefPose, 'set frame as IK solver reference pose, argument is frame index'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setlength', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackSetLength, 'set new frames count for animation, argument is new frames count'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setaccrue', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetAccrue, 'set animation accrue parameter value, argument is a number'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setfalloff', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetFalloff, 'set animation falloff parameter value, argument is a number'), CommandItemTypeCall);
@@ -3685,7 +3744,7 @@ begin
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('iksolver', @_IsAnimationsLoadedPrecondition, _commands_iksolver, 'access group of properties and procedures associated with inverse kinematics solver'));
   _commands_iksolver.DoRegister(TCommandSetup.Create('reset', @_IsAnimationsLoadedPrecondition, @_CmdIKSolverReset, 'reset current settings of inverse kinematics solver'), CommandItemTypeCall);
-  _commands_iksolver.DoRegister(TCommandSetup.Create('simplelimb', @_IsAnimationsLoadedPrecondition, @_CmdIKSolverSimpleLimb, 'activate simple 2-bones limb IK solver'), CommandItemTypeCall);
+  _commands_iksolver.DoRegister(TCommandSetup.Create('simplelimb', @_IsAnimationsLoadedPrecondition, @_CmdIKSolverSimpleLimb, 'activate simple 2-bones limb IK solver, arguments - target (child) bone, parent restriction flags (xyz or empty string), grandparent restriction flags, initial step, minimal step, accuracy'), CommandItemTypeCall);
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);

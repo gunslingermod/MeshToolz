@@ -568,6 +568,7 @@ type
     function BonesCount():integer;
     function Serialize():string;
     function Deserialize(var s:string):boolean;
+    procedure CopyTo(dest:TOgfSkeletonPose);
 
     destructor Destroy(); override;
   end;
@@ -602,7 +603,11 @@ type
     function IsTransformAllowedForBone(bone_id:TBoneID):boolean; virtual; abstract;
     function IsIkSolveNeededForBoneTransform(bone_id:TBoneID):boolean; virtual; abstract;
     function SolveIK(bone_id:TBoneID; new_transform:FMatrix4x4):TOgfIkSolvingResult; virtual; abstract;
+    function SetReferencePose(pose:TOgfSkeletonPose):boolean; virtual; abstract;
   end;
+
+  TOgfSimpleGrandparentIKSolverDtVectors = array of FVector3;
+  TOgfSimpleGrandparentIKSolverFlags = cardinal;
 
   { TOgfSimpleGrandparentIKSolver }
 
@@ -610,19 +615,26 @@ type
     _target_bone:TBoneID;
     _last_solved_pose:TOgfSkeletonPose;
     _initial_step:single;
+    _minimal_step:single;
     _accuracy:single;
+    _parent_bone_flags:TOgfSimpleGrandparentIKSolverFlags;
+    _grandparent_bone_flags:TOgfSimpleGrandparentIKSolverFlags;
+
+    procedure _FillDtVectors(var v:TOgfSimpleGrandparentIKSolverDtVectors; dt:single; flags:TOgfSimpleGrandparentIKSolverFlags);
 
     function _IsRotationPossible(skeleton: TOgfSkeleton; child_id: TBoneID; point: FVector3; target_distance: single):boolean;
     procedure _ApplyRotation(skeleton: TOgfSkeleton; bone:TOgfBoneData; dv:FVector3);
-    function _RotateParentToPlaceChildOnDistanceToPoint(skeleton: TOgfSkeleton; child_id:TBoneID; point:FVector3; target_distance:single):boolean;
+    function _RotateParentToPlaceChildOnDistanceToPoint(skeleton: TOgfSkeleton; child_id:TBoneID; point:FVector3; target_distance:single; flags:TOgfSimpleGrandparentIKSolverFlags):boolean;
     function _CalcRotationMetric(skeleton: TOgfSkeleton; measure_bone_id:TBoneID; rotating_bone_id:TBoneID; target_point:FVector3; target_distance:single; dv:FVector3):single;
   public
-    constructor Create(skeleton: TOgfSkeleton; target_bone:TBoneID; initial_step:single; accuracy:single);
+    constructor Create(skeleton: TOgfSkeleton; target_bone:TBoneID; parent_bone_flags:TOgfSimpleGrandparentIKSolverFlags; grandparent_bone_flags:TOgfSimpleGrandparentIKSolverFlags; initial_step:single; minimal_step:single; accuracy:single);
     destructor Destroy; override;
+    function SetReferencePose(pose:TOgfSkeletonPose):boolean; override;
     function IsProperlyConfigured():boolean; override;
     function IsTransformAllowedForBone(bone_id:TBoneID):boolean; override;
     function IsIkSolveNeededForBoneTransform(bone_id:TBoneID):boolean; override;
     function SolveIK(bone_id:TBoneID; new_transform:FMatrix4x4):TOgfIkSolvingResult; override;
+    class function GetFlagsFromString(s:string):TOgfSimpleGrandparentIKSolverFlags;
   end;
 
   { TOgfSkeleton }
@@ -695,6 +707,7 @@ type
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
+    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; iksolver:TOgfIKSolverBase):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
@@ -1192,6 +1205,11 @@ const
   MT_SKELETON_ANIM = 3;
   MT_SKELETON_RIGID = 10;
 
+
+  SIMPLE_GP_IKSOLVER_FLAG_DISABLE_X_AXIS:TOgfSimpleGrandparentIKSolverFlags = 1;
+  SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Y_AXIS:TOgfSimpleGrandparentIKSolverFlags = 2;
+  SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Z_AXIS:TOgfSimpleGrandparentIKSolverFlags = 4;
+
 implementation
 uses sysutils, FastCrc, math;
 
@@ -1371,6 +1389,34 @@ end;
 
 { TOgfSimpleGrandparentIKSolver }
 
+procedure TOgfSimpleGrandparentIKSolver._FillDtVectors(var v: TOgfSimpleGrandparentIKSolverDtVectors; dt: single; flags: TOgfSimpleGrandparentIKSolverFlags);
+var
+  i:integer;
+begin
+  setlength(v, 0);
+
+  if (flags and SIMPLE_GP_IKSOLVER_FLAG_DISABLE_X_AXIS) = 0 then begin
+    i:=length(v);
+    setlength(v, i+2);
+    v[i]  :=v_set( dt, 0, 0);
+    v[i+1]:=v_set(-dt, 0, 0);
+  end;
+
+  if (flags and SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Y_AXIS) = 0 then begin
+    i:=length(v);
+    setlength(v, i+2);
+    v[i]  :=v_set(0,  dt, 0);
+    v[i+1]:=v_set(0, -dt, 0);
+  end;
+
+  if (flags and SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Z_AXIS) = 0 then begin
+    i:=length(v);
+    setlength(v, i+2);
+    v[i]  :=v_set(0, 0,  dt);
+    v[i+1]:=v_set(0, 0, -dt);
+  end;
+end;
+
 function TOgfSimpleGrandparentIKSolver._IsRotationPossible(skeleton: TOgfSkeleton; child_id: TBoneID; point: FVector3; target_distance: single): boolean;
 var
   child_bone, parent_bone:TOgfBoneData;
@@ -1423,7 +1469,7 @@ begin
   bone.joint._AssignWrkPose(m);
 end;
 
-function TOgfSimpleGrandparentIKSolver._RotateParentToPlaceChildOnDistanceToPoint(skeleton: TOgfSkeleton; child_id: TBoneID; point: FVector3; target_distance: single): boolean;
+function TOgfSimpleGrandparentIKSolver._RotateParentToPlaceChildOnDistanceToPoint(skeleton: TOgfSkeleton; child_id: TBoneID; point: FVector3;target_distance: single; flags: TOgfSimpleGrandparentIKSolverFlags): boolean;
 var
   dv:FVector3;
   dt:single;
@@ -1434,7 +1480,7 @@ var
 
   last_metric, metric, n:single;
 
-  vectors:array[0..5] of FVector3;
+  vectors:TOgfSimpleGrandparentIKSolverDtVectors;
   m, old_m:FMatrix4x4;
   i, metric_i:integer;
 begin
@@ -1459,7 +1505,7 @@ begin
   end;
 
   // Check cached results - probably we have calculate a better pose at the previous iteration
-  if (_last_solved_pose<>nil) and _last_solved_pose.GetBone(parent_name, m) then begin
+  if _last_solved_pose.GetBone(parent_name, m) then begin
     parent_bone.joint._GetWrkTransform(old_m);
 
     parent_bone.joint._AssignWrkPose(m);
@@ -1476,16 +1522,9 @@ begin
 
   // Even is metric is below accuracy, we'll still try to improve the final pose
   dt:= _initial_step;
+  _FillDtVectors(vectors, dt, flags);
 
-  vectors[0]:=v_set( dt, 0, 0);
-  vectors[1]:=v_set(-dt, 0, 0);
-  vectors[2]:=v_set(0,  dt, 0);
-  vectors[3]:=v_set(0, -dt, 0);
-  vectors[4]:=v_set(0, 0,  dt);
-  vectors[5]:=v_set(0, 0, -dt);
-
-
-  while (not result) and (dt > EPS) do begin
+  while (not result) and (dt > _minimal_step) do begin
     metric:=last_metric;
     metric_i:=-1;
 
@@ -1499,13 +1538,8 @@ begin
 
     if (metric >= last_metric) or (metric_i < 0) then begin
       dt:=dt / 2;
-      if (dt > EPS) then begin
-        vectors[0]:=v_set( dt, 0, 0);
-        vectors[1]:=v_set(-dt, 0, 0);
-        vectors[2]:=v_set(0,  dt, 0);
-        vectors[3]:=v_set(0, -dt, 0);
-        vectors[4]:=v_set(0, 0,  dt);
-        vectors[5]:=v_set(0, 0, -dt);
+      if (dt > _minimal_step) then begin
+        _FillDtVectors(vectors, dt, flags);
       end else begin
         result:= (last_metric <= _accuracy);
       end;
@@ -1544,19 +1578,29 @@ begin
   end;
 end;
 
-constructor TOgfSimpleGrandparentIKSolver.Create(skeleton: TOgfSkeleton; target_bone: TBoneID; initial_step: single; accuracy: single);
+constructor TOgfSimpleGrandparentIKSolver.Create(skeleton: TOgfSkeleton; target_bone: TBoneID; parent_bone_flags: TOgfSimpleGrandparentIKSolverFlags; grandparent_bone_flags: TOgfSimpleGrandparentIKSolverFlags; initial_step: single; minimal_step: single; accuracy: single);
 begin
   inherited Create(skeleton);
   _target_bone:=target_bone;
   _last_solved_pose:=TOgfSkeletonPose.Create();
   _accuracy:=accuracy;
   _initial_step:=initial_step;
+  _minimal_step:=minimal_step;
+  _grandparent_bone_flags:=grandparent_bone_flags;
+  _parent_bone_flags:=parent_bone_flags;
+
 end;
 
 destructor TOgfSimpleGrandparentIKSolver.Destroy;
 begin
   FreeAndNil(_last_solved_pose);
   inherited Destroy;
+end;
+
+function TOgfSimpleGrandparentIKSolver.SetReferencePose(pose: TOgfSkeletonPose): boolean;
+begin
+  pose.CopyTo(_last_solved_pose);
+  result:=true;
 end;
 
 function TOgfSimpleGrandparentIKSolver.IsProperlyConfigured(): boolean;
@@ -1684,13 +1728,13 @@ begin
   if bone_id = _target_bone then begin
     m_get_translation(new_transform, target_point);
 
-    if _RotateParentToPlaceChildOnDistanceToPoint(_skeleton, parent_id, target_point, parent_limb_len) then begin
-      res:=_RotateParentToPlaceChildOnDistanceToPoint(_skeleton, bone_id, target_point, 0);
+    if _RotateParentToPlaceChildOnDistanceToPoint(_skeleton, parent_id, target_point, parent_limb_len, _grandparent_bone_flags) then begin
+      res:=_RotateParentToPlaceChildOnDistanceToPoint(_skeleton, bone_id, target_point, 0, _parent_bone_flags);
       if not res then begin
         // WTF?! parent rotated to provide a good distance, but child can't be properly oriented?!
         // Strange, but try just to aim child to target position
 
-        res:=_skeleton._AimChildBoneTo(bone_id, target_point);
+        //res:=_skeleton._AimChildBoneTo(bone_id, target_point);
       end;
 
       if res then begin
@@ -1718,8 +1762,8 @@ begin
     if not _skeleton._ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(bone_id, new_transform, m) then exit;
     bone.joint._AssignWrkPose(m);
 
-    if _RotateParentToPlaceChildOnDistanceToPoint(_skeleton, parent_id, gp_child, parent_limb_len) then begin
-      res:=_RotateParentToPlaceChildOnDistanceToPoint(_skeleton, _target_bone, gp_child, 0);
+    if _RotateParentToPlaceChildOnDistanceToPoint(_skeleton, parent_id, gp_child, parent_limb_len, _grandparent_bone_flags) then begin
+      res:=_RotateParentToPlaceChildOnDistanceToPoint(_skeleton, _target_bone, gp_child, 0, _parent_bone_flags);
       if not res then begin
         res:=_skeleton._AimChildBoneTo(bone_id, target_point);
       end;
@@ -1746,6 +1790,21 @@ begin
 
   if res then begin
     result:=IKSolveSuccess;
+  end;
+end;
+
+class function TOgfSimpleGrandparentIKSolver.GetFlagsFromString(s: string): TOgfSimpleGrandparentIKSolverFlags;
+begin
+  s:=lowercase(s);
+  result:=0;
+  if pos('x', s)>0 then begin
+    result:=result or SIMPLE_GP_IKSOLVER_FLAG_DISABLE_X_AXIS;
+  end;
+  if pos('y', s)>0 then begin
+    result:=result or SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Y_AXIS;
+  end;
+  if pos('z', s)>0 then begin
+    result:=result or SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Z_AXIS;
   end;
 end;
 
@@ -2027,6 +2086,16 @@ begin
   end;
 
   result:=true;
+end;
+
+procedure TOgfSkeletonPose.CopyTo(dest: TOgfSkeletonPose);
+var
+  i:integer;
+begin
+  dest.Reset();
+  for i:=0 to length(_bones)-1 do begin
+    dest.SetBone(_bones[i].name, _bones[i].transform);
+  end;
 end;
 
 destructor TOgfSkeletonPose.Destroy();
@@ -2959,7 +3028,7 @@ begin
   motionid:=_defs[idx].GetData().motion_id;
   _defs[idx].Free;
   for i:=idx to length(_defs)-2 do begin
-    _defs[idx]:=_defs[idx+1];
+    _defs[i]:=_defs[i+1];
   end;
   setlength(_defs, length(_defs)-1);
 
@@ -4295,16 +4364,17 @@ end;
 
 function TOgfMotionTracksContainer.RemoveTrack(idx: integer): boolean;
 var
-  i:integer;
+  i, l:integer;
 begin
   result:=false;
   if not Loaded() then exit();
-  if (idx >= 0) and (idx < length(_motions)) then begin
+  l:=length(_motions);
+  if (idx >= 0) and (idx < l) then begin
     _motions[idx].Free;
-    for i:=idx to length(_motions)-2 do begin
-      _motions[idx]:=_motions[idx+1];
+    for i:=idx to l-2 do begin
+      _motions[i]:=_motions[i+1];
     end;
-    setlength(_motions, length(_motions)-1);
+    setlength(_motions, l-1);
 
     result:=true;
   end;
@@ -5482,6 +5552,50 @@ begin
     _animations.SetAnimationKeyForBone(anim_name, parent_name, key_idx, k);
   end else if ikres = IKSolveFailed then begin
     result:=false;
+  end;
+end;
+
+function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; iksolver: TOgfIKSolverBase): boolean;
+var
+  bone:TOgfBoneData;
+  m1, m2, m:FMatrix4x4;
+  pos1, pos2, dt, dtc, pos:FVector3;
+  i:integer;
+  tm:single;
+begin
+  result:=false;
+  bone:=_GetBone(bone_idx);
+  if bone.bone = nil then exit;
+  if not _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx) then exit;
+
+  if (iksolver = nil) or (not iksolver.IsProperlyConfigured) or (not iksolver.IsTransformAllowedForBone(bone_idx)) or (not iksolver.IsIkSolveNeededForBoneTransform(bone_idx)) then begin
+    result:=true;
+    exit;
+  end;
+
+  // If the bone under IK - interpolate global translation
+  if not _SetKeyPoseForWork(anim_name, first_key_idx) then exit;
+  if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m1) then exit;
+  m_get_translation(m1, pos1);
+  if not _SetKeyPoseForWork(anim_name, last_key_idx) then exit;
+  if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m2) then exit;
+  m_get_translation(m2, pos2);
+
+  dt:=v_sub(pos2, pos1);
+  if (abs(dt.x)>EPS) or (abs(dt.y)>EPS) or (abs(dt.z)>EPS) then begin
+    try
+      for i:=first_key_idx+1 to last_key_idx-1 do begin
+        tm:= (i-first_key_idx)/(last_key_idx-first_key_idx);
+        dtc:=v_mul(dt, tm);
+        pos:=v_add(pos1, dtc);
+        if not _SetKeyPoseForWork(anim_name, i) then exit;
+        if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then exit;
+        m_translate_over(m, pos);
+        if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)=IKSolveFailed then exit;
+      end;
+      result:=true;
+    finally
+    end;
   end;
 end;
 
@@ -8870,6 +8984,9 @@ end;
 function TOgfAnimationsParser.DeleteAnimation(name: string): boolean;
 var
   idx:integer;
+  i, j:integer;
+  data:TOgfMotionDefData;
+  track:TOgfMotionTrack;
 begin
   result:=false;
   idx:=GetAnimationIdByName(name);
@@ -8878,6 +8995,24 @@ begin
   result:=true;
   result:=_tracks.RemoveTrack(idx) and result;
   result:=_params.RemoveMotionDef(idx) and result;
+
+{$IFDEF Debug}
+  for i:=0 to _params.MotionsDefsCount-1 do begin
+    data:=_params.GetMotionDefByIdx(i);
+    for j:=0 to _tracks.MotionTracksCount()-1 do begin;
+      track:=_tracks.GetMotionTrack(j);
+      if track<>nil then begin
+        if track._name = data.name then begin
+          if data.motion_id<>j then begin
+            // oops
+            data.motion_id:=j;
+            _params.UpdateMotionDefsForIdx(i, data);
+          end;
+        end;
+      end;
+    end;
+  end;
+{$ENDIF}
 end;
 
 type
