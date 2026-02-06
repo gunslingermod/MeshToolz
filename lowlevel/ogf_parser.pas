@@ -637,6 +637,8 @@ type
     class function GetFlagsFromString(s:string):TOgfSimpleGrandparentIKSolverFlags;
   end;
 
+  TOgfBoneRotationMode = (BoneRotationLocal, BoneRotationGlobalAroundSelf);
+
   { TOgfSkeleton }
 
   TOgfSkeleton = class
@@ -659,8 +661,12 @@ type
     function _GetGlobalSpaceToWrkBoneSpaceMatrix(idx:TBoneID; var m:FMatrix4x4):boolean;
     function _ConvertGlobalCoordinatesIntoWrkBoneSpace(bone_idx:TBoneID; in_v:FVector3; var out_v:FVector3):boolean;
     function _ConvertGlobalCoordinatesIntoParentSpaceOfWrkBone(child_bone_idx:TBoneID; in_v:FVector3; var out_v:FVector3):boolean;
+
+    // get transform which 'root' bone with in_m transform will have after bone with idx become its parent
     function _ConvertTransformFromGlobalIntoWrkBoneSpace(bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
     function _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(child_bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
+
+    // get transform which bone which has parent with bone_idx will have after unparenting
     function _ConvertTransformFromWrkBoneSpaceIntoGlobal(bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
     function _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(child_bone_idx:TBoneID; in_m:FMatrix4x4; var out_m:FMatrix4x4):boolean;
 
@@ -704,7 +710,7 @@ type
 
     function GetBoneBindTransformInParentSpace(idx:TBoneID; var offset:FVector3; var rotate:FVector3):boolean;
     function MoveBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; is_absolute:boolean; fixed_children:boolean; iksolver:TOgfIKSolverBase):boolean;
-    function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
+    function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; mode:TOgfBoneRotationMode; iksolver:TOgfIKSolverBase):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; iksolver:TOgfIKSolverBase):boolean;
@@ -5416,13 +5422,15 @@ begin
   end;
 end;
 
-function TOgfSkeleton.RotateBone(idx: TBoneID; v: FVector3; anim_name: string; key_idx: integer; iksolver: TOgfIKSolverBase): boolean;
+function TOgfSkeleton.RotateBone(idx: TBoneID; v: FVector3; anim_name: string; key_idx: integer; mode: TOgfBoneRotationMode; iksolver: TOgfIKSolverBase): boolean;
 var
   b:TOgfBoneData;
 
   rot_matrix:FMatrix4x4;
-  original_matrix, new_matrix, global_matrix:FMatrix4x4;
+  original_matrix, new_matrix, global_matrix, toglo,toloc:FMatrix4x4;
   key:TMotionKey;
+
+  pos,vz:FVector3;
 
   ikres:TOgfIkSolvingResult;
 begin
@@ -5431,16 +5439,37 @@ begin
       b:=_GetBone(idx);
       if b.joint=nil then exit;
 
-      m_setXYZ(rot_matrix, v);
-
       if key_idx = -1 then begin
         if not _SetBindPoseForWork() then exit;
       end else begin
         if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
       end;
 
-      b.joint._GetWrkTransform(original_matrix);
-      new_matrix:=m_mul(original_matrix, rot_matrix);
+      m_setXYZ(rot_matrix, v);
+
+      if mode = BoneRotationLocal then begin
+        b.joint._GetWrkTransform(original_matrix);
+        new_matrix:=m_mul(original_matrix, rot_matrix);
+      end else begin
+        // After unparenting, bone with idx will have toglo transform
+        if not _GetWrkBoneSpaceToGlobalSpaceMatrix(idx, toglo) then exit;
+
+        // Save bone translation
+        m_get_translation(toglo, pos);
+
+        // Move bone position to world's pivot point
+        set_zero(vz);
+        m_translate_over(toglo, vz);
+
+        // Rotate bone in global coordinates
+        new_matrix:=m_mul(rot_matrix, toglo);
+
+        // Restore translation
+        m_translate_over(new_matrix, pos);
+
+        // Get transform which the bone will have after parenting
+        if not _ConvertTransformFromGlobalIntoParentSpaceOfWrkBone(idx, new_matrix, new_matrix) then exit;
+      end;
 
       result:=true;
 
