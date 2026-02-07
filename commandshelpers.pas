@@ -412,13 +412,18 @@ begin
 
   i:=0;
   while (i < length(_results)) and (_results[i].present) do begin
-    if not _params[i].is_optional and (length(_results[i].rawstr) = 0) then begin
-      _lasterror:='mandatory argument #'+inttostr(i+1);
-      if length (_params[i].description) > 0 then begin
-        _lasterror:=_lasterror+' ('+_params[i].description+')';
+    if  (length(_results[i].rawstr) = 0) then begin
+      if _params[i].is_optional then begin
+        _results[i].present:=false;
+        continue;
+      end else begin
+        _lasterror:='mandatory argument #'+inttostr(i+1);
+        if length (_params[i].description) > 0 then begin
+          _lasterror:=_lasterror+' ('+_params[i].description+')';
+        end;
+        _lasterror:=_lasterror+' can''t be empty';
+        exit;
       end;
-      _lasterror:=_lasterror+' can''t be empty';
-      exit;
     end;
 
     case _params[i].argtype of

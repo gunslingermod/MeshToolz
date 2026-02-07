@@ -185,6 +185,7 @@ TModelSlot = class
   function _CmdAnimBoneMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneRotate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneAim(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimBoneAimToBone(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneFollow(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneCopyKeyToKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneSlerpKeys(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1907,10 +1908,10 @@ begin
       argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'last frame index');
       if argsparser.Parse(args) and
          argsparser.GetAsInt(0, frameid_first) and
-         argsparser.GetAsInt(1, frameid_last, -1)
+         argsparser.GetAsInt(1, frameid_last, frameid_first)
       then begin
         if frameid_last<0 then begin
-          frameid_last:=frameid_first;
+          frameid_last:=_data.Animations().GetAnimationFramesCount(defs.name)-1;
         end;
 
 
@@ -2004,7 +2005,13 @@ var
   first_key_id:integer;
   last_key_id:integer;
   poses:TOgfSkeletonPoseSeq;
+  pose:TOgfSkeletonPose;
   s:string;
+
+  parsed_bones:TParsedBonesExpression;
+  bones_s, bonename:string;
+  boneid:TBoneID;
+  i,j:integer;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -2014,12 +2021,15 @@ begin
     if length(defs.name)=0 then exit;
 
     argsparser:=TCommandsArgumentsParser.Create();
+    parsed_bones:=TParsedBonesExpression.Create();
     try
       argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'first frame index to copy');
       argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'last frame index to copy');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgAnyString, true, 'bones');
       if argsparser.Parse(args) and
          argsparser.GetAsInt(0, first_key_id, -1) and
-         argsparser.GetAsInt(1, last_key_id, -1)
+         argsparser.GetAsInt(1, last_key_id, first_key_id) and
+         argsparser.GetAsString(2, bones_s, '')
       then begin
         if first_key_id < 0 then begin
           first_key_id:=0;
@@ -2029,11 +2039,27 @@ begin
 
         if (last_key_id < 0) or (last_key_id >= _data.Animations().GetAnimationFramesCount(defs.name)) then begin
           last_key_id:=_data.Animations().GetAnimationFramesCount(defs.name)-1;
-         end;
+        end;
 
         poses:=TOgfSkeletonPoseSeq.Create();
         try
-          if _data.Skeleton().GetSkeletonPosesSequence(defs.name, first_key_id, last_key_id, poses) then begin
+          if (length(bones_s) > 0) and not ExtractMultipleBoneIdsFromString(bones_s, parsed_bones) then begin
+            result_description.SetDescription('can''t parse bones expression');
+          end else if _data.Skeleton().GetSkeletonPosesSequence(defs.name, first_key_id, last_key_id, poses) then begin
+            if (parsed_bones.ParsedCount()>0) then begin
+              for i:=0 to poses.Count()-1 do begin
+                pose:=poses.Get(i);
+                for j:=0 to pose.BonesCount() -1 do begin
+                  bonename:=pose.GetBonename(i);
+                  boneid:=_data.Skeleton().GetBoneIdxByName(bonename);
+
+                  if (boneid = INVALID_BONE_ID) or (not parsed_bones.IsBoneIdMatches(boneid)) then begin
+                    pose.ForgetBone(bonename);
+                  end;
+                end;
+              end;
+            end;
+
             s:=poses.Serialize();
             if length(s)=0 then begin
               result_description.SetDescription('can''t serialize data');
@@ -2056,6 +2082,7 @@ begin
       end;
     finally
       FreeAndNil(argsparser);
+      FreeAndNil(parsed_bones);
     end;
   end;
 end;
@@ -2439,7 +2466,7 @@ begin
               if result then result_description.SetWarningFlag(true);
               result_description.SetDescription('no frames affected');
             end else if cnt <> endframe-startframe+1 then begin
-              result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames from '+inttostr(endframe - startframe + 1));
               result_description.SetWarningFlag(true);
               result:=true;
             end else begin
@@ -2608,6 +2635,104 @@ begin
           end else begin
             cnt:=0;
             for i:=startframe to endframe do begin
+              if _data.Skeleton().AimBone(bone_idx, target, def.name, i, _iksolver) then begin
+                cnt:=cnt+1;
+              end;
+            end;
+
+            if cnt = 0 then begin
+              result:=startframe > endframe;
+              if result then result_description.SetWarningFlag(true);
+              result_description.SetDescription('no frames affected');
+            end else if cnt <> endframe-startframe+1 then begin
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetWarningFlag(true);
+              result:=true;
+            end else begin
+              result:=true;
+            end;
+          end;
+
+        end else begin
+          result_description.SetDescription(argsparser.GetLastErr());
+          if length(result_description.GetDescription())=0 then begin
+            result_description.SetDescription('can''t get parsed arguments');
+          end;
+        end;
+      finally
+        FreeAndNil(argsparser);
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdAnimBoneAimToBone(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bone_idx, anim_idx:integer;
+  upper_ud:TObject;
+  argsparser:TCommandsArgumentsParser;
+
+  target_bone:string;
+  target_bone_id:TBoneID;
+  target_bone_frame_id:integer;
+
+  target:FVector3;
+  startframe, endframe, i:integer;
+
+  def:TOgfMotionDefData;
+  cnt:integer;
+  parent_bone_idx:TBoneID;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    bone_idx:=(userdata as TCommandIndexArg).Get();
+    upper_ud:=TObject((userdata as TCommandIndexArg).GetUserdata());
+    if upper_ud = nil then exit;
+    if (upper_ud <> nil) and (upper_ud is TCommandIndexArg) then begin
+      anim_idx:=(upper_ud.Create as TCommandIndexArg).Get();
+      def:=_data.Animations().GetAnimationParams(anim_idx);
+      if length(def.name)=0 then exit;
+
+      argsparser:=TCommandsArgumentsParser.Create();
+      try
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'target bone');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'first frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'last frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'frame id with target bone position');
+
+        if argsparser.Parse(args) and
+           argsparser.GetAsString(0, target_bone) and
+           argsparser.GetAsInt(1, startframe) and
+           argsparser.GetAsInt(2, endframe, startframe) and
+           argsparser.GetAsInt(3, target_bone_frame_id, -1)
+        then begin
+          if startframe < 0 then begin
+             startframe:=0;
+          end;
+
+          if endframe < 0 then begin
+            endframe:=_data.Animations().GetAnimationFramesCount(def.name)-1;
+          end;
+
+          parent_bone_idx:=_data.Skeleton().GetBoneParentIdx(bone_idx);
+
+          if not ExtractBoneIdFromString(target_bone, target_bone_id) or (target_bone_id = INVALID_BONE_ID) then begin
+            result_description.SetDescription('invalid target bone');
+          end else if parent_bone_idx = INVALID_BONE_ID then begin
+            result_description.SetDescription('bone #'+inttostr(bone_idx) +' must have parent to perforn aim operation');
+          end else if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(parent_bone_idx)) then begin
+            result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(parent_bone_idx));
+          end else begin
+            cnt:=0;
+            if target_bone_frame_id >= 0 then begin
+              _data.Skeleton().GetGlobalBonePositionInPose(target_bone_id, def.name, target_bone_frame_id, target);
+            end;
+
+            for i:=startframe to endframe do begin
+              if target_bone_frame_id < 0 then begin
+                if not _data.Skeleton().GetGlobalBonePositionInPose(target_bone_id, def.name, i, target) then continue;
+              end;
+
               if _data.Skeleton().AimBone(bone_idx, target, def.name, i, _iksolver) then begin
                 cnt:=cnt+1;
               end;
@@ -2816,8 +2941,8 @@ begin
 
       argsparser:=TCommandsArgumentsParser.Create();
       try
-        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'start frame index');
-        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'end frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'start frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'end frame index');
 
         if argsparser.Parse(args) and
            argsparser.GetAsInt(0, startframe) and
@@ -3756,7 +3881,7 @@ begin
   _commands_bones.DoRegister(TCommandSetup.Create('reparent', @_IsModelHasSkeletonPrecondition, @_CmdBoneReparent, 'change bone parent; arg 1 - new parent, arg 2 (optional) - preserve bone global position (1, default) or not (0)'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('setbindtransform', @_IsModelHasSkeletonPrecondition, @_CmdBoneSetBindTransform, 'directly change bone transform of bind pose (dangerous function, can break anims); args #1, #2, #3 - new offset X,Y,Z; args #4, #5, #6 - new rotation X,Y,Z'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdBoneBindPoseMove, 'move bone changing its bind position; args 1,2,3 - x,y,z components of move, arg 4 (optional) - absolute (1) or relative (0, default) movement, arg 5 (optional) - fixed children (1) or not (0, default)'), CommandItemTypeCall);
-  _commands_bones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdBoneBindPoseRotateAroundSelf, 'rotate bone changing its bind pose; args 1,2,3 - x,y,z components'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdBoneBindPoseRotateAroundSelf, 'rotate bone changing its bind pose; args 1,2,3 - x,y,z components, 4 - is global (1) or local (0, default) axis used'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('copysettings', @_IsModelHasSkeletonPrecondition, @_CmdBoneCopySettings, 'copy bone settings into temp buffer, no arguments'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('applysettings', @_IsModelHasSkeletonPrecondition, @_CmdBoneApplySettings, 'apply previously copied bone settings, no arguments'), CommandItemTypeCall);
 
@@ -3765,7 +3890,7 @@ begin
   _commands_animations.DoRegister(TCommandSetup.Create('keyinfo', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyInfo, 'show bone parameters is specific key; arg 1 - key index, arg 2 (optional) - bones'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('copykey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPoseCopy, 'copy skeleton pose in the specified frame, argument 1 is frame id, argument 2 (optional) is bones'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('pastekey', @_IsAnimationsLoadedPrecondition, @_CmdAnimKeyPosePaste, 'paste previosly copied skeleton pose into the specified frames, arg 1 is first frame id, arg2 (optional) is last frame id'), CommandItemTypeCall);
-  _commands_animations.DoRegister(TCommandSetup.Create('copytrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackCopy, 'copy track, arg 1 - start frame id, arg 2 - last frame id to copy'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('copytrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackCopy, 'copy track, arg 1 - start frame id, arg 2 - last frame id to copy, arg3 - bones (optional)'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('pastetrack', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackPaste, 'paste previously copied track, arg 1 - start frame index to paste, arg 2 - overwrite (0) or insert new (1, default) frames'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('duplicate', @_IsAnimationsLoadedPrecondition, @_CmdAnimTrackDuplicate, 'duplicate motion, argument is name for the copy'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('remove', @_IsAnimationsLoadedPrecondition, @_CmdAnimRemove, 'remove animation, no arguments'), CommandItemTypeCall);
@@ -3786,8 +3911,9 @@ begin
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);
-  _commands_animbones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneRotate, 'rotate bone using its local axes, arguments: X, Y, Z rotation components, start frame index, end frame index'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneRotate, 'rotate bone using its local axes, arguments: X, Y, Z rotation components, start frame index, end frame index, is global (1) or local (0, default) axis used'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('aim', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneAim, 'aim bone to the specified target, arguments: X, Y, Z global coordinates of target, start frame index, end frame index'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('aimtobone', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneAimToBone, 'aim bone to the specified target bone, arguments: target bone, start frame index, end frame index, target bone position frame index (optional, current frame will be used if not specified)'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('followbone', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneFollow, 'folow for the other bone as if it was a parent in a source key, args: source bone, source frame index, first target frame index, last target frame index'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('clonekey', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneCopyKeyToKeys, 'replace bone keys with data from another bone key, arguments: source key id, first target key id, last target key id'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('interpolate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSlerpKeys, 'interpolate between two keys, arguments: first key id, last key id'), CommandItemTypeCall);

@@ -565,6 +565,7 @@ type
     procedure SetBone(bonename:string; var transform:FMatrix4x4);
     function GetBone(bonename:string; var transform:FMatrix4x4):boolean;
     function ForgetBone(bonename:string):boolean;
+    function GetBonename(idx:integer):string;
     function BonesCount():integer;
     function Serialize():string;
     function Deserialize(var s:string):boolean;
@@ -2013,6 +2014,14 @@ begin
     setlength(_bones, length(_bones)-1);
 
     result:=true;
+  end;
+end;
+
+function TOgfSkeletonPose.GetBonename(idx: integer): string;
+begin
+  result:='';
+  if (idx>=0) and (idx < length(_bones)) then begin
+    result:=_bones[idx].name;
   end;
 end;
 
@@ -3774,12 +3783,19 @@ begin
   result:=false;
   if (start_idx<0) or (start_idx>=FramesCount()) then exit;
   if (end_idx<0) or (end_idx>=FramesCount()) then exit;
-  if abs(start_idx - end_idx)<2 then exit;
+
+
+  if abs(start_idx - end_idx)<2 then begin
+    result:=true;
+    exit;
+  end;
+
   if start_idx > end_idx then begin
     i:=start_idx;
     start_idx:=end_idx;
     end_idx:=i;
   end;
+
   if not GetKey(start_idx, k1) then exit;
   if not GetKey(end_idx, k2) then exit;
 
@@ -5251,6 +5267,7 @@ begin
   anim_id:=_animations.GetAnimationIdByName(anim_name);
   if anim_id < 0 then exit;
 
+  if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
   result:=_SetWrkPose(pose);
 
   for i:=0 to GetBonesCount()-1 do begin
@@ -5591,6 +5608,8 @@ var
   pos1, pos2, dt, dtc, pos:FVector3;
   i:integer;
   tm:single;
+
+  cst, cse, cstep:integer;
 begin
   result:=false;
   bone:=_GetBone(bone_idx);
@@ -5613,14 +5632,29 @@ begin
   dt:=v_sub(pos2, pos1);
   if (abs(dt.x)>EPS) or (abs(dt.y)>EPS) or (abs(dt.z)>EPS) then begin
     try
-      for i:=first_key_idx+1 to last_key_idx-1 do begin
-        tm:= (i-first_key_idx)/(last_key_idx-first_key_idx);
-        dtc:=v_mul(dt, tm);
-        pos:=v_add(pos1, dtc);
-        if not _SetKeyPoseForWork(anim_name, i) then exit;
-        if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then exit;
-        m_translate_over(m, pos);
-        if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)=IKSolveFailed then exit;
+      if first_key_idx <= last_key_idx then begin
+        cst:=first_key_idx;
+        cse:=last_key_idx;
+        cstep:=1;
+      end else begin
+        cst:=last_key_idx;
+        cse:=first_key_idx;
+        cstep:=-1;
+      end;
+
+      if cse - cst > 1 then begin
+        i:=first_key_idx+cstep;
+        while i <> last_key_idx do begin
+          tm:= (i-cst)/(cse-cst);
+          dtc:=v_mul(dt, tm);
+          pos:=v_add(pos1, dtc);
+          if not _SetKeyPoseForWork(anim_name, i) then exit;
+          if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then exit;
+          m_translate_over(m, pos);
+          if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)=IKSolveFailed then exit;
+
+          i:=i+cstep;
+        end;
       end;
       result:=true;
     finally
@@ -8950,7 +8984,6 @@ begin
   if not Loaded() then exit;
 
   track:=_GetMotionTrackByName(anim_name);
-  if (start_key > end_key) then exit;
   if (start_key < 0) then exit;
   if (end_key >= track.GetFramesCount()) then exit;
 
