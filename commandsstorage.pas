@@ -416,6 +416,10 @@ var
   name:string;
   extracted_args:string;
   cmd:TCommandSetup;
+  level:integer;
+  desc:string;
+  error_happened:boolean;
+  warning_happened:boolean;
 begin
   args:=TrimLeft(args);
   _result_desc.Reset();
@@ -432,23 +436,64 @@ begin
     args:=rightstr(args, length(args)-1);
 
     if opcode = OPCODE_CALL then begin
-      name:=ExtractAlphabeticString(args);
-      if (length(name)>0) and not ExtractProcArgs(args, extracted_args) then begin
-        _result_desc.SetDescription('can''t parse call arguments');
-      end else begin
-        if length(name) = 0 then begin
-          _default_action.Execute(args, _result_desc, nil);
-          _result_desc.SetSuccess(false);
+      level:=0;
+      desc:='';
+      error_happened:=false;
+      warning_happened:=false;
+      while (length(args)> 0) and not error_happened do begin
+        level:=level+1;
+        name:=ExtractAlphabeticString(args);
+        if (length(name)>0) and not ExtractProcArgs(args, extracted_args) then begin
+          _result_desc.SetDescription('can''t parse arguments for procedure "'+name+'" call (level '+inttostr(level)+')');
+          error_happened:=true;
         end else begin
-          args:=extracted_args;
-          cmd:=Find(name, CommandItemTypeCall);
-          if cmd = nil then begin
-            _result_desc.SetDescription('unknown procedure "'+name+'"');
+          if length(name) = 0 then begin
+            if level = 1 then begin
+              _default_action.Execute(args, _result_desc, nil);
+            end;
+            error_happened:=true;
           end else begin
-            cmd.Execute(args, _result_desc, userdata);
+            cmd:=Find(name, CommandItemTypeCall);
+            if cmd = nil then begin
+              _result_desc.SetDescription('unknown procedure "'+name+'"');
+              error_happened:=true;
+            end else begin
+              cmd.Execute(extracted_args, _result_desc, userdata);
+            end;
+          end;
+        end;
+        error_happened:=error_happened or not _result_desc.IsSuccess();
+        warning_happened:=warning_happened or _result_desc.IsWarning();
+        if length(desc)>0 then begin
+          if not _result_desc.IsSuccess() then begin
+            desc:=desc+chr($0d)+chr($0a)+'<Output of failed call of "'+name+'" (level  '+inttostr(level)+') starts here> '+chr($0d)+chr($0a)+_result_desc.GetDescription();
+          end else if length(_result_desc.GetDescription()) >0 then begin
+            desc:=desc+chr($0d)+chr($0a)+_result_desc.GetDescription();
+          end;
+        end else begin
+          desc:=_result_desc.GetDescription();
+        end;
+
+        _result_desc.SetDescription('');
+        _result_desc.SetSuccess(false);
+
+        if not error_happened and (length(args)>0) then begin
+          opcode:=args[1];
+          args:=rightstr(args, length(args)-1);
+          if opcode <> OPCODE_CALL then begin
+            error_happened:=true;
+            if length(desc)>0 then begin
+              desc:=desc+chr($0d)+chr($0a);
+            end;
+            desc:=desc+'<Can''t continue calls chain after level '+inttostr(level)+'>'+chr($0d)+chr($0a)+ 'Call arguments must be followed by end of line or "'+OPCODE_CALL+'" before the next call in the chain';
           end;
         end;
       end;
+
+      _result_desc.SetDescription(desc);
+      _result_desc.SetWarningFlag(warning_happened);
+      _result_desc.SetSuccess(not error_happened);
+
     end else if opcode = OPCODE_INDEX then begin
       name:=ExtractAlphabeticString(args);
       if length(name) = 0 then begin
@@ -591,6 +636,7 @@ begin
                 if length(_result_desc.GetDescription())>0 then begin;
                   r:=r+'!' +GetFilteringItemTypeName(i)+inttostr(i)+': '+_result_desc.GetDescription()+chr($0d)+chr($0a);
                 end;
+                break;
               end else if _result_desc.IsWarning() then begin
                 result.SetWarningFlag(true);
                 if length(_result_desc.GetDescription())>0 then begin;

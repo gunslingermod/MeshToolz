@@ -8,7 +8,7 @@ uses basedefs;
 function IsNumberChar(chr:AnsiChar):boolean;
 function IsAlphabeticChar(chr:AnsiChar):boolean;
 function ExtractAlphabeticString(var inoutstr:string):string;
-function ExtractProcArgs(instr:string; var args:string):boolean;
+function ExtractProcArgs(var instr:string; var args:string):boolean;
 function ExtractNumericString(var inoutstr:string; allow_negative:boolean):string;
 function ExtractFloatFromString(var inoutstr:string; var fout:single):boolean;
 function ExtractABNString(var inoutstr:string):string;
@@ -106,14 +106,28 @@ begin
   end;
 end;
 
-function ExtractProcArgs(instr:string; var args:string):boolean;
+function ExtractProcArgs(var instr: string; var args: string): boolean;
+var
+  i:integer;
 begin
   result:=false;
   instr:=trim(instr);
-  if (length(instr)<2) or (instr[1]<>'(') or (instr[length(instr)]<>')') then exit;
+  if (length(instr)<2) or (instr[1]<>'(') then exit;
+  instr:=trim(rightstr(instr, length(instr)-1));
 
-  args:=midstr(instr, 2, length(instr)-2);
-  result:=true;
+  i:=1;
+  while i <= length(instr) do begin
+    if instr[i]=')' then begin
+      break;
+    end;
+    i:=i+1;
+  end;
+
+  result:= (i<=length(instr));
+  if result then begin
+    args:=trim(leftstr(instr, i-1));
+    instr:=trim(rightstr(instr, length(instr)-i));
+  end;
 end;
 
 function ExtractNumericString(var inoutstr:string; allow_negative:boolean):string;

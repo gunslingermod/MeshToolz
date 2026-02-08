@@ -714,7 +714,8 @@ type
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; mode:TOgfBoneRotationMode; iksolver:TOgfIKSolverBase):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
-    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; iksolver:TOgfIKSolverBase):boolean;
+    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; iksolver:TOgfIKSolverBase):boolean;
+    function ApplyDiff(bone_idx:TBoneID; anim_name:string; targetframe:integer; sourceframe:integer; startframe:integer; endframe:integer; correct_position:boolean; correct_rotation:boolean; iksolver:TOgfIKSolverBase):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
@@ -816,7 +817,7 @@ type
     function FramesCount():integer;
     function GetKey(idx:integer; var key:TMotionKey):boolean;
     function SetKey(idx:integer; key:TMotionKey):boolean;
-    function SlerpBetweenKeys(start_idx:integer; end_idx:integer):boolean;
+    function SlerpBetweenKeys(start_idx:integer; end_idx:integer; pos:boolean; rot:boolean):boolean;
 
     function MakeStatic(key:TMotionKey):boolean;
 
@@ -825,7 +826,7 @@ type
     function Copy(from:TOgfMotionBoneTrack):boolean;
     function MergeWithTrack(second:TOgfMotionBoneTrack):boolean;
 
-    class procedure KeysSlerp(var k_out:TMotionKey; k1:TMotionKey; k2:TMotionKey; tm:single);
+    class procedure KeysSlerp(var k_out:TMotionKey; k1:TMotionKey; k2:TMotionKey; tm:single; pos:boolean; rot:boolean);
   end;
 
   { TOgfMotionTrack }
@@ -855,7 +856,7 @@ type
     function GetBoneKey(track_bone_idx:integer; key_idx:integer; var k:TMotionKey):boolean;
     function SetBoneKey(track_bone_idx:integer; key_idx:integer; k:TMotionKey):boolean;
     function MakeBoneStatic(track_bone_idx:integer; k:TMotionKey):boolean;
-    function InterpolateBoneKeys(track_bone_idx:integer; start_key_idx:integer; end_key_idx:integer):boolean;
+    function InterpolateBoneKeys(track_bone_idx:integer; start_key_idx:integer; end_key_idx:integer; pos:boolean; rot:boolean):boolean;
 
     function Copy(from:TOgfMotionTrack):boolean;
     function MergeWithTrack(second:TOgfMotionTrack):boolean;
@@ -1107,9 +1108,10 @@ type
     function GetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; var k:TMotionKey):boolean;
     function SetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; k:TMotionKey):boolean;
     function SetAnimationMultiframeKeyForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; k:TMotionKey):boolean;
-    function InterpotateAnimationKeysForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer):boolean;
+    function InterpotateAnimationKeysForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; pos:boolean; rot:boolean):boolean;
 
     function DuplicateAnimation(old_name:string; new_name:string):boolean;
+    function RenameAnimation(old_name:string; new_name:string):boolean;
     function MergeAnimations(name_of_new:string; name_of_first:string; name_of_second:string):boolean;
     function DeleteAnimation(name:string):boolean;
 
@@ -3774,7 +3776,7 @@ begin
   result:=true;
 end;
 
-function TOgfMotionBoneTrack.SlerpBetweenKeys(start_idx: integer; end_idx: integer): boolean;
+function TOgfMotionBoneTrack.SlerpBetweenKeys(start_idx: integer; end_idx: integer; pos: boolean; rot: boolean): boolean;
 var
   i:integer;
   k1, k2, kr:TMotionKey;
@@ -3802,8 +3804,13 @@ begin
   result:=true;
   for i:=start_idx+1 to end_idx-1 do begin
     tm:= (i-start_idx)/(end_idx-start_idx);
-    KeysSlerp(kr, k1, k2, tm);
-    result:=SetKey(i, kr) and result;
+
+    if GetKey(i, kr) then begin
+      KeysSlerp(kr, k1, k2, tm, pos, rot);
+      result:=SetKey(i, kr) and result;
+    end else begin
+      result:=false;
+    end;
   end;
 end;
 
@@ -3959,23 +3966,26 @@ begin
   result:=true;
 end;
 
-class procedure TOgfMotionBoneTrack.KeysSlerp(var k_out: TMotionKey; k1: TMotionKey; k2: TMotionKey; tm: single);
+class procedure TOgfMotionBoneTrack.KeysSlerp(var k_out: TMotionKey; k1: TMotionKey; k2: TMotionKey; tm: single; pos: boolean; rot: boolean);
 var
   dt:FVector3;
 begin
-  if (abs(k1.Q.x - k2.Q.x)>EPS) or (abs(k1.Q.y - k2.Q.y)>EPS) or (abs(k1.Q.z - k2.Q.z)>EPS) or (abs(k1.Q.w - k2.Q.w)>EPS) then begin
-    q_slerp(k_out.Q, k1.Q, k2.Q, tm);
-  end else begin
-    k_out.Q:=k1.Q;
+  if rot then begin
+    if (abs(k1.Q.x - k2.Q.x)>EPS) or (abs(k1.Q.y - k2.Q.y)>EPS) or (abs(k1.Q.z - k2.Q.z)>EPS) or (abs(k1.Q.w - k2.Q.w)>EPS) then begin
+      q_slerp(k_out.Q, k1.Q, k2.Q, tm);
+    end else begin
+      k_out.Q:=k1.Q;
+    end;
   end;
 
-
-  dt:=v_sub(k2.T, k1.T);
-  if (abs(dt.x)>EPS) or (abs(dt.y)>EPS) or (abs(dt.z)>EPS) then begin
-    dt:=v_mul(dt, tm);
-    k_out.T:=v_add(k1.T, dt);
-  end else begin
-    k_out.T:=k1.T;
+  if pos then begin
+    dt:=v_sub(k2.T, k1.T);
+    if (abs(dt.x)>EPS) or (abs(dt.y)>EPS) or (abs(dt.z)>EPS) then begin
+      dt:=v_mul(dt, tm);
+      k_out.T:=v_add(k1.T, dt);
+    end else begin
+      k_out.T:=k1.T;
+    end;
   end;
 end;
 
@@ -4172,13 +4182,13 @@ begin
   end;
 end;
 
-function TOgfMotionTrack.InterpolateBoneKeys(track_bone_idx: integer; start_key_idx: integer; end_key_idx: integer): boolean;
+function TOgfMotionTrack.InterpolateBoneKeys(track_bone_idx: integer; start_key_idx: integer; end_key_idx: integer; pos: boolean; rot: boolean): boolean;
 begin
   result:=false;
   if not Loaded() then exit;
 
   if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
-    result:=_bone_tracks[track_bone_idx].SlerpBetweenKeys(start_key_idx, end_key_idx);
+    result:=_bone_tracks[track_bone_idx].SlerpBetweenKeys(start_key_idx, end_key_idx, pos, rot);
   end;
 end;
 
@@ -4875,6 +4885,7 @@ begin
   if parent_bone_idx = INVALID_BONE_ID then begin
     // no parent bone, so parent is already global space; no need to convert
     out_m:=in_m;
+    result:=true;
   end else begin
     result:=_ConvertTransformFromWrkBoneSpaceIntoGlobal(parent_bone_idx, in_m, out_m);
   end;
@@ -5601,7 +5612,7 @@ begin
   end;
 end;
 
-function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; iksolver: TOgfIKSolverBase): boolean;
+function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; calc_pos: boolean; calc_rot: boolean; iksolver: TOgfIKSolverBase): boolean;
 var
   bone:TOgfBoneData;
   m1, m2, m:FMatrix4x4;
@@ -5614,7 +5625,7 @@ begin
   result:=false;
   bone:=_GetBone(bone_idx);
   if bone.bone = nil then exit;
-  if not _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx) then exit;
+  if not _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx, calc_pos, calc_rot) then exit;
 
   if (iksolver = nil) or (not iksolver.IsProperlyConfigured) or (not iksolver.IsTransformAllowedForBone(bone_idx)) or (not iksolver.IsIkSolveNeededForBoneTransform(bone_idx)) then begin
     result:=true;
@@ -5658,6 +5669,68 @@ begin
       end;
       result:=true;
     finally
+    end;
+  end;
+end;
+
+function TOgfSkeleton.ApplyDiff(bone_idx: TBoneID; anim_name: string; targetframe: integer; sourceframe: integer; startframe: integer; endframe: integer; correct_position: boolean; correct_rotation: boolean; iksolver: TOgfIKSolverBase): boolean;
+var
+  transform_target, transform_source, transform_diff, m, global_matrix:FMatrix4x4;
+  pos_target, pos_source, pos_diff, pos:FVector3;
+
+  i:integer;
+  bone:TOgfBoneData;
+  key:TMotionKey;
+  ikres:TOgfIkSolvingResult;
+begin
+  result:=false;
+
+  bone:=_GetBone(bone_idx);
+  if bone.joint = nil then exit;
+
+  if startframe > endframe then begin
+    i:=startframe;
+    startframe:=endframe;
+    endframe:=i;
+  end;
+
+  if not _SetKeyPoseForWork(anim_name, targetframe) then exit;
+  bone.joint._GetWrkTransform(transform_target);
+  if not _SetKeyPoseForWork(anim_name, sourceframe) then exit;
+  bone.joint._GetWrkTransform(transform_source);
+
+  m_get_translation(transform_target, pos_target);
+  m_get_translation(transform_source, pos_source);
+  pos_diff:=v_sub(pos_target, pos_source);
+
+  m:=m_invert43(transform_source);
+  transform_diff:=m_mul(m, transform_target);
+
+  for i:=startframe to endframe do begin
+    if not _SetKeyPoseForWork(anim_name, i) then exit;
+    bone.joint._GetWrkTransform(m);
+    m_get_translation(m, pos);
+
+    if correct_rotation then begin
+      m:=m_mul(m, transform_diff);
+    end;
+
+    if correct_position then begin
+      pos:=v_add(pos, pos_diff);
+    end;
+    m_translate_over(m, pos);
+
+    if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(bone_idx, m, global_matrix) then exit;
+    ikres:=_SolveIKAndSetKey(bone_idx, global_matrix, anim_name, i, iksolver);
+    if ikres = IKSolveNotNeeded then begin
+      key:=TransformToMotionKey(m);
+      _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), i, key);
+    end else if ikres = IKSolveFailed then begin
+      break;
+    end;
+
+    if i = endframe then begin
+      result:=true;
     end;
   end;
 end;
@@ -8974,7 +9047,7 @@ begin
   end;
 end;
 
-function TOgfAnimationsParser.InterpotateAnimationKeysForBone(anim_name: string; bone_name: string; start_key: integer; end_key: integer): boolean;
+function TOgfAnimationsParser.InterpotateAnimationKeysForBone(anim_name: string; bone_name: string; start_key: integer; end_key: integer; pos: boolean; rot: boolean): boolean;
 var
   track:TOgfMotionTrack;
   bone:TOgfMotionBoneParams;
@@ -8990,7 +9063,7 @@ begin
   if _params.FindBoneIdxsByName(bone_name, part_id, bone_id) then begin
     bone:=_params.GetBone(part_id, bone_id);
     if bone<>nil then begin
-      result:=track.InterpolateBoneKeys(bone.GetIdxInTracks(), start_key, end_key);
+      result:=track.InterpolateBoneKeys(bone.GetIdxInTracks(), start_key, end_key, pos, rot);
     end;
   end;
 end;
@@ -9021,6 +9094,25 @@ begin
   end else begin
     result:=true;
   end;
+end;
+
+function TOgfAnimationsParser.RenameAnimation(old_name: string; new_name: string): boolean;
+var
+  idx:integer;
+  def:TOgfMotionDefData;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  if GetAnimationIdByName(new_name) >=0 then exit;
+  idx:=GetAnimationIdByName(old_name);
+  if idx < 0 then exit;
+
+  def:=_params.GetMotionDefByIdx(idx);
+  if def.name<>old_name then exit;
+
+  def.name:=new_name;
+  result:=_params.UpdateMotionDefsForIdx(idx, def);
 end;
 
 function TOgfAnimationsParser.MergeAnimations(name_of_new: string; name_of_first: string; name_of_second: string): boolean;
