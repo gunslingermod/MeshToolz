@@ -19,6 +19,8 @@ type
 TIndexFilter = packed record
   name:string;
   value:string;
+  wildcard_text:string;
+  wildcard_found:boolean;
   inverse:boolean;
 end;
 
@@ -29,6 +31,7 @@ TIndexFilters = array of TIndexFilter;
 TCommandsArgumentsParserArgType = (
   TCommandsArgumentsParserArgAnyString,
   TCommandsArgumentsParserArgABNString,
+  TCommandsArgumentsParserArgABNStringWithWildcard,
   TCommandsArgumentsParserArgNumericString,
   TCommandsArgumentsParserArgInteger,
   TCommandsArgumentsParserArgSingle,
@@ -72,7 +75,8 @@ end;
 
 procedure InitFilters(var f:TIndexFilters);
 procedure PushFilter(var f:TIndexFilters; name:string; defval:string='');
-function IsMatchFilter(str:string; filter:TIndexFilter; mode:TFilterMode):boolean;
+function GetFiltersWildcardText(var f:TIndexFilters; var res:string):boolean;
+function IsMatchFilter(str:string; var filter:TIndexFilter; mode:TFilterMode):boolean;
 procedure ClearFilters(var f:TIndexFilters);
 function ExtractIndexFilter(var inoutstr:string; var filters:TIndexFilters; var filters_count:integer):boolean;
 
@@ -248,13 +252,31 @@ begin
   setlength(f, l+1);
   f[l].name:=name;
   f[l].value:=defval;
+  f[l].wildcard_text:='';
+  f[l].wildcard_found:=false;
 end;
 
-function IsMatchFilter(str:string; filter:TIndexFilter; mode:TFilterMode):boolean;
+function GetFiltersWildcardText(var f: TIndexFilters; var res: string): boolean;
+var
+  i:integer;
+begin
+  result:=false;
+  for i:=0 to length(f)-1 do begin
+    if f[i].wildcard_found then begin
+      res:=f[i].wildcard_text;
+      result:=true;
+      break
+    end;
+  end;
+end;
+
+function IsMatchFilter(str: string; var filter: TIndexFilter; mode: TFilterMode): boolean;
 var
   val:string;
 begin
   result:=false;
+  filter.wildcard_found:=false;
+
   val:=filter.value;
   if (length(val)>0) and (val[length(val)]='*') then begin
     val:=leftstr(val, length(val)-1);
@@ -263,7 +285,17 @@ begin
 
   case mode of
     FILTER_MODE_EXACT: result:=(length(val)=0) or (str = val);
-    FILTER_MODE_BEGINWITH: result:=(length(val)=0) or (leftstr(str, length(val)) = val);
+    FILTER_MODE_BEGINWITH: begin
+      if (length(val)=0) then begin
+        result:=true;
+      end else if (leftstr(str, length(val)) = val) then begin
+        filter.wildcard_text:=trim(rightstr(str, length(str)-length(val)));
+        filter.wildcard_found:=true;
+        result:=true;
+      end else begin
+        result:=false;
+      end;
+    end;
   end;
   if filter.inverse then result:=not result;
 end;
@@ -458,6 +490,23 @@ begin
         end;
       end;
 
+      TCommandsArgumentsParserArgABNStringWithWildcard: begin
+        for j:=1 to length(_results[i].rawstr) do begin
+          if not (IsAlphabeticChar(_results[i].rawstr[j]) or IsNumberChar(_results[i].rawstr[j]) or (_results[i].rawstr[j]='_') or (_results[i].rawstr[j]='*')) then begin
+            _lasterror:='';
+            if _params[i].is_optional then begin
+              _lasterror:=_lasterror+'optional ';
+            end;
+           _lasterror:=_lasterror+'argument #'+inttostr(i+1);
+             if length (_params[i].description) > 0 then begin
+               _lasterror:=_lasterror+' ('+_params[i].description+')';
+             end;
+             _lasterror:=_lasterror+' should be a string created from alphabetic or numeric chars with wildcards';
+            exit;
+          end;
+        end;
+      end;
+
       TCommandsArgumentsParserArgNumericString: begin
         for j:=1 to length(_results[i].rawstr) do begin
           if not IsNumberChar(_results[i].rawstr[j]) then begin
@@ -598,6 +647,7 @@ begin
       exit;
     end;
   end else if (_params[idx].argtype = TCommandsArgumentsParserArgABNString) or
+     (_params[idx].argtype = TCommandsArgumentsParserArgABNStringWithWildcard) or
      (_params[idx].argtype = TCommandsArgumentsParserArgNumericString) or
      (_params[idx].argtype = TCommandsArgumentsParserArgAnyString)
   then begin

@@ -113,6 +113,7 @@ TModelSlot = class
   function ExtractMultipleBoneIdsFromString(var inoutstr:string; out_data:TParsedBonesExpression):boolean;
   function GetBoneNameById(boneid: TBoneId): string;
   function CheckAndCorrectFrameId(var frameid:integer; anim_name:string):boolean;
+  function ReplaceWildcards(s:string; arg:TCommandIndexArg):string;
 
   function _CmdLoadFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdLoadAnimsFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -167,6 +168,7 @@ TModelSlot = class
   function _CmdAnimSetFalloff(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimSetPower(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimSetSpeed(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimSetFlags(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimRemove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimRename(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
@@ -677,6 +679,17 @@ begin
   end;
 
   result:=(frameid >= 0) and (frameid < frames_cnt);
+end;
+
+function TModelSlot.ReplaceWildcards(s: string; arg: TCommandIndexArg): string;
+var
+  wildcard_text:string;
+begin
+  if arg.GetWildcardText(wildcard_text) then begin
+    result:=StringReplace(s, '*', wildcard_text, [rfReplaceAll]);
+  end else begin
+    result:=s;
+  end;
 end;
 
 function ShapeTypeById(shape:word):string;
@@ -1316,8 +1329,9 @@ begin
     idx:=(userdata as TCommandIndexArg).Get();
     argsparser:=TCommandsArgumentsParser.Create();
     try
-      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'new bone name');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNStringWithWildcard, false, 'new bone name');
       if argsparser.Parse(args) and argsparser.GetAsString(0, new_name) then begin
+        new_name:=ReplaceWildcards(new_name, userdata as TCommandIndexArg);
         old_name:=_data.Skeleton().GetBoneName(idx);
         if (_data.Skeleton().GetBoneIdxByName(new_name) <> INVALID_BONE_ID) then begin
           result_description.SetDescription('bone with name '+new_name+' already present in the skeleton');
@@ -1725,6 +1739,44 @@ begin
   end
 end;
 
+function TModelSlot._CmdAnimSetFlags(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+  value:integer;
+  defs:TOgfMotionDefData;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+    defs:=_data.Animations().GetAnimationParams(idx);
+    if length(defs.name)=0 then exit;
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'new value');
+      if argsparser.Parse(args) and
+         argsparser.GetAsInt(0, value)
+      then begin
+        defs.flags:=value;
+        if not _data.Animations().UpdateAnimationParams(idx, defs) then begin
+          result_description.SetDescription('can''t update animation params');
+        end else begin
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end
+end;
+
 function TModelSlot._CmdAnimRemove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
@@ -1760,10 +1812,12 @@ begin
 
     argsparser:=TCommandsArgumentsParser.Create();
     try
-      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'new name for the animation');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNStringWithWildcard, false, 'new name for the animation');
       if argsparser.Parse(args) and
          argsparser.GetAsString(0, newname)
       then begin
+        newname:=ReplaceWildcards(newname, userdata as TCommandIndexArg);
+
         if _data.Animations().GetAnimationIdByName(newname) >=0 then begin
           result_description.SetDescription('name '+newname+' already in use');
         end else begin
@@ -2022,10 +2076,12 @@ begin
 
     argsparser:=TCommandsArgumentsParser.Create();
     try
-      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'name of the duplicated animation');
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNStringWithWildcard, false, 'name of the duplicated animation');
       if argsparser.Parse(args) and
          argsparser.GetAsString(0, newname)
       then begin
+        newname:=ReplaceWildcards(newname, userdata as TCommandIndexArg);
+
         if _data.Animations().GetAnimationIdByName(newname) >=0 then begin
           result_description.SetDescription('name '+newname+' already in use');
         end else begin
@@ -2097,8 +2153,8 @@ begin
             if (parsed_bones.ParsedCount()>0) then begin
               for i:=0 to poses.Count()-1 do begin
                 pose:=poses.Get(i);
-                for j:=0 to pose.BonesCount() -1 do begin
-                  bonename:=pose.GetBonename(i);
+                for j:=pose.BonesCount()-1 downto 0 do begin
+                  bonename:=pose.GetBonename(j);
                   boneid:=_data.Skeleton().GetBoneIdxByName(bonename);
 
                   if (boneid = INVALID_BONE_ID) or (not parsed_bones.IsBoneIdMatches(boneid)) then begin
@@ -2731,7 +2787,7 @@ begin
 
       argsparser:=TCommandsArgumentsParser.Create();
       try
-        argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'target bone');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgABNStringWithWildcard, false, 'target bone');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'first frame index');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'last frame index');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'frame id with target bone position');
@@ -2743,6 +2799,7 @@ begin
            argsparser.GetAsInt(3, target_bone_frame_id, -1)
         then begin
           parent_bone_idx:=_data.Skeleton().GetBoneParentIdx(bone_idx);
+          target_bone:=ReplaceWildcards(target_bone, userdata as TCommandIndexArg);
 
           if not CheckAndCorrectFrameId(startframe, def.name) then begin
             result_description.SetDescription('invalid first frame index');
@@ -2832,6 +2889,7 @@ begin
            argsparser.GetAsInt(2, startframe) and
            argsparser.GetAsInt(3, endframe, startframe)
         then begin
+          src_bone_name:=ReplaceWildcards(src_bone_name, userdata as TCommandIndexArg);
           if not ExtractBoneIdFromString(src_bone_name, src_bone_idx) then begin
             result_description.SetDescription('invalid source bone');
           end else if not CheckAndCorrectFrameId(srcframe, def.name) then begin
@@ -3107,6 +3165,7 @@ begin
     shader:=_data.Meshes().Get(idx).GetTextureData().shader;
     texture:=_data.Meshes().Get(idx).GetTextureData().texture;
     texdata:=_data.Meshes().Get(idx).GetTextureData();
+    args:=ReplaceWildcards(args, userdata as TCommandIndexArg);
     texdata.texture:=trim(args);
     if _data.Meshes().Get(idx).SetTextureData(texdata) then begin
       result_description.SetDescription('texture successfully updated for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
@@ -3129,6 +3188,7 @@ begin
     shader:=_data.Meshes().Get(idx).GetTextureData().shader;
     texture:=_data.Meshes().Get(idx).GetTextureData().texture;
     texdata:=_data.Meshes().Get(idx).GetTextureData();
+    args:=ReplaceWildcards(args, userdata as TCommandIndexArg);
     texdata.shader:=trim(args);
     if _data.Meshes().Get(idx).SetTextureData(texdata) then begin
       result_description.SetDescription('texture shader updated for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
@@ -3990,6 +4050,7 @@ begin
   _commands_animations.DoRegister(TCommandSetup.Create('setfalloff', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetFalloff, 'set animation falloff parameter value, argument is a number'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setpower', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetPower, 'set animation power parameter value, argument is a number'), CommandItemTypeCall);
   _commands_animations.DoRegister(TCommandSetup.Create('setspeed', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetSpeed, 'set animation speed parameter value, argument is a number'), CommandItemTypeCall);
+  _commands_animations.DoRegister(TCommandSetup.Create('setflags', @_IsAnimationsLoadedPrecondition, @_CmdAnimSetFlags, 'set animation flags, argument is a number'), CommandItemTypeCall);
 
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('marks', @_IsAnimationsLoadedPrecondition, _commands_mmarks, 'access group of properties and procedures associated with motion marks'));
   _commands_mmarks.DoRegister(TCommandSetup.Create('add', @_IsAnimationsLoadedPrecondition, @_CmdAnimAddMotionMark, 'add new interval, expects 3 arguments (mark name, interval start, interval end)'), CommandItemTypeCall);

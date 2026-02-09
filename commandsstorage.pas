@@ -99,8 +99,12 @@ end;
 
 TCommandIndexArg = class(TCommandArg)
   _value:integer;
+  _has_wildcard:boolean;
+  _wildcard_text:string;
 public
   constructor Create(value:integer; userdata:pointer);
+  procedure SetWildcardText(s:string);
+  function GetWildcardText(var s:string):boolean;
   function Get():integer;
 end;
 
@@ -521,6 +525,22 @@ constructor TCommandIndexArg.Create(value: integer; userdata: pointer);
 begin
   inherited Create(userdata);
    _value:=value;
+   _has_wildcard:=false;
+   _wildcard_text:='';
+end;
+
+procedure TCommandIndexArg.SetWildcardText(s: string);
+begin
+  _has_wildcard:=true;
+  _wildcard_text:=s;
+end;
+
+function TCommandIndexArg.GetWildcardText(var s: string): boolean;
+begin
+  result:=_has_wildcard;
+  if result then begin
+    s:=_wildcard_text;
+  end;
 end;
 
 function TCommandIndexArg.Get(): integer;
@@ -600,6 +620,7 @@ var
   indexarg:TCommandIndexArg;
   filters:TIndexFilters;
   filter_passed:boolean;
+  wildcard_text:string;
 begin
   result:=TCommandResult.Create();
 
@@ -624,6 +645,11 @@ begin
             if filter_passed then begin
               cnt:=cnt+1;
               indexarg:=TCommandIndexArg.Create(i, userdata);
+
+              if GetFiltersWildcardText(filters, wildcard_text) then begin
+                indexarg.SetWildcardText(wildcard_text);
+              end;
+
               tmpstr:=args;
               try
                 inherited Execute(tmpstr, indexarg);
