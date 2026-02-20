@@ -137,11 +137,11 @@ type
   end;
 
   { TOgfVertsContainer }
-  TVertexFilterItem = packed record
-    need_remove:boolean;
+  TVertexFlaggedItem = packed record
+    is_flagged:boolean;
     new_id:cardinal;
   end;
-  TVertexFilterItems = array of TVertexFilterItem;
+  TVertexFlaggedItems = array of TVertexFlaggedItem;
 
   TVerticesIterationCallback = function (vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
   TVerticesBindCallback = function (vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; target_boneid:cardinal; userdata:pointer):boolean;
@@ -154,7 +154,7 @@ type
     function _GetVertexUvDataPtr(id:cardinal):pFVector2;
     function _GetVertexBindings(id:cardinal; bindings_out:TVertexBones):boolean;
     function _SetVertexBindings(id:cardinal; bindings_in:TVertexBones):boolean;
-    function _FilterVertices(var filter:TVertexFilterItems):boolean;
+    function _FilterVertices(var filter:TVertexFlaggedItems):boolean;
   public
     // Common
     constructor Create;
@@ -227,7 +227,7 @@ type
 
     function _GetTriangleIdByOffset(offset:integer):integer;
     procedure _RemoveAllTrisNotInCurrentLod();
-    function _FilterVertices(var filter:TVertexFilterItems; swr_data:TOgfSwiContainer):boolean;
+    function _FilterVertices(var filter:TVertexFlaggedItems; swr_data:TOgfSwiContainer):boolean;
     function _CorrectSwi(swi:TOgfSlideWindowItem; remap:TTrisRemapIndices):TOgfSlideWindowItem;
   public
     // Common
@@ -245,6 +245,7 @@ type
     function TrisCountTotal():integer;
     function TrisCountInCurrentLod():integer;
     function GetTriangle(idx:integer; for_current_lod:boolean; var t:TOgfTriangle):boolean;
+    function MarkIndependentElementsForSelectedVertices(var selected:TVertexFlaggedItems):integer;
   end;
 
   TOgfTextureData = record
@@ -310,10 +311,12 @@ type
     function CalculateOptimalLinkType():cardinal;
     function ChangeLinkType(new_link_type:cardinal):boolean;
     function BindVerticesToBone(target_boneid:TBoneID; selection_callback:TVerticesBindCallback; userdata:pointer):boolean;
-    function FilterVertices(var filter:TVertexFilterItems):boolean;
+    function FilterVertices(var filter:TVertexFlaggedItems):boolean;
 
     procedure IterateVertices(cb:TVerticesIterationCallback; userdata:pointer);
     function RemoveVertices(cb:TVerticesIterationCallback; userdata:pointer):boolean; // true returned from cb will mark the vertex to be removed
+
+    procedure IterateAllVerticesOfTheSelectedElements(cb_selection:TVerticesIterationCallback; cb_result:TVerticesIterationCallback; userdata:pointer);
 
     function Scale(v:FVector3; pivot_point:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
     function Move(v:FVector3; selection_callback:TVerticesIterationCallback; userdata:pointer):boolean;
@@ -344,6 +347,7 @@ type
     function Append(data:string):integer;
     function Insert(data:string; index:integer):integer;
     function Replace(id:integer; data:string):boolean;
+    function Split(id:integer; var filter:TVertexFlaggedItems):integer;
   end;
 
   TOgfAnimationsParser = class;
@@ -714,7 +718,7 @@ type
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; mode:TOgfBoneRotationMode; iksolver:TOgfIKSolverBase):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
-    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; iksolver:TOgfIKSolverBase):boolean;
+    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; factor:single; iksolver:TOgfIKSolverBase):boolean;
     function ApplyDiff(bone_idx:TBoneID; anim_name:string; targetframe:integer; sourceframe:integer; startframe:integer; endframe:integer; correct_position:boolean; correct_rotation:boolean; iksolver:TOgfIKSolverBase):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
@@ -803,6 +807,8 @@ type
     function _CheckT16KeySameWith(qt:pTOgfMotionKeyQT16; v:pFVector3):boolean;
 
     procedure _CreateTransKeysFromInit();
+
+    procedure _Optimize();
   public
     // Common
     constructor Create; overload;
@@ -817,7 +823,7 @@ type
     function FramesCount():integer;
     function GetKey(idx:integer; var key:TMotionKey):boolean;
     function SetKey(idx:integer; key:TMotionKey):boolean;
-    function SlerpBetweenKeys(start_idx:integer; end_idx:integer; pos:boolean; rot:boolean):boolean;
+    function SlerpBetweenKeys(start_idx:integer; end_idx:integer; factor:single; pos:boolean; rot:boolean):boolean;
 
     function MakeStatic(key:TMotionKey):boolean;
 
@@ -856,7 +862,7 @@ type
     function GetBoneKey(track_bone_idx:integer; key_idx:integer; var k:TMotionKey):boolean;
     function SetBoneKey(track_bone_idx:integer; key_idx:integer; k:TMotionKey):boolean;
     function MakeBoneStatic(track_bone_idx:integer; k:TMotionKey):boolean;
-    function InterpolateBoneKeys(track_bone_idx:integer; start_key_idx:integer; end_key_idx:integer; pos:boolean; rot:boolean):boolean;
+    function InterpolateBoneKeys(track_bone_idx:integer; start_key_idx:integer; end_key_idx:integer; factor:single; pos:boolean; rot:boolean):boolean;
 
     function Copy(from:TOgfMotionTrack):boolean;
     function MergeWithTrack(second:TOgfMotionTrack):boolean;
@@ -1108,7 +1114,7 @@ type
     function GetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; var k:TMotionKey):boolean;
     function SetAnimationKeyForBone(anim_name:string; bone_name:string; key_idx:integer; k:TMotionKey):boolean;
     function SetAnimationMultiframeKeyForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; k:TMotionKey):boolean;
-    function InterpotateAnimationKeysForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; pos:boolean; rot:boolean):boolean;
+    function InterpotateAnimationKeysForBone(anim_name:string; bone_name:string; start_key:integer; end_key:integer; factor:single; pos:boolean; rot:boolean):boolean;
 
     function DuplicateAnimation(old_name:string; new_name:string):boolean;
     function RenameAnimation(old_name:string; new_name:string):boolean;
@@ -3425,6 +3431,57 @@ begin
   _is16bittransform:=true;
 end;
 
+procedure TOgfMotionBoneTrack._Optimize();
+var
+  can_simplify_rot, can_simplify_trans, is_same:boolean;
+  k, k_first:TMotionKey;
+  i:integer;
+begin
+  if not _rot_keys_present and not _trans_keys_present then exit;
+  if _frames_count = 0 then exit;
+
+  can_simplify_rot:=true;
+  can_simplify_trans:=true;
+  for i:=0 to _frames_count-1 do begin;
+    if not GetKey(i, k) then exit;
+    if i = 0 then begin
+      k_first:=k;
+    end else begin
+      if _rot_keys_present then begin
+        is_same := (abs(k.Q.x - k_first.Q.x) < EPS)
+               and (abs(k.Q.y - k_first.Q.y) < EPS)
+               and (abs(k.Q.z - k_first.Q.z) < EPS)
+               and (abs(k.Q.w - k_first.Q.w) < EPS);
+        can_simplify_rot:= can_simplify_rot and is_same;
+      end;
+
+
+      if _trans_keys_present then begin;
+        is_same := (abs(k.T.x - k_first.T.x) < EPS)
+               and (abs(k.T.y - k_first.T.y) < EPS)
+               and (abs(k.T.z - k_first.T.z) < EPS);
+        can_simplify_trans:=can_simplify_trans and is_same
+      end;
+    end;
+  end;
+
+  if _rot_keys_present and can_simplify_rot then begin
+    _rot_keys_present := false;
+    setlength(_rot_keys_rawdata, sizeof(TOgfMotionKeyQR));
+  end;
+
+  if _trans_keys_present and can_simplify_trans then begin
+    _trans_keys_present:=false;
+
+    _is16bittransform:=true;
+    setlength(_trans_keys_rawdata, sizeof(TOgfMotionKeyQT16));
+    FillChar(_trans_keys_rawdata[0], length(_trans_keys_rawdata), 0);
+    set_zero(_sizeT);
+    _initT:=k_first.T;
+  end;
+
+end;
+
 constructor TOgfMotionBoneTrack.Create;
 begin
   Reset();
@@ -3576,6 +3633,8 @@ var
 begin
   result:='';
   if not Loaded() then exit;
+
+  _Optimize();
 
   flags:=0;
   if not _rot_keys_present then begin
@@ -3770,13 +3829,12 @@ begin
         pqt8^.z1:=0;
       end;
     end;
-
   end;
 
   result:=true;
 end;
 
-function TOgfMotionBoneTrack.SlerpBetweenKeys(start_idx: integer; end_idx: integer; pos: boolean; rot: boolean): boolean;
+function TOgfMotionBoneTrack.SlerpBetweenKeys(start_idx: integer; end_idx: integer; factor: single; pos: boolean; rot: boolean): boolean;
 var
   i:integer;
   k1, k2, kr:TMotionKey;
@@ -3804,6 +3862,7 @@ begin
   result:=true;
   for i:=start_idx+1 to end_idx-1 do begin
     tm:= (i-start_idx)/(end_idx-start_idx);
+    tm:=power(tm, factor);
 
     if GetKey(i, kr) then begin
       KeysSlerp(kr, k1, k2, tm, pos, rot);
@@ -4182,13 +4241,13 @@ begin
   end;
 end;
 
-function TOgfMotionTrack.InterpolateBoneKeys(track_bone_idx: integer; start_key_idx: integer; end_key_idx: integer; pos: boolean; rot: boolean): boolean;
+function TOgfMotionTrack.InterpolateBoneKeys(track_bone_idx: integer; start_key_idx: integer; end_key_idx: integer; factor: single; pos: boolean;  rot: boolean): boolean;
 begin
   result:=false;
   if not Loaded() then exit;
 
   if (track_bone_idx>=0) and (track_bone_idx < length(_bone_tracks)) then begin
-    result:=_bone_tracks[track_bone_idx].SlerpBetweenKeys(start_key_idx, end_key_idx, pos, rot);
+    result:=_bone_tracks[track_bone_idx].SlerpBetweenKeys(start_key_idx, end_key_idx, factor, pos, rot);
   end;
 end;
 
@@ -4587,6 +4646,30 @@ begin
   if not Loaded() or (length(_children)<=id) then exit;
 
   result:=_children[id].Deserialize(data);
+end;
+
+function TOgfChildrenContainer.Split(id: integer; var filter: TVertexFlaggedItems): integer;
+var
+  data:string;
+  isok:boolean;
+  i:integer;
+begin
+  result:=-1;
+  if not Loaded() or (length(_children)<=id) then exit;
+
+  if length(filter)<>_children[id].GetVerticesCount() then exit;
+  data:=_children[id].Serialize();
+  result:=Insert(data, id+1);
+  if result>=0 then begin
+    isok:=_children[id].FilterVertices(filter);
+    for i:=0 to length(filter)-1 do begin
+      filter[i].is_flagged:=not filter[i].is_flagged;
+      isok:=_children[id+1].FilterVertices(filter) and isok;
+      if not isok then begin
+        result:=-1;
+      end;
+    end;
+  end;
 end;
 
 { TOgfSkeleton }
@@ -5612,7 +5695,7 @@ begin
   end;
 end;
 
-function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; calc_pos: boolean; calc_rot: boolean; iksolver: TOgfIKSolverBase): boolean;
+function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; calc_pos: boolean; calc_rot: boolean; factor: single; iksolver: TOgfIKSolverBase): boolean;
 var
   bone:TOgfBoneData;
   m1, m2, m:FMatrix4x4;
@@ -5625,7 +5708,7 @@ begin
   result:=false;
   bone:=_GetBone(bone_idx);
   if bone.bone = nil then exit;
-  if not _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx, calc_pos, calc_rot) then exit;
+  if not _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx, factor, calc_pos, calc_rot) then exit;
 
   if (iksolver = nil) or (not iksolver.IsProperlyConfigured) or (not iksolver.IsTransformAllowedForBone(bone_idx)) or (not iksolver.IsIkSolveNeededForBoneTransform(bone_idx)) then begin
     result:=true;
@@ -5657,6 +5740,7 @@ begin
         i:=first_key_idx+cstep;
         while i <> last_key_idx do begin
           tm:= (i-cst)/(cse-cst);
+          tm:=power(tm, factor);
           dtc:=v_mul(dt, tm);
           pos:=v_add(pos1, dtc);
           if not _SetKeyPoseForWork(anim_name, i) then exit;
@@ -6855,7 +6939,46 @@ begin
   end;
 end;
 
-function TOgfTrisContainer._FilterVertices(var filter: TVertexFilterItems; swr_data: TOgfSwiContainer): boolean;
+function TOgfTrisContainer.MarkIndependentElementsForSelectedVertices(
+  var selected: TVertexFlaggedItems): integer;
+var
+  marked:integer;
+  i:integer;
+begin
+  result:=0;
+
+  for i:=0 to length(selected)-1 do begin
+    if selected[i].is_flagged then begin
+      result:=result+1;
+    end;
+  end;
+
+  repeat
+    marked:=0;
+    for i:=0 to length(_tris)-1 do begin
+      if (selected[_tris[i].v1].is_flagged) or (selected[_tris[i].v2].is_flagged) or (selected[_tris[i].v3].is_flagged) then begin
+        if not (selected[_tris[i].v1].is_flagged) then begin
+          selected[_tris[i].v1].is_flagged:=true;
+          marked:=marked+1;
+        end;
+
+        if not (selected[_tris[i].v2].is_flagged) then begin
+          selected[_tris[i].v2].is_flagged:=true;
+          marked:=marked+1;
+        end;
+
+        if not (selected[_tris[i].v3].is_flagged) then begin
+          selected[_tris[i].v3].is_flagged:=true;
+          marked:=marked+1;
+        end;
+      end;
+    end;
+
+    result:=result+marked;
+  until (marked = 0);
+end;
+
+function TOgfTrisContainer._FilterVertices(var filter: TVertexFlaggedItems; swr_data: TOgfSwiContainer): boolean;
 var
   i, newi:integer;
   tris_remap_indices:TTrisRemapIndices;
@@ -6874,7 +6997,7 @@ begin
 
   newi:=0;
   for i:=0 to length(_tris)-1 do begin
-    if not ((filter[_tris[i].v1].need_remove) or (filter[_tris[i].v2].need_remove) or (filter[_tris[i].v3].need_remove)) then begin
+    if not ((filter[_tris[i].v1].is_flagged) or (filter[_tris[i].v2].is_flagged) or (filter[_tris[i].v3].is_flagged)) then begin
       _tris[newi].v1:=filter[_tris[i].v1].new_id;
       _tris[newi].v2:=filter[_tris[i].v2].new_id;
       _tris[newi].v3:=filter[_tris[i].v3].new_id;
@@ -7557,7 +7680,7 @@ end;
 
 function TOgfChild.RemoveUnactiveLodsData(): boolean;
 var
-  filters:TVertexFilterItems;
+  filters:TVertexFlaggedItems;
   i:integer;
   t:TOgfTriangle;
   w:TOgfSlideWindowItem;
@@ -7575,14 +7698,14 @@ begin
   try
     // iterate over all tris from the selected lod level, create filter map of used vertices
     for i:=0 to length(filters)-1 do begin
-      filters[i].need_remove:=true;
+      filters[i].is_flagged:=true;
     end;
 
     for i:=0 to GetTrisCountInCurrentLod()-1 do begin
       if not _tris.GetTriangle(i, true, t) then exit;
-      filters[t.v1].need_remove:=false;
-      filters[t.v2].need_remove:=false;
-      filters[t.v3].need_remove:=false;
+      filters[t.v1].is_flagged:=false;
+      filters[t.v2].is_flagged:=false;
+      filters[t.v3].is_flagged:=false;
     end;
 
     // execute filter vertices using filtering map
@@ -7643,7 +7766,7 @@ begin
   result:=_verts.GetVerticesCountForBoneID(boneid, true);
 end;
 
-function TOgfChild.FilterVertices(var filter: TVertexFilterItems): boolean;
+function TOgfChild.FilterVertices(var filter: TVertexFlaggedItems): boolean;
 begin
   result:=false;
 
@@ -7662,30 +7785,43 @@ begin
 end;
 
 type
- TRemovingVerticesIterationCbData = record
+ TUserFlaggingVerticesIterationCbData = record
    usercb:TVerticesIterationCallback;
    userdata:pointer;
-   filter:TVertexFilterItems;
+   filter:TVertexFlaggedItems;
  end;
- pTRemovingVerticesIterationCbData = ^TRemovingVerticesIterationCbData;
+ pTUserFlaggingVerticesIterationCbData = ^TUserFlaggingVerticesIterationCbData;
 
-function RemovingVerticesIterationCb(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+function UserFlaggingVerticesIterationCb(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
 var
-  cbdata:pTRemovingVerticesIterationCbData;
+  cbdata:pTUserFlaggingVerticesIterationCbData;
 begin
-  cbdata:=pTRemovingVerticesIterationCbData(userdata);
+  cbdata:=pTUserFlaggingVerticesIterationCbData(userdata);
   if cbdata^.usercb<>nil then begin
-   cbdata^.filter[vertex_id].need_remove:=cbdata^.usercb(vertex_id, data, uv, links, cbdata^.userdata);
+   cbdata^.filter[vertex_id].is_flagged:=cbdata^.usercb(vertex_id, data, uv, links, cbdata^.userdata);
   end else begin
-    cbdata^.filter[vertex_id].need_remove:=true;
+    cbdata^.filter[vertex_id].is_flagged:=true;
   end;
   result:=true;
 end;
 
+function ReportFlaggedVerticesIterationCb(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTUserFlaggingVerticesIterationCbData;
+begin
+  result:=true;
+  cbdata:=pTUserFlaggingVerticesIterationCbData(userdata);
+  if cbdata^.usercb<>nil then begin
+    if cbdata^.filter[vertex_id].is_flagged then begin
+      result:=cbdata^.usercb(vertex_id, data, uv, links, cbdata^.userdata);
+    end;
+  end;
+end;
+
 function TOgfChild.RemoveVertices(cb: TVerticesIterationCallback; userdata: pointer): boolean;
 var
-  filter:TVertexFilterItems;
-  cbdata:TRemovingVerticesIterationCbData;
+  filter:TVertexFlaggedItems;
+  cbdata:TUserFlaggingVerticesIterationCbData;
 begin
   result:=false;
   if not Loaded() or (_verts.GetVerticesCount() = 0) then exit;
@@ -7696,13 +7832,38 @@ begin
     cbdata.filter:=filter;
     cbdata.usercb:=cb;
     cbdata.userdata:=userdata;
-    _verts.IterateVertices(@RemovingVerticesIterationCb, @cbdata);
+    _verts.IterateVertices(@UserFlaggingVerticesIterationCb, @cbdata);
 
     // Perform filtering
     result:=FilterVertices(filter);
   finally
     setlength(filter, 0);
   end;
+end;
+
+procedure TOgfChild.IterateAllVerticesOfTheSelectedElements(cb_selection: TVerticesIterationCallback; cb_result: TVerticesIterationCallback; userdata: pointer);
+var
+  filter:TVertexFlaggedItems;
+  cbdata:TUserFlaggingVerticesIterationCbData;
+  cnt:integer;
+begin
+  if (@cb_selection = nil) or (cb_result = nil) then exit;
+
+  if not Loaded() or (_verts.GetVerticesCount() = 0) then exit;
+  setlength(filter,_verts.GetVerticesCount());
+
+  // Iterate over all vertices and get the list of user-selected vertices
+  cbdata.filter:=filter;
+  cbdata.usercb:=cb_selection;
+  cbdata.userdata:=userdata;
+  _verts.IterateVertices(@UserFlaggingVerticesIterationCb, @cbdata);
+
+  // Select all vertices for provided elements
+  _tris.MarkIndependentElementsForSelectedVertices(filter);
+
+  // Iterate over all selected vertices and report them to the user
+  cbdata.usercb:=cb_result;
+  _verts.IterateVertices(@ReportFlaggedVerticesIterationCb, @cbdata);
 end;
 
 function TOgfChild.Scale(v: FVector3; pivot_point: FVector3; selection_callback: TVerticesIterationCallback; userdata: pointer): boolean;
@@ -8392,7 +8553,7 @@ begin
   end;
 end;
 
-function TOgfVertsContainer._FilterVertices(var filter: TVertexFilterItems): boolean;
+function TOgfVertsContainer._FilterVertices(var filter: TVertexFlaggedItems): boolean;
 var
   i, cursor, links, newcount:cardinal;
   new_data:array of byte;
@@ -8412,7 +8573,7 @@ begin
   cursor:=sizeof(TOgfVertsHeader);
   newcount:=0;
   for i:=0 to _verts_count-1 do begin
-    if not filter[i].need_remove then begin
+    if not filter[i].is_flagged then begin
       if (links=OGF_LINK_TYPE_1) then begin
         pvertex:=@_raw_data[sizeof(TOgfVertsHeader)+i*sizeof(TOgfVertex1link)];
         sz:=sizeof(TOgfVertex1link);
@@ -9047,7 +9208,7 @@ begin
   end;
 end;
 
-function TOgfAnimationsParser.InterpotateAnimationKeysForBone(anim_name: string; bone_name: string; start_key: integer; end_key: integer; pos: boolean; rot: boolean): boolean;
+function TOgfAnimationsParser.InterpotateAnimationKeysForBone(anim_name: string; bone_name: string; start_key: integer; end_key: integer; factor: single; pos: boolean; rot: boolean): boolean;
 var
   track:TOgfMotionTrack;
   bone:TOgfMotionBoneParams;
@@ -9063,7 +9224,7 @@ begin
   if _params.FindBoneIdxsByName(bone_name, part_id, bone_id) then begin
     bone:=_params.GetBone(part_id, bone_id);
     if bone<>nil then begin
-      result:=track.InterpolateBoneKeys(bone.GetIdxInTracks(), start_key, end_key, pos, rot);
+      result:=track.InterpolateBoneKeys(bone.GetIdxInTracks(), start_key, end_key, factor, pos, rot);
     end;
   end;
 end;
@@ -9100,6 +9261,7 @@ function TOgfAnimationsParser.RenameAnimation(old_name: string; new_name: string
 var
   idx:integer;
   def:TOgfMotionDefData;
+  track:TOgfMotionTrack;
 begin
   result:=false;
   if not Loaded() then exit;
@@ -9111,8 +9273,14 @@ begin
   def:=_params.GetMotionDefByIdx(idx);
   if def.name<>old_name then exit;
 
+  track:=_tracks.GetMotionTrack(def.motion_id);
+  if track = nil then exit;
+
+  track.SetName(new_name);
+
   def.name:=new_name;
   result:=_params.UpdateMotionDefsForIdx(idx, def);
+
 end;
 
 function TOgfAnimationsParser.MergeAnimations(name_of_new: string; name_of_first: string; name_of_second: string): boolean;

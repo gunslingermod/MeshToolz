@@ -102,7 +102,8 @@ TModelSlot = class
   function _CmdSelectionInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSelectionTestPoint(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSelectionInverse(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
-
+  function _CmdSelectionSelectPickVertices(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSelectionSelectPickElement(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _IsModelLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _IsModelNotLoadedPrecondition(args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -807,7 +808,7 @@ end;
 
 function TModelSlot._CmdSelectionClear(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
-  _selectionarea.ResetSelectionArea();
+  _selectionarea.ResetSelection();
   result:=true;
 end;
 
@@ -815,6 +816,7 @@ type
   TVertexCounterCallbackData = record
     selection_area:TSelectionArea;
     vcnt:integer;
+    child_id:integer;
   end;
   pTVertexCounterCallbackData = ^TVertexCounterCallbackData;
 
@@ -825,7 +827,7 @@ begin
   result:=true;
   if (userdata = nil) or (data = nil) then exit;
   cbdata:=pTVertexCounterCallbackData(userdata);
-  if cbdata^.selection_area.IsPointInSelection(data^.pos) then begin
+  if cbdata^.selection_area.IsVertexInSelection(cbdata^.child_id, vertex_id, data^.pos) then begin
     cbdata^.vcnt:=cbdata^.vcnt+1;
   end;
 end;
@@ -845,6 +847,7 @@ begin
     cbdata.vcnt:=0;
 
     for i:=0 to _data.Meshes().Count()-1 do begin
+      cbdata.child_id:=i;
       _data.Meshes().Get(i).IterateVertices(@VertexCounterCallback, @cbdata);
     end;
 
@@ -883,10 +886,12 @@ begin
        argsparser.GetAsSingle(1, v.y) and
        argsparser.GetAsSingle(2, v.z)
     then begin
-      if _selectionarea.IsPointInSelection(v) then begin
+      if not _selectionarea.IsSpatialSelectionModeActive() then begin
+        result_description.SetDescription('Please activate spatial selection mode first');
+      end else if _selectionarea.IsPointInSelection(v) then begin
         result_description.SetDescription('Point is inside the selected area');
       end else begin
-        result_description.SetDescription('Point is outside the selected area');
+        result_description.SetDescription('Point is not in the selected area');
       end;
       result:=true;
     end else begin
@@ -905,7 +910,198 @@ end;
 function TModelSlot._CmdSelectionInverse(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=true;
-  _selectionarea.InverseSelectedArea();
+  _selectionarea.InverseSelection();
+end;
+
+type
+  TVertexPickingCallbackData = record
+    selection_area:TSelectionArea;
+    verts:array of integer;
+    childs:array of integer;
+    child_id:integer;
+  end;
+  pTVertexPickingCallbackData = ^TVertexPickingCallbackData;
+
+function VertexPickingCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTVertexPickingCallbackData;
+  i:integer;
+begin
+  result:=true;
+  if (userdata = nil) or (data = nil) then exit;
+  cbdata:=pTVertexPickingCallbackData(userdata);
+
+  if cbdata^.selection_area.IsPointInSelection(data^.pos) then begin
+    i:=length(cbdata^.verts);
+    setlength(cbdata^.verts, i+1);
+    setlength(cbdata^.childs, i+1);
+    cbdata^.verts[i]:=vertex_id;
+    cbdata^.childs[i]:=cbdata^.child_id;
+  end;
+end;
+
+function TModelSlot._CmdSelectionSelectPickVertices(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  p1, p2:FVector3;
+  mode:string;
+  argsparser:TCommandsArgumentsParser;
+  _stashedselection:TSelectionArea;
+
+  cbdata:TVertexPickingCallbackData;
+  i:integer;
+
+begin
+  result:=false;
+  if not _data.Loaded() then exit;
+
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, true, 'mode');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'point X coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'point Y coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'point Z coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'sphere radius or box second point X coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'box second point Y coordinate');
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'box second point Z coordinate');
+    if argsparser.Parse(args) and
+       argsparser.GetAsString(0, mode, '') and
+       argsparser.GetAsSingle(1, p1.x, 0) and
+       argsparser.GetAsSingle(2, p1.y, 0) and
+       argsparser.GetAsSingle(3, p1.z, 0) and
+       argsparser.GetAsSingle(4, p2.x, 0) and
+       argsparser.GetAsSingle(5, p2.y, 0) and
+       argsparser.GetAsSingle(6, p2.z, 0)
+    then begin
+      _stashedselection:=nil;
+      if mode = 'box' then begin
+        if _selectionarea.IsVertsSelectionModeActive() then begin
+          _stashedselection:=_selectionarea;
+          _selectionarea:=TSelectionArea.Create();
+        end;
+        _selectionarea.SetSelectionAreaAsBox(p1, p2);
+      end else if mode = 'sphere' then begin
+        if _selectionarea.IsVertsSelectionModeActive() then begin
+          _stashedselection:=_selectionarea;
+          _selectionarea:=TSelectionArea.Create();
+        end;
+        _selectionarea.SetSelectionAreaAsSphere(p1, p2.x);
+      end;
+
+      if _selectionarea.IsSpatialSelectionModeActive() then begin
+        cbdata.selection_area:=_selectionarea;
+        setlength(cbdata.childs, 0);
+        setlength(cbdata.verts, 0);
+
+        for i:=0 to _data.Meshes().Count()-1 do begin
+          cbdata.child_id:=i;
+          _data.Meshes().Get(i).IterateVertices(@VertexPickingCallback, @cbdata);
+        end;
+
+        if length(cbdata.verts)>0 then begin
+          for i:=0 to length(cbdata.verts)-1 do begin
+            if _stashedselection<>nil then begin
+              _stashedselection.AddVertexToSelectionList(cbdata.childs[i], cbdata.verts[i]);
+            end else begin
+              _selectionarea.AddVertexToSelectionList(cbdata.childs[i], cbdata.verts[i]);
+            end;
+          end;
+          result:=true;
+        end else begin
+          result_description.SetDescription('no vertices were picked from the selected area');
+          result_description.SetWarningFlag(true);
+          result:=true;
+        end;
+      end else begin
+        result_description.SetDescription('please select an area before picking vertices');
+      end;
+
+      if _stashedselection<>nil then begin
+        FreeAndNil(_selectionarea);
+        _selectionarea:=_stashedselection;
+      end;
+    end;
+
+  finally
+    FreeAndNil(argsparser);
+  end;
+end;
+
+type
+  TElementsPickingCallbackData = record
+    selection_area:TSelectionArea;
+    child_id:integer;
+    result_verts_count:integer;
+  end;
+  pTElementsPickingCallbackData = ^TElementsPickingCallbackData;
+
+function ElementsPickingVertexSelectionCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTElementsPickingCallbackData;
+begin
+  result:=false;
+  if (userdata = nil) or (data = nil) then exit;
+  cbdata:=pTElementsPickingCallbackData(userdata);
+
+  result:=cbdata^.selection_area.IsVertexInSelection(cbdata^.child_id, vertex_id, data^.pos);
+end;
+
+function ElementsPickingVertexResultCallback(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cbdata:pTElementsPickingCallbackData;
+  i:integer;
+begin
+  result:=true;
+  if (userdata = nil) or (data = nil) then exit;
+  cbdata:=pTElementsPickingCallbackData(userdata);
+
+  cbdata^.result_verts_count:=cbdata^.result_verts_count+1;
+  cbdata^.selection_area.AddVertexToSelectionList(cbdata^.child_id, vertex_id);
+end;
+
+function TModelSlot._CmdSelectionSelectPickElement(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  sel_cbdata:TElementsPickingCallbackData;
+  i:integer;
+  last_cnt, cur_cnt:integer;
+  s:string;
+begin
+  result:=false;
+  if _data.Loaded() then begin
+    // Spatial mode not allowed because the 1st iterarion of the cycle will change selection type to vertex
+    if _selectionarea.IsVertsSelectionModeActive() then begin
+      sel_cbdata.selection_area:=_selectionarea;
+      sel_cbdata.result_verts_count:=0;
+
+      last_cnt:=0;
+      s:='';
+      for i:=0 to _data.Meshes().Count()-1 do begin
+        sel_cbdata.child_id:=i;
+        _data.Meshes().Get(i).IterateAllVerticesOfTheSelectedElements(@ElementsPickingVertexSelectionCallback, @ElementsPickingVertexResultCallback, @sel_cbdata);
+
+        cur_cnt:=sel_cbdata.result_verts_count - last_cnt;
+        if cur_cnt = _data.Meshes().Get(i).GetVerticesCount() then begin
+          if length(s)>0 then begin
+            s:=s+chr($0d)+chr($0a);
+          end;
+          s:=s+'all '+inttostr(cur_cnt)+' vertices of child #'+inttostr(i)+' were selected';
+        end;
+
+        last_cnt:=sel_cbdata.result_verts_count;
+      end;
+
+      result:=true;
+      if length(s)>0 then begin
+        result_description.SetDescription(s);
+        result_description.SetWarningFlag(true);
+      end else if sel_cbdata.result_verts_count = 0 then begin
+        result_description.SetDescription('selection is empty');
+        result_description.SetWarningFlag(true);
+        _selectionarea.ResetSelection();
+      end;
+    end else begin
+      result_description.SetDescription('please pick some vertices into the selection first');
+    end;
+  end;
 end;
 
 //////////////////////////////////////////////////////// Actions //////////////////////////////////////////////////////////
@@ -1134,7 +1330,7 @@ begin
 
     if data.Skeleton().GetBoneBindTransformInParentSpace(idx, v1, v2) then begin
       r:=r+'- Offset: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
-      r:=r+'- Rotate: '+floattostr(v2.x)+', '+floattostr(v2.y)+', '+floattostr(v2.z)+chr($0d)+chr($0a);
+      r:=r+'- Rotate: '+floattostr(v2.x*180/pi)+', '+floattostr(v2.y*180/pi)+', '+floattostr(v2.z*180/pi)+chr($0d)+chr($0a);
     end;
 
     if data.Skeleton().GetBoneMassParams(idx, v1, n) then begin
@@ -1254,6 +1450,8 @@ begin
       end else if (length(parent_bone_s) > 0) and not ExtractBoneIdFromString(parent_bone_s, parent_bone_id) then begin
         result_description.SetDescription('Can''t find the specidied parent bone');
       end else begin
+        dir:=v_mul(dir, pi/180);
+
         newidx:=_data.Skeleton().AddBone(new_bone_name, parent_bone_id, pos, dir, is_global, true);
           result:=(newidx <> INVALID_BONE_ID);
         if result then begin
@@ -2374,6 +2572,8 @@ begin
         try
           if _iksolver=nil then begin
             result_description.SetDescription('IK solver currently is not set');
+          end else if not CheckAndCorrectFrameId(frame, defs.name) then begin
+            result_description.SetDescription('invalid frame index');
           end else if not _data.Skeleton().GetSkeletonPose(defs.name, frame, pose) then begin
             result_description.SetDescription('can''t get reference pose for IK solver');
           end else if _iksolver.SetReferencePose(pose) then begin
@@ -2865,6 +3065,7 @@ var
 
   def:TOgfMotionDefData;
   cnt:integer;
+  step:integer;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -2896,29 +3097,35 @@ begin
             result_description.SetDescription('invalid source frame id');
           end else if not CheckAndCorrectFrameId(startframe, def.name) then begin
             result_description.SetDescription('invalid first target frame index');
-          end else if not CheckAndCorrectFrameId(startframe, def.name) then begin
+          end else if not CheckAndCorrectFrameId(endframe, def.name) then begin
             result_description.SetDescription('invalid last target frame index');
           end else if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(bone_idx)) then begin
             result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(bone_idx));
           end else begin
+
             if startframe > endframe then begin
-              cnt:=startframe;
-              startframe:=endframe;
-              endframe:=cnt;
+              step:=-1;
+            end else begin
+              step:=1;
             end;
 
             cnt:=0;
-            for i:=startframe to endframe do begin
+            i:=startframe;
+            while (true)  do begin
               if _data.Skeleton().FollowBone(bone_idx, def.name, src_bone_idx, srcframe, i, _iksolver) then begin
                 cnt:=cnt+1;
               end;
+
+              if i = endframe then break;
+              i:=i+step;
             end;
 
+
             if cnt = 0 then begin
-              result:=startframe > endframe;
+              result:=startframe <> endframe;
               if result then result_description.SetWarningFlag(true);
               result_description.SetDescription('no frames affected');
-            end else if cnt <> endframe-startframe+1 then begin
+            end else if cnt <> abs(endframe-startframe)+1 then begin
               result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
               result_description.SetWarningFlag(true);
               result:=true;
@@ -3009,6 +3216,7 @@ var
   startframe, endframe:integer;
   calc_pos:boolean;
   calc_rot:boolean;
+  factor:single;
 
   def:TOgfMotionDefData;
   key:TMotionKey;
@@ -3029,19 +3237,23 @@ begin
         argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'end frame index');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'interpolate position');
         argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'interpolate rotation');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'power of time factor');
 
         if argsparser.Parse(args) and
            argsparser.GetAsInt(0, startframe) and
            argsparser.GetAsInt(1, endframe) and
            argsparser.GetAsBool(2, calc_pos, true) and
-           argsparser.GetAsBool(3, calc_rot, true)
+           argsparser.GetAsBool(3, calc_rot, true) and
+           argsparser.GetAsSingle(4, factor, 1)
         then begin
 
           if not CheckAndCorrectFrameId(startframe, def.name) then begin
             result_description.SetDescription('invalid start frame index')
           end else if not CheckAndCorrectFrameId(endframe, def.name) then begin
             result_description.SetDescription('invalid end frame index')
-          end else if _data.Skeleton().InterpolateBone(bone_idx, def.name, startframe, endframe, calc_pos, calc_rot, _iksolver) then begin
+          end else if factor <=0 then begin
+            result_description.SetDescription('power of time factor must be greater than zero')
+          end else if _data.Skeleton().InterpolateBone(bone_idx, def.name, startframe, endframe, calc_pos, calc_rot, factor, _iksolver) then begin
             result:=true;
           end else begin
             result_description.SetDescription('key interpolation failed for bone '+_data.Skeleton().GetBoneName(bone_idx));
@@ -3144,6 +3356,7 @@ begin
 
       cbdata.selection_area:=_selectionarea;
       cbdata.vcnt:=0;
+      cbdata.child_id:=idx;
       _data.Meshes.Get(idx).IterateVertices(@VertexCounterCallback, @cbdata);
       r:=r+'- Selected vertices count: '+inttostr(cbdata.vcnt);
 
@@ -3278,8 +3491,8 @@ begin
   _selectionarea:=TSelectionArea.Create();
   try
     _selectionarea.SetPivot(original_sa.GetPivot());
-    _selectionarea.ResetSelectionArea();
-    _selectionarea.InverseSelectedArea();
+    _selectionarea.ResetSelection();
+    _selectionarea.InverseSelection();
     result:=_CmdChildMoveSelected(args, cmd, result_description, userdata);
   finally
     FreeAndNil(_selectionarea);
@@ -3295,8 +3508,8 @@ begin
   _selectionarea:=TSelectionArea.Create();
   try
     _selectionarea.SetPivot(original_sa.GetPivot());
-    _selectionarea.ResetSelectionArea();
-    _selectionarea.InverseSelectedArea();
+    _selectionarea.ResetSelection();
+    _selectionarea.InverseSelection();
     result:=_CmdChildRotateSelected(args, cmd, result_description, userdata);
   finally
     FreeAndNil(_selectionarea);
@@ -3312,8 +3525,8 @@ begin
   _selectionarea:=TSelectionArea.Create();
   try
     _selectionarea.SetPivot(original_sa.GetPivot());
-    _selectionarea.ResetSelectionArea();
-    _selectionarea.InverseSelectedArea();
+    _selectionarea.ResetSelection();
+    _selectionarea.InverseSelection();
     result:=_CmdChildScaleSelected(args, cmd, result_description, userdata);
   finally
     FreeAndNil(_selectionarea);
@@ -3326,6 +3539,7 @@ type
   TVertexSelectionCallbackData = record
     selection_area:TSelectionArea;
     vcnt:integer;
+    child_id:integer;
   end;
   pTVertexSelectionCallbackData = ^TVertexSelectionCallbackData;
 
@@ -3336,7 +3550,7 @@ begin
   result:=false;
   if (userdata = nil) or (data = nil) then exit;
   cbdata:=pTVertexSelectionCallbackData(userdata);
-  result:=cbdata^.selection_area.IsPointInSelection(data^.pos);
+  result:=cbdata^.selection_area.IsVertexInSelection(cbdata^.child_id, vertex_id, data^.pos);
   if result then begin
     cbdata^.vcnt:=cbdata^.vcnt+1;
   end;
@@ -3365,10 +3579,11 @@ begin
        end else begin
          cbdata.selection_area:=_selectionarea;
          cbdata.vcnt:=0;
+         cbdata.child_id:=idx;
          if not _data.Meshes().Get(idx).Move(v, @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('move operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else if cbdata.vcnt = 0 then begin
-           result_description.SetDescription('no vertices were found in the selection area');
+           result_description.SetDescription('no vertices were found in the selection');
            result_description.SetWarningFlag(true);
            result:=true;
          end else begin
@@ -3417,6 +3632,7 @@ begin
          amount:=amount*pi/180;
          cbdata.selection_area:=_selectionarea;
          cbdata.vcnt:=0;
+         cbdata.child_id:=idx;
          if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('rotate operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else if cbdata.vcnt = 0 then begin
@@ -3471,6 +3687,7 @@ begin
         texture:=_data.Meshes().Get(idx).GetTextureData().texture;
         cbdata.selection_area:=_selectionarea;
         cbdata.vcnt:=0;
+        cbdata.child_id:=idx;
         if not _data.Meshes().Get(idx).Scale(v, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
           result_description.SetDescription('scale operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
         end else if cbdata.vcnt = 0 then begin
@@ -3499,6 +3716,7 @@ type
     weight:single;
     src_boneids:TParsedBonesExpression;
     vcnt:integer;
+    child_id:integer;
   end;
   pTVertexSelectiveBindCallbackData = ^TVertexSelectiveBindCallbackData;
 
@@ -3509,16 +3727,13 @@ var
   bone, bone2:TVertexBone;
   value:single;
   target_idx:integer;
-
-  parsedid:integer;
 begin
   result:=false;
   if (userdata = nil) or (data = nil) then exit;
   cbdata:=pTVertexSelectiveBindCallbackData(userdata);
-  result:=cbdata^.selection_area.IsPointInSelection(data^.pos);
-  if result then begin
+  if cbdata^.selection_area.IsVertexInSelection(cbdata^.child_id, vertex_id, data^.pos) then begin
     if (cbdata^.src_boneids.ParsedCount() = 0) then begin
-      // no need to replace any specific bones not specified - just adjust weight of target_boneid or add it by replace binding with the lowest weight
+      // no need to replace any specific bones - just adjust weight of target_boneid or add it by replace binding with the lowest weight
       // weight must be from 0 to 1 in this case!
       target_idx:=0;
       for i:=0 to links.TotalLinkedBonesCount()-1 do begin
@@ -3546,13 +3761,14 @@ begin
       end;
 
       links.NormalizeWeights(target_idx);
+      result:=true;
     end else begin
-      // both source expression and target_boneid both present -
+      // both source expression and target_boneid are present
       // for every vertex with links that matched expression we need to replace every boneid which match the expression
       // if weight >= 0 - set a full new weigth at the moment of the 1st replacing, the next replaces will make corresponding weights zero
       // if weight == 0 - need to accumulate the full weigth in the single links entry
-
       if cbdata^.src_boneids.IsLinksMatch(links) then begin
+        result:=true;
         value:=cbdata^.weight;
         target_idx:=-1;
         for i:=0 to links.TotalLinkedBonesCount()-1 do begin
@@ -3638,6 +3854,7 @@ begin
           cbdata.src_boneids:=src_boneids;
           cbdata.weight:=weight;
           cbdata.vcnt:=0;
+          cbdata.child_id:=idx;
           if not _data.Meshes().Get(idx).BindVerticesToBone(dest_boneid, @VertexSelectiveBindCallback, @cbdata) then begin
             result_description.SetDescription('failed to rebind vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') to '+GetBoneNameById(dest_boneid));
           end else begin
@@ -3673,8 +3890,8 @@ begin
   _selectionarea:=TSelectionArea.Create();
   try
     _selectionarea.SetPivot(original_sa.GetPivot());
-    _selectionarea.ResetSelectionArea();
-    _selectionarea.InverseSelectedArea();
+    _selectionarea.ResetSelection();
+    _selectionarea.InverseSelection();
     result:=_CmdChildRebindSelected(args, cmd, result_description, userdata);
   finally
     FreeAndNil(_selectionarea);
@@ -3849,7 +4066,6 @@ end;
 function TModelSlot._cmdChildLodLevelsRemove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
   idx:integer;
-  r:string;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -3863,7 +4079,7 @@ end;
 
 function TModelSlot._CmdChildRemoveSelected(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 var
-  idx, newidx:integer;
+  idx:integer;
   r:string;
   cbdata:TVertexSelectionCallbackData;
 begin
@@ -3873,7 +4089,9 @@ begin
 
     cbdata.selection_area:=_selectionarea;
     cbdata.vcnt:=0;
+    cbdata.child_id:=idx;
     result:=_data.Meshes().Get(idx).RemoveVertices(@VertexSelectionCallback, @cbdata);
+    _selectionarea.RemoveAllChildVerticesFromSelectionList(idx);
 
     if not result then begin
       result_description.SetDescription('remove operation failed');
@@ -3908,6 +4126,7 @@ begin
     idx:=(userdata as TCommandIndexArg).Get();
     cbdata_cnt.vcnt:=0;
     cbdata_cnt.selection_area:=_selectionarea;
+    cbdata_cnt.child_id:=idx;
     _data.Meshes().Get(idx).IterateVertices(@VertexCounterCallback, @cbdata_cnt);
 
     if cbdata_cnt.vcnt=0 then begin
@@ -3916,18 +4135,20 @@ begin
       result_description.SetDescription('the whole child mesh is selected');
     end else begin
       r:=_data.Meshes().Get(idx).Serialize();
-      newidx:=_data.Meshes().Append(r);
+      newidx:=_data.Meshes().Insert(r, idx+1);
       if newidx<0 then begin
         result_description.SetDescription('error while copying source child');
       end else begin
-        _selectionarea.InverseSelectedArea();
+        _selectionarea.InverseSelection();
         try
           cbdata_sel.selection_area:=_selectionarea;
           cbdata_sel.vcnt:=0;
+          cbdata_sel.child_id:=idx; // vertex indices in new mesh are same as in the original, so just use the original child id
 
           result:=_data.Meshes().Get(newidx).RemoveVertices(@VertexSelectionCallback, @cbdata_sel);
+          _selectionarea.AddAllChildVerticesToSelectionList(newidx, _data.Meshes().Get(newidx).GetVerticesCount());
         finally
-          _selectionarea.InverseSelectedArea();
+          _selectionarea.InverseSelection();
         end;
 
         if not result then begin
@@ -3936,8 +4157,10 @@ begin
         end else begin
           cbdata_sel.selection_area:=_selectionarea;
           cbdata_sel.vcnt:=0;
+          cbdata_sel.child_id:=idx;
 
           result:=_data.Meshes().Get(idx).RemoveVertices(@VertexSelectionCallback, @cbdata_sel);
+          _selectionarea.RemoveAllChildVerticesFromSelectionList(idx);
           if not result then begin
             result_description.SetDescription('can''t remove vertices from source child');
           end else begin
@@ -3963,8 +4186,10 @@ begin
   _commands_selection.DoRegister(TCommandSetup.Create('sphere', nil, @_CmdSelectionSphere, 'set spherical selection, expects 4 numbers (center point x,y,z and sphere radius)'), CommandItemTypeCall);
   _commands_selection.DoRegister(TCommandSetup.Create('box', nil, @_CmdSelectionBox, 'set box selection, expects 6 numbers (box left-down and right-up points)'), CommandItemTypeCall);
   _commands_selection.DoRegister(TCommandSetup.Create('reset', nil, @_CmdSelectionClear, 'reset selection'), CommandItemTypeCall);
-  _commands_selection.DoRegister(TCommandSetup.Create('inverse', nil, @_CmdSelectionInverse, 'inverse selected area'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('inverse', nil, @_CmdSelectionInverse, 'inverse selection'), CommandItemTypeCall);
   _commands_selection.DoRegister(TCommandSetup.Create('testpoint', nil, @_CmdSelectionTestPoint, 'check if point from arguments is in selected area'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('pickverts', nil, @_CmdSelectionSelectPickVertices, 'pick vertices and append to selection; arg 1 - type ("box" or "sphere"), the next args are area selection parameters; if no args used - uses previously selected area; changes selection type from area to list of vertices'), CommandItemTypeCall);
+  _commands_selection.DoRegister(TCommandSetup.Create('meshelement', nil, @_CmdSelectionSelectPickElement, 'expand the selection to minimal independent element which match the selected vertices'), CommandItemTypeCall);
   _commands_selection.DoRegister(TCommandSetup.Create('info', nil, @_CmdSelectionInfo, 'show current selection info'), CommandItemTypeCall);
 
   _commands_upperlevel:=TCommandsStorage.Create(true);
@@ -4001,7 +4226,7 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('move', @_IsModelLoadedPrecondition, @_CmdChildMoveAll, 'move selected part of the child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('rotate', @_IsModelLoadedPrecondition, @_CmdChildRotateAll, 'rotate the entire child, expects a numbers (angle in degrees) and axis letter (x, y or z)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('scale', @_IsModelLoadedPrecondition, @_CmdChildScaleAll, 'scale the entire child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebindAll, 'link child vertices; arg 1 - new bone, arg 2 (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('rebind', @_IsModelLoadedPrecondition, @_CmdChildRebindAll, 'link child vertices; arg 1 - new bone, arg 2 (optional, omittable) - weight, arg3 - old bone to unbind (optional)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('remove', @_IsModelLoadedPrecondition, @_CmdChildRemove, 'remove the selected child'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('moveselected', @_IsModelLoadedPrecondition, @_CmdChildMoveSelected, 'move the entire child, expects 3 numbers (offsets for x,y,z axis)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('scaleselected', @_IsModelLoadedPrecondition, @_CmdChildScaleSelected, 'scale selected part of the child using previously selected pivot point, expects 3 numbers (scaling factor for x,y z axis, negative means mirroring)'), CommandItemTypeCall);
@@ -4066,8 +4291,8 @@ begin
   _commands_animbones.DoRegister(TCommandSetup.Create('aim', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneAim, 'aim bone to the specified target, arguments: X, Y, Z global coordinates of target, start frame index, end frame index'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('aimtobone', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneAimToBone, 'aim bone to the specified target bone, arguments: target bone, start frame index, end frame index, target bone position frame index (optional, current frame will be used if not specified)'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('followbone', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneFollow, 'folow for the other bone as if it was a parent in a source key, args: source bone, source frame index, first target frame index, last target frame index'), CommandItemTypeCall);
-  _commands_animbones.DoRegister(TCommandSetup.Create('clonekey', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneCopyKeyToKeys, 'replace bone keys with data from another bone key, arguments: source key id, first target key id, last target key id, interpolate position (default is true), interpolate rotation (default is true)'), CommandItemTypeCall);
-  _commands_animbones.DoRegister(TCommandSetup.Create('interpolate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSlerpKeys, 'interpolate between two keys, arguments: first key id, last key id'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('clonekey', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneCopyKeyToKeys, 'replace bone keys with data from another bone key, arguments: source key id, first target key id, last target key id'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('interpolate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSlerpKeys, 'interpolate between two keys, arguments: first key id, last key id, interpolate position (default is true), interpolate rotation (default is true), time factor power (default is 1) '), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('applydiff', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneApplyDiff, 'apply difference between two transforms to frames; arg 1 - target frame, arg2 - source frame, arg 3 - start frame, arg4 - last frame, optional args 5(and 6) - move (1, default) position (and rotation) or not (0)'), CommandItemTypeCall);
 
 end;
