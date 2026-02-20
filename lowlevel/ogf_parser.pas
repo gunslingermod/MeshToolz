@@ -677,6 +677,8 @@ type
 
     function _GetWrkBoneTransformRelativeToBindPose(bone_idx:TBoneID; var m:FMatrix4x4):boolean;
 
+    function _SetTransformKeyForBone(anim_name:string; bone_name:string; key_idx:integer; transform:FMatrix4x4):boolean;
+
     function _AimChildBoneTo(bone_idx:TBoneID; global_target_pos:FVector3):boolean;
     function _SolveIKAndSetKey(bone_idx:TBoneID; new_transform:FMatrix4x4; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):TOgfIkSolvingResult;
   public
@@ -4991,6 +4993,72 @@ begin
   result:=true;
 end;
 
+procedure CorrectAlmostZeroOrOnes(var val:single);
+const
+  DT_EPS:single = 0.000015;
+begin
+  if abs(val)<DT_EPS then begin
+    val:=0;
+  end else if abs(1-val)<DT_EPS then begin
+    val:=1;
+  end;
+end;
+
+procedure CorrectAlmostZeroOrOnes(var m:FMatrix4x4);
+begin
+  CorrectAlmostZeroOrOnes(m.i.x); CorrectAlmostZeroOrOnes(m.i.y); CorrectAlmostZeroOrOnes(m.i.z); CorrectAlmostZeroOrOnes(m.i.w);
+  CorrectAlmostZeroOrOnes(m.j.x); CorrectAlmostZeroOrOnes(m.j.y); CorrectAlmostZeroOrOnes(m.j.z); CorrectAlmostZeroOrOnes(m.j.w);
+  CorrectAlmostZeroOrOnes(m.k.x); CorrectAlmostZeroOrOnes(m.k.y); CorrectAlmostZeroOrOnes(m.k.z); CorrectAlmostZeroOrOnes(m.k.w);
+  CorrectAlmostZeroOrOnes(m.c.x); CorrectAlmostZeroOrOnes(m.c.y); CorrectAlmostZeroOrOnes(m.c.z); CorrectAlmostZeroOrOnes(m.c.w);
+end;
+
+function IsRotSame(var m1:FMatrix4x4; var m2:FMatrix4x4):boolean;
+const
+  CHECK_EPD:single = 0.00003;
+begin
+  result:=(abs(m1.i.x-m2.i.x) < CHECK_EPD) and (abs(m1.i.y-m2.i.y) < CHECK_EPD) and (abs(m1.i.z-m2.i.z) < CHECK_EPD)
+      and (abs(m1.j.x-m2.j.x) < CHECK_EPD) and (abs(m1.j.y-m2.j.y) < CHECK_EPD) and (abs(m1.j.z-m2.j.z) < CHECK_EPD)
+      and (abs(m1.k.x-m2.k.x) < CHECK_EPD) and (abs(m1.k.y-m2.k.y) < CHECK_EPD) and (abs(m1.k.z-m2.k.z) < CHECK_EPD);
+end;
+
+function TOgfSkeleton._SetTransformKeyForBone(anim_name: string; bone_name: string; key_idx: integer; transform: FMatrix4x4): boolean;
+var
+  old_t:FMatrix4x4;
+  key, old_key:TMotionKey;
+  i:integer;
+
+  found:boolean;
+begin
+  CorrectAlmostZeroOrOnes(transform);
+
+  found:=false;
+  for i:=0 to 2 do begin
+    case i of
+      0: if not _animations.GetAnimationKeyForBone(anim_name, bone_name, key_idx, old_key) then continue;
+      1: if not _animations.GetAnimationKeyForBone(anim_name, bone_name, key_idx-1, old_key) then continue;
+      2: if not _animations.GetAnimationKeyForBone(anim_name, bone_name, key_idx+1, old_key) then continue;
+    else
+      break;
+    end;
+
+    m_rotation(old_t, old_key.Q);
+    CorrectAlmostZeroOrOnes(old_t);
+
+    if IsRotSame(transform, old_t) then begin
+      key.Q:=old_key.Q;
+      m_get_translation(transform, key.T);
+      found:=true;
+      break;
+    end;
+  end;
+
+  if not found then begin
+    key:=TransformToMotionKey(transform);
+  end;
+
+  result:=_animations.SetAnimationKeyForBone(anim_name, bone_name, key_idx, key);
+end;
+
 function TOgfSkeleton._AimChildBoneTo(bone_idx: TBoneID; global_target_pos: FVector3): boolean;
 var
   bone, parent_bone:TOgfBoneData;
@@ -5352,7 +5420,6 @@ var
   anim_id:integer;
   bone:TOgfBoneData;
   bone_name:string;
-  key:TMotionKey;
   m:FMatrix4x4;
 begin
   result:=0;
@@ -5370,8 +5437,7 @@ begin
     bone_name:=bone.bone.GetName();
 
     bone.joint._GetWrkTransform(m);
-    key:=TransformToMotionKey(m);
-    _animations.SetAnimationKeyForBone(anim_name, bone_name, key_idx, key);
+    _SetTransformKeyForBone(anim_name, bone_name, key_idx, m);
   end;
 end;
 
@@ -5460,7 +5526,6 @@ var
   position:FVector3;
 
   i:integer;
-  key:TMotionKey;
 
   ikres:TOgfIkSolvingResult;
 begin
@@ -5507,8 +5572,7 @@ begin
             if key_idx = -1 then begin
               child_bone.joint.SetBindTransformData(child_matrix);
             end else begin
-              key:=TransformToMotionKey(child_matrix);
-              _animations.SetAnimationKeyForBone(anim_name, child_bone.bone.GetName(), key_idx, key);
+              _SetTransformKeyForBone(anim_name, child_bone.bone.GetName(), key_idx, child_matrix);
             end;
           end;
         end;
@@ -5524,8 +5588,7 @@ begin
         if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(idx, new_matrix, global_matrix) then exit;
         ikres:=_SolveIKAndSetKey(idx, global_matrix, anim_name, key_idx, iksolver);
         if ikres = IKSolveNotNeeded then begin
-          key:=TransformToMotionKey(new_matrix);
-          _animations.SetAnimationKeyForBone(anim_name, b.bone.GetName(), key_idx, key);
+          result:=_SetTransformKeyForBone(anim_name, b.bone.GetName(), key_idx, new_matrix);
         end else if ikres = IKSolveFailed then begin
           result:=false;
         end;
@@ -5539,8 +5602,6 @@ var
 
   rot_matrix:FMatrix4x4;
   original_matrix, new_matrix, global_matrix, toglo,toloc:FMatrix4x4;
-  key:TMotionKey;
-
   pos,vz:FVector3;
 
   ikres:TOgfIkSolvingResult;
@@ -5590,8 +5651,7 @@ begin
         if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(idx, new_matrix, global_matrix) then exit;
         ikres:=_SolveIKAndSetKey(idx, global_matrix, anim_name, key_idx, iksolver);
         if ikres = IKSolveNotNeeded then begin
-          key:=TransformToMotionKey(new_matrix);
-          _animations.SetAnimationKeyForBone(anim_name, b.bone.GetName(), key_idx, key);
+          result:=_SetTransformKeyForBone(anim_name, b.bone.GetName(), key_idx, new_matrix);
         end else if ikres = IKSolveFailed then begin
           result:=false;
         end;
@@ -5606,8 +5666,6 @@ var
   bone, source_bone:TOgfBoneData;
   m_global:FMatrix4x4;
   m:FMatrix4x4;
-  k:TMotionKey;
-
   iksolveresult:TOgfIkSolvingResult;
 begin
   if source_key_idx = target_key_idx then begin
@@ -5650,8 +5708,7 @@ begin
     bone.bone._SetParentName(old_parent_name);
     iksolveresult:=_SolveIKAndSetKey(bone_idx, m_global, anim_name, target_key_idx, iksolver);
     if iksolveresult = IKSolveNotNeeded then begin
-      k:=TransformToMotionKey(m);
-      if not _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), target_key_idx, k) then exit;
+      if not _SetTransformKeyForBone(anim_name, bone.bone.GetName(), target_key_idx, m) then exit;
       result:=true;
     end else if iksolveresult = IKSolveSuccess then begin
       result:=true;
@@ -5668,7 +5725,6 @@ var
   parent_name:string;
   parent_id:TBoneID;
   m, global_matrix:FMatrix4x4;
-  k:TMotionKey;
 
   ikres:TOgfIkSolvingResult;
 begin
@@ -5688,8 +5744,7 @@ begin
   if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(parent_id, m, global_matrix) then exit;
   ikres:=_SolveIKAndSetKey(parent_id, global_matrix, anim_name, key_idx, iksolver);
   if ikres = IKSolveNotNeeded then begin
-    k:=TransformToMotionKey(m);
-    _animations.SetAnimationKeyForBone(anim_name, parent_name, key_idx, k);
+    _SetTransformKeyForBone(anim_name, parent_name, key_idx, m);
   end else if ikres = IKSolveFailed then begin
     result:=false;
   end;
@@ -5764,7 +5819,6 @@ var
 
   i:integer;
   bone:TOgfBoneData;
-  key:TMotionKey;
   ikres:TOgfIkSolvingResult;
 begin
   result:=false;
@@ -5807,8 +5861,7 @@ begin
     if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(bone_idx, m, global_matrix) then exit;
     ikres:=_SolveIKAndSetKey(bone_idx, global_matrix, anim_name, i, iksolver);
     if ikres = IKSolveNotNeeded then begin
-      key:=TransformToMotionKey(m);
-      _animations.SetAnimationKeyForBone(anim_name, bone.bone.GetName(), i, key);
+      _SetTransformKeyForBone(anim_name, bone.bone.GetName(), i, m);
     end else if ikres = IKSolveFailed then begin
       break;
     end;
