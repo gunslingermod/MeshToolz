@@ -3220,6 +3220,7 @@ var
 
   def:TOgfMotionDefData;
   key:TMotionKey;
+  cnt:integer;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
@@ -3252,11 +3253,18 @@ begin
           end else if not CheckAndCorrectFrameId(endframe, def.name) then begin
             result_description.SetDescription('invalid end frame index')
           end else if factor <=0 then begin
-            result_description.SetDescription('power of time factor must be greater than zero')
-          end else if _data.Skeleton().InterpolateBone(bone_idx, def.name, startframe, endframe, calc_pos, calc_rot, factor, _iksolver) then begin
-            result:=true;
+            result_description.SetDescription('power of time factor must be greater than zero');
           end else begin
-            result_description.SetDescription('key interpolation failed for bone '+_data.Skeleton().GetBoneName(bone_idx));
+            cnt:=_data.Skeleton().InterpolateBone(bone_idx, def.name, startframe, endframe, calc_pos, calc_rot, factor, _iksolver);
+            if cnt > 0 then begin
+              result:=true;
+              if cnt < abs(startframe-endframe)-2 then begin
+                result_description.SetWarningFlag(true);
+                result_description.SetDescription('interpolated only '+inttostr(cnt)+' frames of '+inttostr(abs(startframe-endframe)-2));
+              end;
+            end else begin
+              result_description.SetDescription('key interpolation failed for bone '+_data.Skeleton().GetBoneName(bone_idx));
+            end;
           end;
         end else begin
           result_description.SetDescription(argsparser.GetLastErr());
@@ -4234,9 +4242,11 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('rebindselected', @_IsModelLoadedPrecondition, @_CmdChildRebindSelected, 'link child vertices in the selection; arg 1 - new bone, arg 2  (optional, omittable) - weight, arg3 - old bone to inbind (optional)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('removeselected', @_IsModelLoadedPrecondition, @_CmdChildRemoveSelected, 'remove selected part of child'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('splitselected', @_IsModelLoadedPrecondition, @_CmdChildSplitSelected, 'extract selected part of child into a new child'), CommandItemTypeCall);
+  // add 'selectvertsbybone' command to select vertices linked with the bone
+  // add variables, calls, gotos
 
   _commands_children.DoRegister(TCommandSetup.Create('bonestats', @_IsModelLoadedPrecondition, @_CmdChildBonestats, 'display bones linked with the selected mesh'), CommandItemTypeCall);
-  _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the selected bone'), CommandItemTypeCall);
+  _commands_children.DoRegister(TCommandSetup.Create('filterbone', @_IsModelLoadedPrecondition, @_CmdChildFilterBone, 'remove all vertices that has no link with the specified bone(s)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('savetofile', @_IsModelLoadedPrecondition, @_cmdChildSaveToFile, 'save selected child to file (expects file name)'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('selectlodlevel', @_IsModelLoadedPrecondition, @_cmdChildLodLevelSelect, 'select lod level, expects number'), CommandItemTypeCall);
   _commands_children.DoRegister(TCommandSetup.Create('removelodlevels', @_IsModelLoadedPrecondition, @_cmdChildLodLevelsRemove, 'remove all LOD levels except selected'), CommandItemTypeCall);

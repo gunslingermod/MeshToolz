@@ -735,7 +735,7 @@ type
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; mode:TOgfBoneRotationMode; iksolver:TOgfIKSolverBase):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
-    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; factor:single; iksolver:TOgfIKSolverBase):boolean;
+    function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; factor:single; iksolver:TOgfIKSolverBase):integer;
     function ApplyDiff(bone_idx:TBoneID; anim_name:string; targetframe:integer; sourceframe:integer; startframe:integer; endframe:integer; correct_position:boolean; correct_rotation:boolean; iksolver:TOgfIKSolverBase):boolean;
 
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
@@ -1303,7 +1303,7 @@ end;
 
 function CorrectAlmostZeroOrOnes(var val:single):boolean;
 const
-  DT_EPS:single = 0.000015;
+  DT_EPS:single = 0.000001;
 begin
   result:=false;
   if abs(val)<DT_EPS then begin
@@ -1332,6 +1332,20 @@ begin
   result:=(abs(m1.i.x-m2.i.x) < CHECK_EPD) and (abs(m1.i.y-m2.i.y) < CHECK_EPD) and (abs(m1.i.z-m2.i.z) < CHECK_EPD)
       and (abs(m1.j.x-m2.j.x) < CHECK_EPD) and (abs(m1.j.y-m2.j.y) < CHECK_EPD) and (abs(m1.j.z-m2.j.z) < CHECK_EPD)
       and (abs(m1.k.x-m2.k.x) < CHECK_EPD) and (abs(m1.k.y-m2.k.y) < CHECK_EPD) and (abs(m1.k.z-m2.k.z) < CHECK_EPD);
+end;
+
+function IsRotSame(var q1:Fquaternion; var q2:Fquaternion):boolean;
+const
+  CHECK_DELTA:single = 0.00003;
+begin
+  result:=(abs(q1.w-q2.w) < CHECK_DELTA) and (abs(q1.x-q2.x) < CHECK_DELTA) and (abs(q1.y-q2.y) < CHECK_DELTA) and (abs(q1.z-q2.z) < CHECK_DELTA);
+end;
+
+function IsPosSame(var v1:FVector3; var v2:FVector3):boolean;
+const
+  CHECK_DELTA:single = 0.00001;
+begin
+  result:=(abs(v1.x-v2.x) < CHECK_DELTA) and (abs(v1.y-v2.y) < CHECK_DELTA) and (abs(v1.z-v2.z) < CHECK_DELTA);
 end;
 
 { TOgfSkeletonPoseSeq }
@@ -5960,64 +5974,57 @@ begin
   end;
 end;
 
-function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; calc_pos: boolean; calc_rot: boolean; factor: single; iksolver: TOgfIKSolverBase): boolean;
+function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; first_key_idx: integer; last_key_idx: integer; calc_pos: boolean; calc_rot: boolean; factor: single; iksolver: TOgfIKSolverBase): integer;
 var
   bone:TOgfBoneData;
   m1, m2, m:FMatrix4x4;
-  pos1, pos2, dt, dtc, pos:FVector3;
-  i:integer;
+  pos1, pos2, dt:FVector3;
+  i, cstep:integer;
   tm:single;
 
-  cst, cse, cstep:integer;
+  first_key,last_key,k:TMotionKey;
 begin
-  result:=false;
+  result:=0;
   bone:=_GetBone(bone_idx);
   if bone.bone = nil then exit;
-  if not _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx, factor, calc_pos, calc_rot) then exit;
 
-  if (iksolver = nil) or (not iksolver.IsProperlyConfigured) or (not iksolver.IsTransformAllowedForBone(bone_idx)) or (not iksolver.IsIkSolveNeededForBoneTransform(bone_idx)) then begin
-    result:=true;
+  if (iksolver <> nil) and not (iksolver.IsProperlyConfigured and iksolver.IsTransformAllowedForBone(bone_idx)) then begin
     exit;
   end;
 
-  // If the bone under IK - interpolate global translation
-  if not _SetKeyPoseForWork(anim_name, first_key_idx) then exit;
-  if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m1) then exit;
-  m_get_translation(m1, pos1);
-  if not _SetKeyPoseForWork(anim_name, last_key_idx) then exit;
-  if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m2) then exit;
-  m_get_translation(m2, pos2);
+  if (iksolver = nil) or (not iksolver.IsIkSolveNeededForBoneTransform(bone_idx)) then begin
+    if _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx, factor, calc_pos, calc_rot) then begin
+      result:=abs(last_key_idx - first_key_idx);
+    end;
+  end else begin
+    if first_key_idx <= last_key_idx then begin
+      cstep:=1;
+    end else begin
+      cstep:=-1;
+    end;
 
-  dt:=v_sub(pos2, pos1);
-  if (abs(dt.x)>EPS) or (abs(dt.y)>EPS) or (abs(dt.z)>EPS) then begin
-    try
-      if first_key_idx <= last_key_idx then begin
-        cst:=first_key_idx;
-        cse:=last_key_idx;
-        cstep:=1;
-      end else begin
-        cst:=last_key_idx;
-        cse:=first_key_idx;
-        cstep:=-1;
-      end;
+    if not _animations.GetAnimationKeyForBone(anim_name, bone.bone.GetName(), first_key_idx,first_key) then exit;
+    if not _animations.GetAnimationKeyForBone(anim_name, bone.bone.GetName(), last_key_idx,last_key) then exit;
+    calc_rot:=calc_rot and not IsRotSame(first_key.Q, last_key.Q);
+    calc_pos:=calc_pos and not IsPosSame(first_key.T, last_key.T);
+    if (calc_rot or calc_pos) and (abs(last_key_idx - first_key_idx) > 1) then begin
+      i:=first_key_idx+cstep;
+      while i <> last_key_idx do begin
+        tm:= (i-first_key_idx)/(last_key_idx-first_key_idx);
+        tm:=power(tm, factor);
 
-      if cse - cst > 1 then begin
-        i:=first_key_idx+cstep;
-        while i <> last_key_idx do begin
-          tm:= (i-cst)/(cse-cst);
-          tm:=power(tm, factor);
-          dtc:=v_mul(dt, tm);
-          pos:=v_add(pos1, dtc);
-          if not _SetKeyPoseForWork(anim_name, i) then exit;
-          if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then exit;
-          m_translate_over(m, pos);
-          if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)=IKSolveFailed then exit;
-
-          i:=i+cstep;
+        TOgfMotionBoneTrack.KeysSlerp(k, first_key, last_key, tm, calc_pos, calc_rot);
+        if _SetKeyPoseForWork(anim_name, i) then begin
+          bone.joint._AssignWrkKey(k);
+          if _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then begin
+            if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)<>IKSolveFailed then begin
+              result:=result+1;
+            end;
+          end;
         end;
+
+        i:=i+cstep;
       end;
-      result:=true;
-    finally
     end;
   end;
 end;
