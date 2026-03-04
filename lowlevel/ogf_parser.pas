@@ -1284,17 +1284,21 @@ begin
 end;
 
 function ShapeUniformScale(var s:TOgfBoneShape; k:single):boolean;
+var
+  pp:FVector3;
 begin
   result:=false;
 
+  set_zero(pp);
+
   if s.shape_type = OGF_SHAPE_TYPE_BOX then begin
-    uniform_scale(s.box, k);
+    uniform_scale(s.box, k, pp);
     result:=true;
   end else if s.shape_type = OGF_SHAPE_TYPE_SPHERE then begin
-    uniform_scale(s.sphere, k);
+    uniform_scale(s.sphere, k, pp);
     result:=true;
   end else if s.shape_type = OGF_SHAPE_TYPE_CYLINDER then begin
-    uniform_scale(s.cylinder, k);
+    uniform_scale(s.cylinder, k, pp);
     result:=true;
   end else if s.shape_type = OGF_SHAPE_TYPE_NONE then begin;
     result:=true;
@@ -6946,10 +6950,12 @@ begin
 end;
 
 function TOgfBone.UniformScale(k: single): boolean;
+var
+  pp:FVector3;
 begin
   result:=false;
   if not Loaded() then exit;
-  uniform_scale(_obb, k);
+  uniform_scale(_obb, k, pp);
   result:=true;
 end;
 

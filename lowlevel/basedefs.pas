@@ -77,9 +77,15 @@ type
   function m_same(var m1:FMatrix4x4; var m2:FMatrix4x4):boolean;
 
   procedure uniform_scale(var v:FVector3; k:single); overload;
-  procedure uniform_scale(var s:FSphere; k:single); overload;
-  procedure uniform_scale(var c:FCylinder; k:single); overload;
-  procedure uniform_scale(var o:FObb; k:single); overload;
+  procedure uniform_scale(var v:FVector3; k:single; pivotpoint:FVector3); overload;
+  procedure uniform_scale(var s:FSphere; k:single; pivotpoint:FVector3); overload;
+  procedure uniform_scale(var c:FCylinder; k:single; pivotpoint:FVector3); overload;
+  procedure uniform_scale(var o:FObb; k:single; pivotpoint:FVector3); overload;
+
+  procedure scale_point(var v:FVector3; k:FVector3; pivotpoint:FVector3); overload;
+  procedure scale_sphere(var s:FSphere; k:FVector3; pivotpoint:FVector3); overload;
+  procedure scale_cylinder(var c:FCylinder; k:FVector3; pivotpoint:FVector3); overload;
+  procedure scale_obb(var o:FObb; k:FVector3; pivotpoint:FVector3); overload;
 
   function v_set(x:single; y:single; z:single):FVector3;
   function v_add(var v1:FVector3; var v2:FVector3):FVector3;
@@ -105,6 +111,7 @@ type
   procedure m_translate_over(var m:FMatrix4x4; var v:FVector3);
   procedure m_get_translation(var m:FMatrix4x4; var v:FVector3);
   function m_invert43(var m:FMatrix4x4):FMatrix4x4;
+  function m_invert33(var m:FMatrix3x3):FMatrix3x3;
   procedure m_rotation(var m:FMatrix4x4; var q:Fquaternion);
   procedure q_rotationYawPitchRoll(var q:Fquaternion; var ypr:FVector3);
   procedure q_rotation(var q:Fquaternion; var m:FMatrix4x4);
@@ -210,24 +217,77 @@ begin
   v.z:=v.z*k;
 end;
 
-procedure uniform_scale(var s: FSphere; k: single);
+procedure uniform_scale(var v: FVector3; k: single; pivotpoint:FVector3);
 begin
-  uniform_scale(s.p, k);
+  v:=v_sub(v, pivotpoint);
+  v.x:=v.x*k;
+  v.y:=v.y*k;
+  v.z:=v.z*k;
+  v:=v_add(v, pivotpoint);
+end;
+
+procedure uniform_scale(var s: FSphere; k: single; pivotpoint:FVector3);
+begin
+  uniform_scale(s.p, k, pivotpoint);
   s.r:=s.r*k;
 end;
 
-procedure uniform_scale(var c: FCylinder; k: single);
+procedure uniform_scale(var c: FCylinder; k: single; pivotpoint:FVector3);
 begin
-  uniform_scale(c.m_center, k);
+  uniform_scale(c.m_center, k, pivotpoint);
   c.m_height:=c.m_height*k;
   c.m_radius:=c.m_radius*k;
 end;
 
-procedure uniform_scale(var o: FObb; k: single);
+procedure uniform_scale(var o: FObb; k: single; pivotpoint:FVector3);
 begin
   uniform_scale(o.m_halfsize, k);
-  uniform_scale(o.m_translate, k);
+  uniform_scale(o.m_translate, k, pivotpoint);
 end;
+
+procedure scale_point(var v: FVector3; k: FVector3; pivotpoint: FVector3);
+begin
+  v:=v_sub(v, pivotpoint);
+  v.x:=v.x*k.x;
+  v.y:=v.y*k.y;
+  v.z:=v.z*k.z;
+  v:=v_add(v, pivotpoint);
+end;
+
+procedure scale_sphere(var s: FSphere; k: FVector3; pivotpoint: FVector3);
+var
+  avg:single;
+begin
+  avg:=(k.x+k.y+k.z) / 3;
+  scale_point(s.p, k, pivotpoint);
+  s.r:=s.r*avg;
+end;
+
+procedure scale_cylinder(var c: FCylinder; k: FVector3; pivotpoint: FVector3);
+var
+  avg:single;
+begin
+  avg:=(k.x+k.y+k.z) / 3;
+  scale_point(c.m_center, k, pivotpoint);
+  c.m_height:=c.m_height*avg;
+  c.m_radius:=c.m_radius*avg;
+end;
+
+procedure scale_obb(var o: FObb; k: FVector3; pivotpoint: FVector3);
+var
+  obb_point:FVector3;
+  inv:FMatrix3x3;
+begin
+  scale_point(o.m_translate, k, pivotpoint);
+
+  obb_point:=m_mul(o.m_rotate, o.m_halfsize);
+  obb_point.x:=obb_point.x*k.x;
+  obb_point.y:=obb_point.x*k.y;
+  obb_point.z:=obb_point.x*k.z;
+  inv:=m_invert33(o.m_rotate);
+  o.m_halfsize:=m_mul(inv, obb_point);
+end;
+
 
 function v_set(x: single; y: single; z: single): FVector3;
 begin
@@ -473,6 +533,31 @@ begin
  result.c.y := -( m.c.x * result.i.y + m.c.y * result.j.y + m.c.z * result.k.y );
  result.c.z := -( m.c.x * result.i.z + m.c.y * result.j.z + m.c.z * result.k.z );
  result.c.w := 1;
+end;
+
+function m_invert33(var m: FMatrix3x3): FMatrix3x3;
+var
+  detinv:single;
+begin
+
+  detinv := ( m.i.x * ( m.j.y * m.k.z - m.j.z * m.k.y ) -
+              m.i.y * ( m.j.x * m.k.z - m.j.z * m.k.x ) +
+              m.i.z * ( m.j.x * m.k.y - m.j.y * m.k.x ) );
+
+ detinv := 1 / detinv;
+
+ result.i.x :=  detinv * ( m.j.y * m.k.z - m.j.z * m.k.y );
+ result.i.y := -detinv * ( m.i.y * m.k.z - m.i.z * m.k.y );
+ result.i.z :=  detinv * ( m.i.y * m.j.z - m.i.z * m.j.y );
+
+ result.j.x := -detinv * ( m.j.x * m.k.z - m.j.z * m.k.x );
+ result.j.y :=  detinv * ( m.i.x * m.k.z - m.i.z * m.k.x );
+ result.j.z := -detinv * ( m.i.x * m.j.z - m.i.z * m.j.x );
+
+ result.k.x :=  detinv * ( m.j.x * m.k.y - m.j.y * m.k.x );
+ result.k.y := -detinv * ( m.i.x * m.k.y - m.i.y * m.k.x );
+ result.k.z :=  detinv * ( m.i.x * m.j.y - m.i.y * m.j.x );
+
 end;
 
 procedure m_rotation(var m: FMatrix4x4; var q: Fquaternion);

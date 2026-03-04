@@ -3641,16 +3641,16 @@ begin
          cbdata.selection_area:=_selectionarea;
          cbdata.vcnt:=0;
          cbdata.child_id:=idx;
+         shader:=_data.Meshes().Get(idx).GetTextureData().shader;
+         texture:=_data.Meshes().Get(idx).GetTextureData().texture;
+
          if not _data.Meshes().Get(idx).RotateUsingStandartAxis(amount, axis, _selectionarea.GetPivot(), @VertexSelectionCallback, @cbdata) then begin
            result_description.SetDescription('rotate operation failed for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
          end else if cbdata.vcnt = 0 then begin
-           result_description.SetDescription('no vertices were found in the selection area');
+           result_description.SetDescription('no vertices were found in the selection area for child #'+inttostr(idx)+' ('+texture+' : '+shader+')');
            result_description.SetWarningFlag(true);
            result:=true;
          end else begin
-           shader:=_data.Meshes().Get(idx).GetTextureData().shader;
-           texture:=_data.Meshes().Get(idx).GetTextureData().texture;
-
            result_description.SetDescription(inttostr(cbdata.vcnt) +' vertices of vertices of child #'+inttostr(idx)+' ('+texture+' : '+shader+') successfully rotated');
            result:=true;
          end;
@@ -4252,7 +4252,7 @@ begin
   _commands_children.DoRegister(TCommandSetup.Create('removelodlevels', @_IsModelLoadedPrecondition, @_cmdChildLodLevelsRemove, 'remove all LOD levels except selected'), CommandItemTypeCall);
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsModelHasSkeletonPrecondition, _commands_bones, 'access array of bones'));
-  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton using previously selected pivot point, expects a number (scaling factor, negative means mirroring)'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton (pivot point currently is always zero), expects a number (scaling factor)'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from the specified file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('saveomf', @_IsModelHasSkeletonPrecondition, @_CmdSaveAnimsToFile, 'save animations to the specified file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('hierarchy', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonHierarchy, 'display bones hierarchy'), CommandItemTypeCall);
