@@ -128,6 +128,7 @@ TModelSlot = class
   function _CmdRemoveCollapsedMeshes(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAddMotionRef(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdResetMotionRefs(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdCalcMeshBounds(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 
   function _CmdChildInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -163,6 +164,7 @@ TModelSlot = class
   function _CmdBoneBindPoseRotateAroundSelf(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneCopySettings(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneApplySettings(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdBoneGenerateShape(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
   function _CmdAnimInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimSetAccrue(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -219,7 +221,7 @@ public
 end;
 
 implementation
-uses sysutils, strutils, ChunkedFileParser;
+uses sysutils, strutils, ChunkedFileParser, Math;
 
 const
   BUFFER_TYPE_CHILDMESH:integer=100;
@@ -1310,46 +1312,69 @@ function TModelSlot._CmdBoneInfo(var args: string; cmd: TCommandSetup; result_de
 var
   idx:integer;
   r:string;
-  obb:FObb;
-  shape:TOgfBoneShape;
-  v1, v2:FVector3;
-  n:single;
+  v1:FVector3;
+  bonedata:TBoneUnitedData;
+  i:integer;
 begin
   result:=false;
   if userdata is TCommandIndexArg then begin
     idx:=(userdata as TCommandIndexArg).Get();
 
+    if not _data.Skeleton().GetBoneUnitedData(idx, bonedata) then exit;
+
     r:='Info for bone #'+inttostr(idx)+':'+chr($0d)+chr($0a);
-    r:=r+'- Name: '+_data.Skeleton().GetBoneName(idx)+chr($0d)+chr($0a);
-    r:=r+'- Parent: '+_data.Skeleton().GetBoneParentName(idx)+chr($0d)+chr($0a);
-    r:=r+'- Material: '+data.Skeleton().GetBoneMaterial(idx)+chr($0d)+chr($0a);
+    r:=r+'- Name: '+bonedata.name+chr($0d)+chr($0a);
+    r:=r+'- Parent: '+bonedata.parent_name+chr($0d)+chr($0a);
+    r:=r+'- Material: '+bonedata.material+chr($0d)+chr($0a);
+
+    v1:=v_mul(bonedata.orientation, 180/pi);
+    r:=r+'- Offset: '+StringFromVector(bonedata.offset)+chr($0d)+chr($0a);
+    r:=r+'- Rotate: '+StringFromVector(v1)+chr($0d)+chr($0a);
 
     if  _data.Skeleton().GetGlobalBonePositionInPose(idx, '', -1, v1) then begin
-      r:=r+'- Bind position: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
+      r:=r+'- Bind position in global space: '+StringFromVector(v1)+chr($0d)+chr($0a);
     end;
 
-    if data.Skeleton().GetBoneBindTransformInParentSpace(idx, v1, v2) then begin
-      r:=r+'- Offset: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
-      r:=r+'- Rotate: '+floattostr(v2.x*180/pi)+', '+floattostr(v2.y*180/pi)+', '+floattostr(v2.z*180/pi)+chr($0d)+chr($0a);
+    r:=r+'- Center of mass: '+StringFromVector(bonedata.center_of_mass)+chr($0d)+chr($0a);
+    r:=r+'- Mass: '+floattostr(bonedata.mass)+chr($0d)+chr($0a);
+
+    r:=r+'- Shape type: '+inttostr(bonedata.shape.shape_type)+' ('+ShapeTypeById(bonedata.shape.shape_type)+')'+chr($0d)+chr($0a);
+    r:=r+'- Shape flags: '+inttostr(bonedata.shape.flags)+chr($0d)+chr($0a);
+    if bonedata.shape.shape_type = OGF_SHAPE_TYPE_BOX then begin
+      r:=r+'- Box halfsize: '+StringFromVector(bonedata.shape.box.m_halfsize)+chr($0d)+chr($0a);
+      r:=r+'- Box translate: '+StringFromVector(bonedata.shape.box.m_translate)+chr($0d)+chr($0a);
+      r:=r+'- Box rotate: '+chr($0d)+chr($0a);
+      r:=r+StringFromVector(bonedata.shape.box.m_rotate.i)+chr($0d)+chr($0a);
+      r:=r+StringFromVector(bonedata.shape.box.m_rotate.j)+chr($0d)+chr($0a);
+      r:=r+StringFromVector(bonedata.shape.box.m_rotate.k)+chr($0d)+chr($0a);
+    end else if bonedata.shape.shape_type = OGF_SHAPE_TYPE_SPHERE then begin
+      r:=r+'- Sphere center: '+StringFromVector(bonedata.shape.sphere.p)+chr($0d)+chr($0a);
+      r:=r+'- Sphere radius: '+floattostr(bonedata.shape.sphere.r)+chr($0d)+chr($0a);
+    end else if bonedata.shape.shape_type = OGF_SHAPE_TYPE_CYLINDER then begin
+      r:=r+'- Cylinder center: '+StringFromVector(bonedata.shape.cylinder.m_center)+chr($0d)+chr($0a);
+      r:=r+'- Cylinder direction: '+StringFromVector(bonedata.shape.cylinder.m_direction)+chr($0d)+chr($0a);
+      r:=r+'- Cylinder radius: '+floattostr(bonedata.shape.cylinder.m_radius)+chr($0d)+chr($0a);
+      r:=r+'- Cylinder height: '+floattostr(bonedata.shape.cylinder.m_height)+chr($0d)+chr($0a);
     end;
 
-    if data.Skeleton().GetBoneMassParams(idx, v1, n) then begin
-      r:=r+'- Center of mass: '+floattostr(v1.x)+', '+floattostr(v1.y)+', '+floattostr(v1.z)+chr($0d)+chr($0a);
-      r:=r+'- Mass: '+floattostr(n)+chr($0d)+chr($0a);
+    r:=r+'- Joint type: '+inttostr(bonedata.ikdata.jointtype)+chr($0d)+chr($0a);
+    r:=r+'- Joint IK flags: '+inttostr(bonedata.ikdata.ik_flags)+chr($0d)+chr($0a);
+    r:=r+'- Joint limits:'+chr($0d)+chr($0a);
+    for i:=0 to length(bonedata.ikdata.limits) do begin
+      r:=r+inttostr(i)+': ('+floattostr(bonedata.ikdata.limits[i].limit.x)+', '+floattostr(bonedata.ikdata.limits[i].limit.y)+'), spring = '+floattostr(bonedata.ikdata.limits[i].spring_factor)+', damping = '+floattostr(bonedata.ikdata.limits[i].damping_factor)+chr($0d)+chr($0a);
     end;
+    r:=r+'- Joint spring factor: '+floattostr(bonedata.ikdata.spring_factor)+chr($0d)+chr($0a);
+    r:=r+'- Joint damping factor: '+floattostr(bonedata.ikdata.damping_factor)+chr($0d)+chr($0a);
+    r:=r+'- Joint break force: '+floattostr(bonedata.ikdata.break_force)+chr($0d)+chr($0a);
+    r:=r+'- Joint break torque: '+floattostr(bonedata.ikdata.break_torque)+chr($0d)+chr($0a);
+    r:=r+'- Joint friction: '+floattostr(bonedata.ikdata.friction)+chr($0d)+chr($0a);
 
-    if data.Skeleton().GetBoneShape(idx, shape) then begin
-      r:=r+'- Shape type: '+inttostr(shape.shape_type)+' ('+ShapeTypeById(shape.shape_type)+')'+chr($0d)+chr($0a);
-    end;
-
-    if data.Skeleton().GetBoneBoundingBox(idx, obb) then begin
-      r:=r+'- OBB Halfsize: '+floattostr(obb.m_halfsize.x)+', '+floattostr(obb.m_halfsize.y)+', '+floattostr(obb.m_halfsize.z)+chr($0d)+chr($0a);
-      r:=r+'- OBB Translate: '+floattostr(obb.m_translate.x)+', '+floattostr(obb.m_translate.y)+', '+floattostr(obb.m_translate.z)+chr($0d)+chr($0a);
-      r:=r+'- OBB Rotation Matrix: '+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(obb.m_rotate.i.x)+', '+floattostr(obb.m_rotate.i.y)+', '+floattostr(obb.m_rotate.i.z)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(obb.m_rotate.j.x)+', '+floattostr(obb.m_rotate.j.y)+', '+floattostr(obb.m_rotate.j.z)+' )'+chr($0d)+chr($0a);
-      r:=r+'( '+floattostr(obb.m_rotate.k.x)+', '+floattostr(obb.m_rotate.k.y)+', '+floattostr(obb.m_rotate.k.z)+' )'+chr($0d)+chr($0a);
-    end;
+    r:=r+'- Bone OBB Halfsize: '+StringFromVector(bonedata.obb.m_halfsize)+chr($0d)+chr($0a);
+    r:=r+'- Bone OBB Translate: '+StringFromVector(bonedata.obb.m_translate)+chr($0d)+chr($0a);
+    r:=r+'- Bone OBB Rotation Matrix: '+chr($0d)+chr($0a);
+    r:=r+StringFromVector(bonedata.obb.m_rotate.i)+chr($0d)+chr($0a);
+    r:=r+StringFromVector(bonedata.obb.m_rotate.j)+chr($0d)+chr($0a);
+    r:=r+StringFromVector(bonedata.obb.m_rotate.k)+chr($0d)+chr($0a);
 
     result_description.SetDescription(r);
     result:=true;
@@ -1736,6 +1761,67 @@ begin
     end;
   end;
 
+end;
+
+function TModelSlot._CmdBoneGenerateShape(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  idx:integer;
+  argsparser:TCommandsArgumentsParser;
+
+  t:string;
+  shape:TOgfBoneShape;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    idx:=(userdata as TCommandIndexArg).Get();
+
+    argsparser:=TCommandsArgumentsParser.Create();
+    try
+      argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'shape type');
+
+      if argsparser.Parse(args) and
+         argsparser.GetAsString(0, t, 'box')
+      then begin
+
+        if t = 'box' then begin
+          shape:=_data.GenerateBoneShapeAABB(idx);
+          if shape.shape_type = OGF_SHAPE_TYPE_BOX then begin
+            if not (_data.Skeleton().SetBoneShape(idx, shape)) then begin
+              result_description.SetDescription('can''t set result shape');
+            end else begin
+              result:=true;
+            end;
+          end else if shape.shape_type = OGF_SHAPE_TYPE_NONE then begin
+            result_description.SetWarningFlag(true);
+            result_description.SetDescription('no linked mesh for shape generation for bone #'+inttostr(idx));
+            _data.Skeleton().SetBoneShape(idx, shape);
+            result:=true;
+          end else begin
+            result_description.SetDescription('AABB shape generation failed for bone #'+inttostr(idx));
+          end;
+
+        end else if t = 'none' then begin
+          _data.Skeleton().GetBoneShape(idx, shape);
+          shape.shape_type:=OGF_SHAPE_TYPE_NONE;
+          if not (_data.Skeleton().SetBoneShape(idx, shape)) then begin
+            result_description.SetDescription('can''t set shape');
+          end else begin
+            result:=true;
+          end;
+        end else begin
+          result_description.SetDescription('unknown shape type: '+t);
+        end;
+
+      end else begin
+        result_description.SetDescription(argsparser.GetLastErr());
+        if length(result_description.GetDescription())=0 then begin
+          result_description.SetDescription('can''t get parsed arguments');
+        end;
+      end;
+    finally
+      FreeAndNil(argsparser);
+    end;
+  end;
 end;
 
 function TModelSlot._CmdAnimInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
@@ -2690,6 +2776,14 @@ begin
     _data.ResetMotionRefs();
     result_description.SetDescription('Motion refs reset');
     result:=true;
+  end;
+end;
+
+function TModelSlot._CmdCalcMeshBounds(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+begin
+  result:=_data.CalculateBounds();
+  if not result then begin
+    result_description.SetDescription('Bounds calculation failed');
   end;
 end;
 
@@ -4224,6 +4318,7 @@ begin
   _commands_mesh.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('child', @_IsModelLoadedPrecondition, _commands_children, 'array of sub-meshes with different textures'));
   _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf, 'paste child previously copied into temp buffer'), CommandItemTypeCall);
   _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes, 'remove all children without real mesh (without vertices)'), CommandItemTypeCall);
+  _commands_mesh.DoRegister(TCommandSetup.Create('calcbounds', @_IsModelLoadedPrecondition, @_CmdCalcMeshBounds, 'calculate mesh bounding box and sphere'), CommandItemTypeCall);
 
 
   _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo, 'show info'), CommandItemTypeCall);
@@ -4268,6 +4363,7 @@ begin
   _commands_bones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdBoneBindPoseRotateAroundSelf, 'rotate bone changing its bind pose; args 1,2,3 - x,y,z components, 4 - is global (1) or local (0, default) axis used'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('copysettings', @_IsModelHasSkeletonPrecondition, @_CmdBoneCopySettings, 'copy bone settings into temp buffer, no arguments'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('applysettings', @_IsModelHasSkeletonPrecondition, @_CmdBoneApplySettings, 'apply previously copied bone settings, no arguments'), CommandItemTypeCall);
+  _commands_bones.DoRegister(TCommandSetup.Create('generateshape', @_IsModelHasSkeletonPrecondition, @_CmdBoneGenerateShape, 'generate shape for bone, argument is shape type ("box" (default), "none")'), CommandItemTypeCall);
 
   _commands_skeleton.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('animation', @_IsAnimationsLoadedPrecondition, _commands_animations, 'access group of properties and procedures associated with loaded animations'));
   _commands_animations.DoRegister(TCommandSetup.Create('info', @_IsAnimationsLoadedPrecondition, @_CmdAnimInfo, 'display animations info'), CommandItemTypeCall);

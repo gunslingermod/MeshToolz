@@ -374,6 +374,7 @@ type
     function GetName():string;
     function GetParentName():string;
     function GetOBB():FObb;
+    function SetOBB(obb:FObb):boolean;
     procedure MoveObb(var delta:FVector3);
     function Rename(name:string):boolean;
 
@@ -462,8 +463,10 @@ type
     function Serialize():string;
 
     // Specific
+    function IKData():TOgfJointIKData;
     function GetShape():TOgfBoneShape;
     function MoveShape(v:FVector3):boolean;
+    function SetShape(shape:TOgfBoneShape):boolean;
     function SerializeShape():string;
     function DeserializeShape(s:string):boolean;
     function GetMaterial():string;
@@ -536,10 +539,13 @@ type
     name:string;
     parent_name:string;
     material:string;
+    offset:FVector3;
+    orientation:FVector3;
     obb:FObb;
     shape:TOgfBoneShape;
     mass:single;
     center_of_mass:FVector3;
+    ikdata:TOgfJointIKDataRawData;
   end;
   pTBoneUnitedData=^TBoneUnitedData;
 
@@ -620,6 +626,7 @@ type
     function IsProperlyConfigured():boolean; virtual; abstract;
     function IsTransformAllowedForBone(bone_id:TBoneID):boolean; virtual; abstract;
     function IsIkSolveNeededForBoneTransform(bone_id:TBoneID):boolean; virtual; abstract;
+    function IsHandlerBone(bone_id:TBoneID):boolean; virtual; abstract;
     function SolveIK(bone_id:TBoneID; new_transform:FMatrix4x4):TOgfIkSolvingResult; virtual; abstract;
     function SetReferencePose(pose:TOgfSkeletonPose):boolean; virtual; abstract;
   end;
@@ -650,6 +657,7 @@ type
     function SetReferencePose(pose:TOgfSkeletonPose):boolean; override;
     function IsProperlyConfigured():boolean; override;
     function IsTransformAllowedForBone(bone_id:TBoneID):boolean; override;
+    function IsHandlerBone(bone_id:TBoneID):boolean; override;
     function IsIkSolveNeededForBoneTransform(bone_id:TBoneID):boolean; override;
     function SolveIK(bone_id:TBoneID; new_transform:FMatrix4x4):TOgfIkSolvingResult; override;
     class function GetFlagsFromString(s:string):TOgfSimpleGrandparentIKSolverFlags;
@@ -741,6 +749,9 @@ type
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
     function ReparentBone(idx:TBoneID; new_parent_idx:TBoneID; preserve_global_pos:boolean):boolean;
+    function SetBoneShape(idx:TBoneID; shape:TOgfBoneShape):boolean;
+    function SetBoneObb(idx:TBoneID; obb:FObb):boolean;
+    function SetBoneMassCenter(idx:TBoneID; c:FVector3):boolean;
 
     function CopyBoneParameters(idx:TBoneID):string;
     function ApplyBoneParameters(idx:TBoneID; s:string): boolean;
@@ -1170,6 +1181,9 @@ type
    function Meshes():TOgfChildrenContainer;
    function Skeleton():TOgfSkeleton;
    function Animations():TOgfAnimationsParser;
+
+   function GenerateBoneShapeAABB(boneid:TBoneID):TOgfBoneShape;
+   function CalculateBounds():boolean;
 
    function IsAnimationsEmbedded():boolean;
    function SplitEmbeddedMotionsIntoSeparateSource():boolean;
@@ -1792,6 +1806,11 @@ begin
 
     result:=true;
   end;
+end;
+
+function TOgfSimpleGrandparentIKSolver.IsHandlerBone(bone_id: TBoneID): boolean;
+begin
+  result:=(bone_id = _target_bone);
 end;
 
 function TOgfSimpleGrandparentIKSolver.IsIkSolveNeededForBoneTransform(bone_id: TBoneID): boolean;
@@ -5498,6 +5517,49 @@ begin
   end;
 end;
 
+function TOgfSkeleton.SetBoneShape(idx: TBoneID; shape: TOgfBoneShape): boolean;
+var
+  b:TOgfBoneData;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    if b.joint<>nil then begin
+      result:=b.joint.SetShape(shape);
+    end;
+  end;
+end;
+
+function TOgfSkeleton.SetBoneObb(idx: TBoneID; obb: FObb): boolean;
+var
+  b:TOgfBoneData;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    if b.joint<>nil then begin
+      result:=b.bone.SetOBB(obb);
+    end;
+  end;
+end;
+
+function TOgfSkeleton.SetBoneMassCenter(idx: TBoneID; c: FVector3): boolean;
+var
+  b:TOgfBoneData;
+  co:fvector3;
+  mo:single;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    if b.joint<>nil then begin
+      b.joint.GetMassParams(co, mo);
+      b.joint.SetMassParams(c, mo);
+      result:=true;
+    end;
+  end;
+end;
+
 function TOgfSkeleton.CopyBoneParameters(idx: TBoneID): string;
 var
   bone:TOgfBoneData;
@@ -5982,7 +6044,7 @@ function TOgfSkeleton.InterpolateBone(bone_idx: TBoneID; anim_name: string; firs
 var
   bone:TOgfBoneData;
   m1, m2, m:FMatrix4x4;
-  pos1, pos2, dt:FVector3;
+  pos1, pos2, pos, dt, dtc:FVector3;
   i, cstep:integer;
   tm:single;
 
@@ -6007,27 +6069,65 @@ begin
       cstep:=-1;
     end;
 
-    if not _animations.GetAnimationKeyForBone(anim_name, bone.bone.GetName(), first_key_idx,first_key) then exit;
-    if not _animations.GetAnimationKeyForBone(anim_name, bone.bone.GetName(), last_key_idx,last_key) then exit;
-    calc_rot:=calc_rot and not IsRotSame(first_key.Q, last_key.Q);
-    calc_pos:=calc_pos and not IsPosSame(first_key.T, last_key.T);
-    if (calc_rot or calc_pos) and (abs(last_key_idx - first_key_idx) > 1) then begin
-      i:=first_key_idx+cstep;
-      while i <> last_key_idx do begin
-        tm:= (i-first_key_idx)/(last_key_idx-first_key_idx);
-        tm:=power(tm, factor);
+    if iksolver.IsHandlerBone(bone_idx) then begin
+      // Interpolate rotation with usual metod
+      if _animations.InterpotateAnimationKeysForBone(anim_name, bone.bone.GetName(), first_key_idx, last_key_idx, factor, calc_pos, calc_rot) then begin
 
-        TOgfMotionBoneTrack.KeysSlerp(k, first_key, last_key, tm, calc_pos, calc_rot);
-        if _SetKeyPoseForWork(anim_name, i) then begin
-          bone.joint._AssignWrkKey(k);
-          if _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then begin
-            if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)<>IKSolveFailed then begin
-              result:=result+1;
+      // now we need to interpolate global position
+      if not _SetKeyPoseForWork(anim_name, first_key_idx) then exit;
+      if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m1) then exit;
+      m_get_translation(m1, pos1);
+
+      if not _SetKeyPoseForWork(anim_name, last_key_idx) then exit;
+      if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m2) then exit;
+      m_get_translation(m2, pos2);
+
+      if not IsPosSame(pos2, pos1) and (abs(last_key_idx - first_key_idx) > 1) then begin
+          dt:=v_sub(pos2, pos1);
+          i:=first_key_idx+cstep;
+          while i <> last_key_idx do begin
+              tm:= (i-first_key_idx)/(last_key_idx-first_key_idx);
+              tm:=power(tm, factor);
+
+              dtc:=v_mul(dt, tm);
+              pos:=v_add(pos1, dtc);
+              if not _SetKeyPoseForWork(anim_name, i) then exit;
+              if not _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then exit;
+              m_translate_over(m, pos);
+              if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)<>IKSolveFailed then begin
+                result:=result+1;
+              end;
+
+              i:=i+cstep;
             end;
           end;
-        end;
+      end;
+    end else begin
+      // need interpolate local position
+      if not _animations.GetAnimationKeyForBone(anim_name, bone.bone.GetName(), first_key_idx,first_key) then exit;
+      if not _animations.GetAnimationKeyForBone(anim_name, bone.bone.GetName(), last_key_idx,last_key) then exit;
 
-        i:=i+cstep;
+
+      calc_rot:=calc_rot and not IsRotSame(first_key.Q, last_key.Q);
+      calc_pos:=calc_pos and not IsPosSame(first_key.T, last_key.T);
+      if (calc_rot or calc_pos) and (abs(last_key_idx - first_key_idx) > 1) then begin
+        i:=first_key_idx+cstep;
+        while i <> last_key_idx do begin
+          tm:= (i-first_key_idx)/(last_key_idx-first_key_idx);
+          tm:=power(tm, factor);
+
+          TOgfMotionBoneTrack.KeysSlerp(k, first_key, last_key, tm, calc_pos, calc_rot);
+          if _SetKeyPoseForWork(anim_name, i) then begin
+            bone.joint._AssignWrkKey(k);
+            if _GetWrkBoneSpaceToGlobalSpaceMatrix(bone_idx, m) then begin
+              if _SolveIKAndSetKey(bone_idx, m, anim_name, i, iksolver)<>IKSolveFailed then begin
+                result:=result+1;
+              end;
+            end;
+          end;
+
+          i:=i+cstep;
+        end;
       end;
     end;
   end;
@@ -6193,14 +6293,24 @@ begin
     data.id:=idx;
     data.name:=b.bone.GetName();
     data.parent_name:=b.bone.GetParentName();
+
     data.parent_id:=INVALID_BONE_ID;
     if length(data.parent_name) > 0 then begin
       data.parent_id:=GetBoneIdxByName(data.parent_name);
     end;
+
     data.material:=b.joint.GetMaterial();
     data.obb:=b.bone.GetOBB();
     data.shape:=b.joint.GetShape();
     b.joint.GetMassParams(data.center_of_mass, data.mass);
+    b.joint.GetBindTransformData(data.offset, data.orientation);
+
+    if b.joint.IKData()<>nil then begin
+      data.ikdata:=b.joint.IKData().GetData();
+    end else begin
+      data.ikdata.jointtype:=OGF_JOINT_TYPE_INVALID;
+    end;
+
     result:=true;
   end;
 end;
@@ -6737,6 +6847,14 @@ begin
   result:=result+SerializeBlock(@_center_of_mass, sizeof(_center_of_mass));
 end;
 
+function TOgfJointData.IKData: TOgfJointIKData;
+begin
+  result:=nil;
+  if not Loaded() then exit;
+
+  result:=_ikdata;
+end;
+
 function TOgfJointData.GetShape(): TOgfBoneShape;
 begin
   result:=_shape;
@@ -6752,6 +6870,14 @@ begin
   end else begin
     result:=ShapeMove(_shape, v);
   end;
+end;
+
+function TOgfJointData.SetShape(shape: TOgfBoneShape): boolean;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  _shape:=shape;
+  result:=true;
 end;
 
 function TOgfJointData.SerializeShape(): string;
@@ -6941,6 +7067,12 @@ end;
 function TOgfBone.GetOBB(): FObb;
 begin
   result:=_obb;
+end;
+
+function TOgfBone.SetOBB(obb: FObb): boolean;
+begin
+  _obb:=obb;
+  result:=true;
 end;
 
 function TOgfBone.Rename(name: string): boolean;
@@ -10006,6 +10138,7 @@ var
   motionrefs:string;
 
   rawstr:string;
+  offset:TChunkedOffset;
 begin
   result:=false;
   if not Loaded() then exit;
@@ -10042,6 +10175,15 @@ begin
     end;
   end else if _animations.Loaded() then begin
     _animations.UpdateSource();
+  end else begin
+    offset:=_source.FindSubChunk(CHUNK_OGF_S_MOTION_REFS2);
+    if offset = INVALID_CHUNK then begin
+      offset:=_source.FindSubChunk(CHUNK_OGF_S_MOTION_REFS);
+    end;
+
+    if (offset<>INVALID_CHUNK) and _source.EnterSubChunk(offset) then begin
+      _source.RemoveCurrentChunk();
+    end;
   end;
 
   result:=true;
@@ -10079,6 +10221,152 @@ begin
 
   result:=_animations;
 end;
+
+type
+TAABBShapeGeneratorCbData = record
+  valid:boolean;
+  vcnt:integer;
+  boneid:integer;
+  mins, maxs: FVector3;
+  bone_transform:FMatrix4x4;
+
+end;
+pTAABBShapeGeneratorCbData = ^TAABBShapeGeneratorCbData;
+
+function AABBShapeGeneratorCb(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cb_data:pTAABBShapeGeneratorCbData;
+  bonespace_coords:FVector3;
+begin
+  cb_data:=pTAABBShapeGeneratorCbData(userdata);
+
+  if links.GetWeightForBoneId(cb_data^.boneid)>0 then begin
+    cb_data^.vcnt:=cb_data^.vcnt+1;
+
+    bonespace_coords.x := cb_data^.bone_transform.i.x * data^.pos.x + cb_data^.bone_transform.j.x * data^.pos.y + cb_data^.bone_transform.k.x * data^.pos.z + cb_data^.bone_transform.c.x;
+    bonespace_coords.y := cb_data^.bone_transform.i.y * data^.pos.x + cb_data^.bone_transform.j.y * data^.pos.y + cb_data^.bone_transform.k.y * data^.pos.z + cb_data^.bone_transform.c.y;
+    bonespace_coords.z := cb_data^.bone_transform.i.z * data^.pos.x + cb_data^.bone_transform.j.z * data^.pos.y + cb_data^.bone_transform.k.z * data^.pos.z + cb_data^.bone_transform.c.z;
+
+    if not cb_data^.valid then begin
+      cb_data^.valid:=true;
+      cb_data^.mins:=bonespace_coords;
+      cb_data^.maxs:=bonespace_coords;
+    end else begin
+      if cb_data^.mins.x > bonespace_coords.x  then cb_data^.mins.x := bonespace_coords.x;
+      if cb_data^.mins.y > bonespace_coords.y  then cb_data^.mins.y := bonespace_coords.y;
+      if cb_data^.mins.z > bonespace_coords.z  then cb_data^.mins.z := bonespace_coords.z;
+
+      if cb_data^.maxs.x < bonespace_coords.x  then cb_data^.maxs.x := bonespace_coords.x;
+      if cb_data^.maxs.y < bonespace_coords.y  then cb_data^.maxs.y := bonespace_coords.y;
+      if cb_data^.maxs.z < bonespace_coords.z  then cb_data^.maxs.z := bonespace_coords.z;
+    end;
+  end;
+
+  result:=true;
+end;
+
+function TOgfParser.GenerateBoneShapeAABB(boneid: TBoneID): TOgfBoneShape;
+var
+  i:integer;
+  child:TOgfChild;
+  cb_data:TAABBShapeGeneratorCbData;
+  v:FVector3;
+begin
+  result.shape_type:=OGF_SHAPE_TYPE_INVALID;
+  result.flags:=0;
+
+  if not Loaded() then exit;
+
+  if not _skeleton._SetBindPoseForWork() then exit;
+  if not _skeleton._GetGlobalSpaceToWrkBoneSpaceMatrix(boneid, cb_data.bone_transform)  then exit;
+
+  cb_data.valid:=false;
+  cb_data.boneid:=boneid;
+  cb_data.vcnt:=0;
+
+  for i:=0 to _children.Count()-1 do begin
+    child:=_children.Get(i);
+    child.IterateVertices(@AABBShapeGeneratorCb, @cb_data);
+  end;
+
+  skeleton.GetBoneShape(boneid, result);
+  if cb_data.vcnt = 0 then begin
+    result.shape_type:=OGF_SHAPE_TYPE_NONE;
+  end else if cb_data.valid then begin
+    result.shape_type:=OGF_SHAPE_TYPE_BOX;
+    m_identity(result.box.m_rotate);
+    v:=v_sub(cb_data.maxs, cb_data.mins);
+    v:=v_mul(v, 0.5);
+    result.box.m_halfsize:=v;
+    v:=v_add(cb_data.maxs, cb_data.mins);
+    v:=v_mul(v, 0.5);
+    result.box.m_translate:=v;
+  end;
+end;
+
+
+type
+TMeshBoundsCalcCbData = record
+  valid:boolean;
+  mins, maxs: FVector3;
+end;
+pTMeshBoundsCalcCbData = ^TMeshBoundsCalcCbData;
+
+function MeshBoundsCalcCb(vertex_id:integer; data:pTOgfVertexCommonData; uv:pFVector2; links:TVertexBones; userdata:pointer):boolean;
+var
+  cb_data:pTMeshBoundsCalcCbData;
+begin
+  cb_data:=pTMeshBoundsCalcCbData(userdata);
+
+  if not cb_data^.valid then begin
+    cb_data^.valid:=true;
+    cb_data^.mins:=data^.pos;
+    cb_data^.maxs:=data^.pos;
+  end else begin
+    if cb_data^.mins.x > data^.pos.x  then cb_data^.mins.x := data^.pos.x;
+    if cb_data^.mins.y > data^.pos.y  then cb_data^.mins.y := data^.pos.y;
+    if cb_data^.mins.z > data^.pos.z  then cb_data^.mins.z := data^.pos.z;
+    if cb_data^.maxs.x < data^.pos.x  then cb_data^.maxs.x := data^.pos.x;
+    if cb_data^.maxs.y < data^.pos.y  then cb_data^.maxs.y := data^.pos.y;
+    if cb_data^.maxs.z < data^.pos.z  then cb_data^.maxs.z := data^.pos.z;
+  end;
+
+  result:=true;
+end;
+
+function TOgfParser.CalculateBounds: boolean;
+var
+  i:integer;
+  child:TOgfChild;
+  cb_data:TMeshBoundsCalcCbData;
+  r, c:FVector3;
+begin
+  result:=false;
+  if not Loaded() then exit;
+
+  cb_data.valid:=false;
+
+  for i:=0 to _children.Count()-1 do begin
+    child:=_children.Get(i);
+    child.IterateVertices(@MeshBoundsCalcCb, @cb_data);
+  end;
+
+  if cb_data.valid then begin
+    _header.bb.max:=cb_data.maxs;
+    _header.bb.min:=cb_data.mins;
+
+    r:=v_sub(cb_data.maxs,cb_data.mins);
+    r:=v_mul(r, 0.5);
+
+    c:=v_add(cb_data.maxs,cb_data.mins);
+    c:=v_mul(c, 0.5);
+    _header.bs.c:=c;
+    _header.bs.r:=v_magnitude(r);
+
+    result:=true;
+  end;
+end;
+
 
 function TOgfParser.IsAnimationsEmbedded(): boolean;
 begin

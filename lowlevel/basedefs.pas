@@ -113,6 +113,7 @@ type
   function m_invert43(var m:FMatrix4x4):FMatrix4x4;
   function m_invert33(var m:FMatrix3x3):FMatrix3x3;
   procedure m_rotation(var m:FMatrix4x4; var q:Fquaternion);
+  procedure m_rotation(var m:FMatrix4x4; var mout:FMatrix3x3);
   procedure q_rotationYawPitchRoll(var q:Fquaternion; var ypr:FVector3);
   procedure q_rotation(var q:Fquaternion; var m:FMatrix4x4);
   procedure q_set(var q:Fquaternion; x:single; y:single; z:single; w:single);
@@ -123,8 +124,10 @@ type
   function distance_between(var point1:FVector3; var point2:FVector3):single;
   function rotation_between(src:FVector3; dst:FVector3):FMatrix4x4;
 
+  function StringFromVector(v:FVector3):string;
+
 implementation
-uses math;
+uses math, sysutils;
 
 procedure set_zero(var v: FVector2);
 begin
@@ -574,6 +577,13 @@ begin
   m.c.x := 0;                   m.c.y := 0;                   m.c.z := 0;                   m.c.w := 1;
 end;
 
+procedure m_rotation(var m: FMatrix4x4; var mout: FMatrix3x3);
+begin
+  mout.i.x:=m.i.x; mout.i.y:=m.i.y; mout.i.z:=m.i.z;
+  mout.j.x:=m.j.x; mout.j.y:=m.j.y; mout.j.z:=m.j.z;
+  mout.k.x:=m.k.x; mout.k.y:=m.k.y; mout.k.z:=m.k.z;
+end;
+
 procedure q_rotationYawPitchRoll(var q: Fquaternion; var ypr: FVector3);
 var
   sy,cy,sp,cp,sr,cr:single;
@@ -832,12 +842,12 @@ begin
     result.i.x:=v.x * v.x * k + c;     result.i.y:=v.x * v.y * k + v.z;   result.i.z:=v.x * v.z * k - v.y;
     result.j.x:=v.y * v.x * k - v.z;   result.j.y:=v.y * v.y * k + c;     result.j.z:=v.y * v.z * k + v.x;
     result.k.x:=v.z * v.x * k + v.y;   result.k.y:=v.z * v.y * k - v.x;   result.k.z:=v.z * v.z * k + c;
-
-
-    {result.i.x:=v.x * v.x * k + c;     result.i.y:=v.y * v.x * k - v.z;   result.i.z:=v.z * v.x * k + v.y;
-    result.j.x:=v.x * v.y * k + v.z;   result.j.y:=v.y * v.y * k + c;     result.j.z:=v.z * v.y * k - v.x;
-    result.k.x:=v.x * v.z * k - v.y;   result.k.y:=v.y * v.z * k + v.x;   result.k.z:=v.z * v.z * k + c; }
   end;
+end;
+
+function StringFromVector(v: FVector3): string;
+begin
+  result:='( '+floattostr(v.x)+', '+floattostr(v.y)+', '+floattostr(v.z)+' )';
 end;
 
 procedure q_slerp(var r: Fquaternion; q0: Fquaternion; q1: Fquaternion; tm: single);
