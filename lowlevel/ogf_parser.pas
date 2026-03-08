@@ -743,6 +743,8 @@ type
     function RotateBone(idx:TBoneID; v:FVector3; anim_name:string; key_idx:integer; mode:TOgfBoneRotationMode; iksolver:TOgfIKSolverBase):boolean;
     function FollowBone(bone_idx:TBoneID; anim_name:string; source_bone_idx:TBoneID; source_key_idx:integer; target_key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
     function AimBone(bone_idx:TBoneID; target:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
+    function SetBoneOrientation(bone_idx:TBoneID; orientation:FVector3; anim_name:string; key_idx:integer; iksolver:TOgfIKSolverBase):boolean;
+    function SetBonePosition(bone_idx:TBoneID; position:FVector3; anim_name:string; key_idx:integer; is_global:boolean; iksolver:TOgfIKSolverBase):boolean;
     function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; factor:single; iksolver:TOgfIKSolverBase):integer;
     function ApplyDiff(bone_idx:TBoneID; anim_name:string; targetframe:integer; sourceframe:integer; startframe:integer; endframe:integer; correct_position:boolean; correct_rotation:boolean; iksolver:TOgfIKSolverBase):boolean;
 
@@ -752,6 +754,7 @@ type
     function SetBoneShape(idx:TBoneID; shape:TOgfBoneShape):boolean;
     function SetBoneObb(idx:TBoneID; obb:FObb):boolean;
     function SetBoneMassCenter(idx:TBoneID; c:FVector3):boolean;
+    function SetBoneMaterial(idx:TBoneID; material:string):boolean;
 
     function CopyBoneParameters(idx:TBoneID):string;
     function ApplyBoneParameters(idx:TBoneID; s:string): boolean;
@@ -5560,6 +5563,20 @@ begin
   end;
 end;
 
+function TOgfSkeleton.SetBoneMaterial(idx: TBoneID; material: string): boolean;
+var
+  b:TOgfBoneData;
+begin
+  result:=false;
+  if Loaded() and (idx<>INVALID_BONE_ID) and (idx<GetBonesCount()) then begin
+    b:=_GetBone(idx);
+    if b.joint<>nil then begin
+      b.joint.SetMaterial(material);
+      result:=true;
+    end;
+  end;
+end;
+
 function TOgfSkeleton.CopyBoneParameters(idx: TBoneID): string;
 var
   bone:TOgfBoneData;
@@ -6035,6 +6052,68 @@ begin
   ikres:=_SolveIKAndSetKey(parent_id, global_matrix, anim_name, key_idx, iksolver);
   if ikres = IKSolveNotNeeded then begin
     _SetTransformKeyForAnimBone(anim_name, parent_name, key_idx, m);
+  end else if ikres = IKSolveFailed then begin
+    result:=false;
+  end;
+end;
+
+function TOgfSkeleton.SetBoneOrientation(bone_idx: TBoneID; orientation: FVector3; anim_name: string; key_idx: integer; iksolver: TOgfIKSolverBase): boolean;
+var
+  bone:TOgfBoneData;
+  m, m_old, global_matrix:FMatrix4x4;
+  pos:FVector3;
+
+  ikres:TOgfIkSolvingResult;
+begin
+  result:=false;
+  bone:=_GetBone(bone_idx);
+  if bone.bone = nil then exit;
+
+  if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+  if not _GetWrkBoneLocalTransform(bone_idx, m_old) then exit;
+
+  m_setXYZ(m, orientation);
+  m_get_translation(m_old, pos);
+  m_translate_over(m, pos);
+
+  result:=true;
+  if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(bone_idx, m, global_matrix) then exit;
+  ikres:=_SolveIKAndSetKey(bone_idx, global_matrix, anim_name, key_idx, iksolver);
+  if ikres = IKSolveNotNeeded then begin
+    _SetTransformKeyForAnimBone(anim_name, bone.bone.GetName(), key_idx, m);
+  end else if ikres = IKSolveFailed then begin
+    result:=false;
+  end;
+end;
+
+function TOgfSkeleton.SetBonePosition(bone_idx: TBoneID; position: FVector3;anim_name: string; key_idx: integer; is_global: boolean;iksolver: TOgfIKSolverBase): boolean;
+var
+  bone:TOgfBoneData;
+  m, m_old, global_matrix:FMatrix4x4;
+  pos:FVector3;
+
+  ikres:TOgfIkSolvingResult;
+begin
+  result:=false;
+  bone:=_GetBone(bone_idx);
+  if bone.bone = nil then exit;
+
+  if not _SetKeyPoseForWork(anim_name, key_idx) then exit;
+
+  if is_global then begin
+    if not _ConvertGlobalCoordinatesIntoParentSpaceOfWrkBone(bone_idx, position, pos) then exit;
+    if not _GetWrkBoneLocalTransform(bone_idx, m) then exit;
+    m_translate_over(m, pos);
+  end else begin
+    if not _GetWrkBoneLocalTransform(bone_idx, m) then exit;
+    m_translate_over(m, position);
+  end;
+
+  result:=true;
+  if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(bone_idx, m, global_matrix) then exit;
+  ikres:=_SolveIKAndSetKey(bone_idx, global_matrix, anim_name, key_idx, iksolver);
+  if ikres = IKSolveNotNeeded then begin
+    _SetTransformKeyForAnimBone(anim_name, bone.bone.GetName(), key_idx, m);
   end else if ikres = IKSolveFailed then begin
     result:=false;
   end;
