@@ -120,6 +120,7 @@ TModelSlot = class
   function _CmdLoadAnimsFromFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSaveToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSaveAnimsToFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdMergeAnimsWithFile(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdUnload(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdClipboardMode(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1208,6 +1209,55 @@ begin
   result_description.SetDescription(r);
 end;
 
+function TModelSlot._CmdMergeAnimsWithFile(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  path:string;
+  s_data:string;
+  second:TOgfParser;
+  i:integer;
+begin
+  result:=false;
+
+  path:=args;
+  if (length(path)>0) and ((path[1] = '"') or (path[1] = '''')) then begin
+    path:=rightstr(path, length(path)-1);
+  end;
+  if (length(path)>0) and ((path[length(path)] = '"') or (path[length(path)] = '''')) then begin
+    path:=leftstr(path, length(path)-1);
+  end;
+
+  if _data.Animations().AnimationsCount()=0 then begin
+    result:=_data.Animations().LoadFromFile(path);
+    if not result then begin
+      result_description.SetDescription('Can''t load animations from file "'+path+'"');
+    end;
+
+  end else begin
+    s_data:=_data.Serialize();
+    if length(s_data)>0 then begin
+      try
+        second:=TOgfParser.Create();
+        if not second.Deserialize(s_data) then begin
+          result_description.SetDescription('model deserialization failed');
+        end else begin
+          second.Animations().Reset();
+          if not second.Animations().LoadFromFile(path) then begin
+            result_description.SetDescription('can''t load source OMF');
+          end else begin
+            if not _data.Animations().MergeContainers(second.Animations()) then begin
+              result_description.SetDescription('Merging animations failed');
+            end else begin
+              result:=true;
+            end;
+          end;
+        end;
+      finally
+        FreeAndNil(second);
+      end;
+    end;
+  end;
+end;
+
 function TModelSlot._CmdUnload(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
 begin
   result:=false;
@@ -1795,6 +1845,8 @@ begin
             end else begin
               result:=true;
             end;
+            shape.box.m_halfsize:=v_mul(shape.box.m_halfsize, 0.95);
+            _data.Skeleton().SetBoneObb(idx, shape.box);
           end else if shape.shape_type = OGF_SHAPE_TYPE_NONE then begin
             result_description.SetWarningFlag(true);
             result_description.SetDescription('no linked mesh for shape generation for bone #'+inttostr(idx));
@@ -4633,6 +4685,7 @@ begin
   _commands_skeleton.DoRegister(TCommandSetup.Create('uniformscale', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonUniformScale, 'scale skeleton (pivot point currently is always zero), expects a number (scaling factor)'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('loadomf', @_IsModelHasSkeletonPrecondition, @_CmdLoadAnimsFromFile, 'load animations from the specified file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('saveomf', @_IsModelHasSkeletonPrecondition, @_CmdSaveAnimsToFile, 'save animations to the specified file'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('mergeomf', @_IsModelHasSkeletonPrecondition, @_CmdMergeAnimsWithFile, 'loads additional animations from the specified file'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('hierarchy', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonHierarchy, 'display bones hierarchy'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('addbone', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonAddBone, 'add a new bone, arguments - new bone name, parent bone, optional X, Y, Z, H, P, B, is in global space flag'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('addmotionref', @_IsModelLoadedPrecondition, @_CmdAddMotionRef, 'add motion ref to the file from argument, requires animations to be stored in the separate OMF'), CommandItemTypeCall);
