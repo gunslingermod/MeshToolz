@@ -125,11 +125,14 @@ TModelSlot = class
   function _CmdInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdClipboardMode(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
+  function _CmdMeshInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdPasteMeshFromTempBuf(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdRemoveCollapsedMeshes(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAddMotionRef(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdResetMotionRefs(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdCalcMeshBounds(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdCopyMeshBounds(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdPasteMeshBounds(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
 
 
   function _CmdChildInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -233,6 +236,7 @@ const
   BUFFER_TYPE_BONEDATA:integer=101;
   BUFFER_TYPE_SKELETONPOSE:integer=102;
   BUFFER_TYPE_SKELETONTRACK:integer=103;
+  BUFFER_TYPE_MODELBLIMITS:integer=104;
 
 { TParsedBonesExpression }
 
@@ -1294,6 +1298,29 @@ begin
     end;
     result:=true;
   end;
+end;
+
+function TModelSlot._CmdMeshInfo(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bb:TOgfBBox;
+  bs:TOgfBSphere;
+  s:string;
+begin
+  bb:=_data.GetModelBBox();
+  bs:=_data.GetModelBSphere();
+  s:='';
+
+  s:=s+'Bounding box:'+chr($0d)+chr($0a);
+  s:=s+'- min: '+StringFromVector(bb.min)+chr($0d)+chr($0a);
+  s:=s+'- max: '+StringFromVector(bb.max)+chr($0d)+chr($0a);
+
+  s:=s+'Bounding sphere:'+chr($0d)+chr($0a);
+  s:=s+'- center: '+StringFromVector(bs.c)+chr($0d)+chr($0a);
+  s:=s+'- radius: '+floattostr(bs.r)+chr($0d)+chr($0a);
+
+
+  result_description.SetDescription(s);
+  result:=true;
 end;
 
 function TModelSlot._CmdPasteMeshFromTempBuf(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject ): boolean;
@@ -2939,6 +2966,48 @@ begin
   result:=_data.CalculateBounds();
   if not result then begin
     result_description.SetDescription('Bounds calculation failed');
+  end;
+end;
+
+function TModelSlot._CmdCopyMeshBounds(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+   i:integer;
+   serialized:string;
+   bb:TOgfBBox;
+   bs:TOgfBSphere;
+begin
+  bb:=_data.GetModelBBox();
+  bs:=_data.GetModelBSphere();
+  serialized:='';
+  for i:=0 to sizeof(bb)-1 do begin
+    serialized:=serialized+PAnsiChar(@bb)[i];
+  end;
+  for i:=0 to sizeof(bs)-1 do begin
+    serialized:=serialized+PAnsiChar(@bs)[i];
+  end;
+  _container.GetTempBuffer().SetData(serialized, BUFFER_TYPE_MODELBLIMITS);
+  result:=true;
+end;
+
+function TModelSlot._CmdPasteMeshBounds(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  serialized:string;
+  bb:TOgfBBox;
+  bs:TOgfBSphere;
+begin
+  result:=false;
+  if _container.GetTempBuffer().GetData(serialized, BUFFER_TYPE_MODELBLIMITS) then begin
+    if length(serialized) = sizeof(bb)+sizeof(bs) then begin
+      bb:=pTOgfBBox(PAnsiChar(serialized))^;
+      bs:=pTOgfBSphere(@PAnsiChar(serialized)[sizeof(bb)])^;
+      _data.SetModelBBox(bb);
+      _data.SetModelBSphere(bs);
+      result:=true;
+    end else begin
+      result_description.SetDescription('invalid size of data from temp buffer');
+    end;
+  end else begin
+    result_description.SetDescription('can''t get data from temp buffer');
   end;
 end;
 
@@ -4650,10 +4719,13 @@ begin
   _commands_upperlevel.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdInfo, 'display selected slot info'), CommandItemTypeCall);
   _commands_upperlevel.DoRegister(TCommandSetup.Create('setclipboardmode', nil, @_CmdClipboardMode, 'switches temp buffer between internal storage and system clipboard (globally for all slots)'), CommandItemTypeCall);
 
+  _commands_mesh.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdMeshInfo, 'show info'), CommandItemTypeCall);
   _commands_mesh.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('child', @_IsModelLoadedPrecondition, _commands_children, 'array of sub-meshes with different textures'));
   _commands_mesh.DoRegister(TCommandSetup.Create('pastechild', @_IsModelLoadedPrecondition, @_CmdPasteMeshFromTempBuf, 'paste child previously copied into temp buffer'), CommandItemTypeCall);
   _commands_mesh.DoRegister(TCommandSetup.Create('removecollapsedchildren', @_IsModelLoadedPrecondition, @_CmdRemoveCollapsedMeshes, 'remove all children without real mesh (without vertices)'), CommandItemTypeCall);
   _commands_mesh.DoRegister(TCommandSetup.Create('calcbounds', @_IsModelLoadedPrecondition, @_CmdCalcMeshBounds, 'calculate mesh bounding box and sphere'), CommandItemTypeCall);
+  _commands_mesh.DoRegister(TCommandSetup.Create('copybounds', @_IsModelLoadedPrecondition, @_CmdCopyMeshBounds, 'copy mesh bounding box and sphere parameters'), CommandItemTypeCall);
+  _commands_mesh.DoRegister(TCommandSetup.Create('pastebounds', @_IsModelLoadedPrecondition, @_CmdPasteMeshBounds, 'paste mesh bounding box and sphere parameters'), CommandItemTypeCall);
 
 
   _commands_children.DoRegister(TCommandSetup.Create('info', @_IsModelLoadedPrecondition, @_CmdChildInfo, 'show info'), CommandItemTypeCall);

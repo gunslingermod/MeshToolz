@@ -55,11 +55,13 @@ type
     min:FVector3;
     max:FVector3;
   end;
+  pTOgfBBox = ^TOgfBBox;
 
   TOgfBSphere = packed record
     c:FVector3;
     r:single;
   end;
+  pTOgfBSphere = ^TOgfBSphere;
 
   TOgfHeader = packed record
     format_version:byte;
@@ -1187,6 +1189,10 @@ type
 
    function GenerateBoneShapeAABB(boneid:TBoneID):TOgfBoneShape;
    function CalculateBounds():boolean;
+   function GetModelBBox():TOgfBBox;
+   function GetModelBSphere():TOgfBSphere;
+   procedure SetModelBBox(bb:TOgfBBox);
+   procedure SetModelBSphere(bs:TOgfBSphere);
 
    function IsAnimationsEmbedded():boolean;
    function SplitEmbeddedMotionsIntoSeparateSource():boolean;
@@ -10413,7 +10419,7 @@ begin
   result:=true;
 end;
 
-function TOgfParser.CalculateBounds: boolean;
+function TOgfParser.CalculateBounds(): boolean;
 var
   i:integer;
   child:TOgfChild;
@@ -10444,6 +10450,26 @@ begin
 
     result:=true;
   end;
+end;
+
+function TOgfParser.GetModelBBox(): TOgfBBox;
+begin
+  result:=_header.bb;
+end;
+
+function TOgfParser.GetModelBSphere(): TOgfBSphere;
+begin
+  result:=_header.bs;
+end;
+
+procedure TOgfParser.SetModelBBox(bb: TOgfBBox);
+begin
+  _header.bb:=bb;
+end;
+
+procedure TOgfParser.SetModelBSphere(bs: TOgfBSphere);
+begin
+  _header.bs:=bs;
 end;
 
 
