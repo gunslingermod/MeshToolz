@@ -701,7 +701,7 @@ begin
         end;
 
       end else begin
-        i:=strtointdef(tmpstr, $FFFFFFFF);
+        i:=strtointdef(tmpstr, -1);
         if i<0 then begin
           i:=GetFilteringItemsCount()+i;
         end;
