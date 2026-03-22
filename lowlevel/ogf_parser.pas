@@ -666,6 +666,7 @@ type
   end;
 
   TOgfBoneRotationMode = (BoneRotationLocal, BoneRotationGlobalAroundSelf);
+  TOgfAnimationBonesSyncFlags = cardinal;
 
   { TOgfSkeleton }
 
@@ -750,6 +751,7 @@ type
     function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; factor:single; iksolver:TOgfIKSolverBase):integer;
     function ApplyDiff(bone_idx:TBoneID; anim_name:string; targetframe:integer; sourceframe:integer; startframe:integer; endframe:integer; correct_position:boolean; correct_rotation:boolean; iksolver:TOgfIKSolverBase):boolean;
 
+    function SyncAnimsBones(sync_flags:TOgfAnimationBonesSyncFlags):boolean;
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
     function RenameBone(old_name:string; new_name:string):boolean;
     function ReparentBone(idx:TBoneID; new_parent_idx:TBoneID; preserve_global_pos:boolean):boolean;
@@ -1137,9 +1139,13 @@ type
     function GetAnimationIdByName(name:string):integer;
     function UpdateAnimationParams(idx:integer; d:TOgfMotionDefData):boolean;
 
+    function IsBonePresent(name:string):boolean;
     function AddBone(name:string; default_key:TMotionKey; part_id:integer=0):boolean;
     function RemoveBone(name:string):boolean;
     function RenameBone(old_name:string; new_name:string):boolean;
+
+    function RegisteredBonesCount():integer;
+    function GetRegisteredBoneName(idx:integer):string;
 
     function ChangeAnimationFramesCount(anim_name:string; new_frames_count:integer):boolean;
     function GetAnimationFramesCount(anim_name:string):integer;
@@ -1264,6 +1270,10 @@ const
   SIMPLE_GP_IKSOLVER_FLAG_DISABLE_X_AXIS:TOgfSimpleGrandparentIKSolverFlags = 1;
   SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Y_AXIS:TOgfSimpleGrandparentIKSolverFlags = 2;
   SIMPLE_GP_IKSOLVER_FLAG_DISABLE_Z_AXIS:TOgfSimpleGrandparentIKSolverFlags = 4;
+
+  OGF_ANIMATION_SYNC_ADD_TO_ANIM:TOgfAnimationBonesSyncFlags=1;
+  OGF_ANIMATION_SYNC_REMOVE_FROM_SKELETON:TOgfAnimationBonesSyncFlags=2;
+  OGF_ANIMATION_SYNC_FULL:TOgfAnimationBonesSyncFlags = 3;
 
 implementation
 uses sysutils, FastCrc, math;
@@ -6278,6 +6288,49 @@ begin
   end;
 end;
 
+function TOgfSkeleton.SyncAnimsBones(sync_flags: TOgfAnimationBonesSyncFlags): boolean;
+var
+  i:integer;
+  bonedata:TOgfBoneData;
+  key:TMotionKey;
+  transform:FMatrix4x4;
+  bonename:string;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  if not _animations.Loaded() then exit;
+
+  if sync_flags and OGF_ANIMATION_SYNC_ADD_TO_ANIM <> 0 then begin;
+    // Add missed skeleton bones to animations
+    for i:=0 to GetBonesCount()-1 do begin
+      bonedata:=_GetBone(i);
+      if bonedata.bone<>nil then begin
+        bonename:=bonedata.bone.GetName();
+        if not _animations.IsBonePresent(bonename) then begin
+          bonedata.joint.GetBindTransformData(transform);
+          CorrectAlmostZeroOrOnesInRot(transform);
+          key:=TransformToMotionKey(transform);
+          _animations.AddBone(bonename, key);
+        end;
+      end;
+    end;
+  end;
+
+  if sync_flags and OGF_ANIMATION_SYNC_REMOVE_FROM_SKELETON <> 0 then begin;
+    // Remove extra bones from the skeleton
+    for i:=_animations.RegisteredBonesCount()-1 downto 0 do begin
+      bonename:=_animations.GetRegisteredBonename(i);
+      if length(bonename)>0 then begin
+        if GetBoneIdxByName(bonename) = INVALID_BONE_ID then begin
+          _animations.RemoveBone(bonename);
+        end;
+      end;
+    end;
+  end;
+
+  result:=true;
+end;
+
 function TOgfSkeleton.AddBone(name: string; parent_id: TBoneId; pos: FVector3; dir: FVector3; is_in_global_space: boolean; force_bind_pose:boolean): TBoneId;
 var
   parent_bone:TOgfBoneData;
@@ -9653,6 +9706,26 @@ begin
   end;
 end;
 
+function TOgfAnimationsParser.RegisteredBonesCount(): integer;
+begin
+  result:=0;
+  if not Loaded() then exit;
+  result:=_params.GetTotalBonesCount();
+end;
+
+function TOgfAnimationsParser.GetRegisteredBoneName(idx: integer): string;
+var
+  bone:TOgfMotionBoneParams;
+begin
+  result:='';
+  if (idx>=0) and (idx < _params.GetTotalBonesCount()) then begin
+     bone:=_params.GetBoneByIdxInTrack(idx);
+     if bone <> nil then begin
+       result:=bone.GetName();
+     end;
+  end;
+end;
+
 function TOgfAnimationsParser.GetAnimationFramesCount(anim_name: string): integer;
 var
   track:TOgfMotionTrack;
@@ -10016,6 +10089,15 @@ begin
   if not Loaded() then exit;
 
   result:=_params.UpdateMotionDefsForIdx(idx, d);
+end;
+
+function TOgfAnimationsParser.IsBonePresent(name: string): boolean;
+var
+  part_id, bone_id:integer;
+begin
+  result:=false;
+  if not Loaded() then exit;
+  result:= _params.FindBoneIdxsByName(name, part_id, bone_id);
 end;
 
 function TOgfAnimationsParser.AddBone(name: string; default_key: TMotionKey; part_id: integer): boolean;

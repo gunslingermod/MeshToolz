@@ -160,6 +160,7 @@ TModelSlot = class
   function _CmdSkeletonUniformScale(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSkeletonHierarchy(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdSkeletonAddBone(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdSyncAnimBones(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneInfo(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneReparent(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdBoneRename(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -1156,6 +1157,8 @@ begin
     result:=_data.Animations().LoadFromFile(path);
     if not result then begin
       result_description.SetDescription('Can''t load animations from file "'+path+'"');
+    end else begin
+
     end;
   end;
 end;
@@ -1529,7 +1532,7 @@ begin
   result:=false;
 
   parent_bone_id:=INVALID_BONE_ID;
-    argsparser:=TCommandsArgumentsParser.Create();
+  argsparser:=TCommandsArgumentsParser.Create();
   try
     argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, false, 'new bone name');
     argsparser.RegisterArgument(TCommandsArgumentsParserArgABNString, true, 'parent bone');
@@ -1540,7 +1543,7 @@ begin
     argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'pitch of the new bone');
     argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'bank of the new bone');
     argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'global coordinates space flag');
-        if argsparser.Parse(args) and
+    if argsparser.Parse(args) and
        argsparser.GetAsString(0, new_bone_name) and
        argsparser.GetAsString(1, parent_bone_s, '') and
        argsparser.GetAsSingle(2, pos.x, 0) and
@@ -1566,13 +1569,40 @@ begin
           result_description.SetDescription('Error while creating bone "'+new_bone_name+'"');
         end;
       end;
-      end else begin
+    end else begin
       result_description.SetDescription(argsparser.GetLastErr());
       if length(result_description.GetDescription())=0 then begin
         result_description.SetDescription('can''t get parsed arguments');
       end;
     end;
-    finally
+  finally
+    FreeAndNil(argsparser);
+  end;
+end;
+
+function TModelSlot._CmdSyncAnimBones(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  argsparser:TCommandsArgumentsParser;
+  val:integer;
+begin
+  argsparser:=TCommandsArgumentsParser.Create();
+  try
+    argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, true, 'sync type');
+    if argsparser.Parse(args) and
+       argsparser.GetAsInt(0, val, OGF_ANIMATION_SYNC_FULL)
+    then begin
+      if not _data.Skeleton().SyncAnimsBones(TOgfAnimationBonesSyncFlags(val)) then begin
+        result_description.SetDescription('sync operation failed');
+      end else begin
+        result:=true;
+      end;
+    end else begin
+      result_description.SetDescription(argsparser.GetLastErr());
+      if length(result_description.GetDescription())=0 then begin
+        result_description.SetDescription('can''t get parsed arguments');
+      end;
+    end;
+  finally
     FreeAndNil(argsparser);
   end;
 end;
@@ -4762,6 +4792,7 @@ begin
   _commands_skeleton.DoRegister(TCommandSetup.Create('addbone', @_IsModelHasSkeletonPrecondition, @_CmdSkeletonAddBone, 'add a new bone, arguments - new bone name, parent bone, optional X, Y, Z, H, P, B, is in global space flag'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('addmotionref', @_IsModelLoadedPrecondition, @_CmdAddMotionRef, 'add motion ref to the file from argument, requires animations to be stored in the separate OMF'), CommandItemTypeCall);
   _commands_skeleton.DoRegister(TCommandSetup.Create('resetmotionrefs', @_IsModelLoadedPrecondition, @_CmdResetMotionRefs, 'reset all motion refs, requires animations to be stored in the separate OMF'), CommandItemTypeCall);
+  _commands_skeleton.DoRegister(TCommandSetup.Create('syncanimbones', @_IsModelLoadedPrecondition, @_CmdSyncAnimBones, 'sync bones between model and loaded animations, argument value 1 means add bones to animation, 2 means remove bones from the skeleton, 3 (default) - both'), CommandItemTypeCall);
 
   _commands_bones.DoRegister(TCommandSetup.Create('info', @_IsModelHasSkeletonPrecondition, @_CmdBoneInfo, 'display info associated with the selected bone'), CommandItemTypeCall);
   _commands_bones.DoRegister(TCommandSetup.Create('rename', @_IsModelHasSkeletonPrecondition, @_CmdBoneRename, 'rename bone, expects 1 argument - new bone name'), CommandItemTypeCall);
