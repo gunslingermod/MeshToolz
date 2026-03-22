@@ -368,6 +368,10 @@ var
   delta, i:integer;
   cur_ofs:TChunkedOffset;
   hdr:pTChunkHeader;
+
+  src:pbyte;
+  dst:pbyte;
+  sz:cardinal;
 begin
   result:=false;
   if not _loaded then exit;
@@ -379,7 +383,16 @@ begin
   setlength(new_buf, length(_data)+delta);
   Move(_data[0], new_buf[0], cur_ofs);
   Move(PAnsiChar(new_data)[0], new_buf[cur_ofs], length(new_data));
-  Move(_data[cur_ofs+cardinal(length(old_data))], new_buf[cur_ofs+cardinal(length(new_data))], length(_data)-cur_ofs-cardinal(length(old_data)));
+
+  sz:=length(old_data);
+  i:=length(_data);
+
+  sz:=length(_data)-cur_ofs-cardinal(length(old_data));
+  if sz > 0 then begin
+    src:=@_data[cur_ofs+cardinal(length(old_data))];
+    dst:=@new_buf[cur_ofs+cardinal(length(new_data))];
+    Move(src^, dst^, sz);
+  end;
 
   setlength(_data, length(new_buf));
   Move(new_buf[0], _data[0], length(new_buf));
