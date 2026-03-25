@@ -16,17 +16,19 @@ function SplitString(instr:string; var out_left:string; var out_right:string; se
 function ExtractFVector3(var inoutstr:string; var v:FVector3):boolean;
 
 type
+TWildcardFlags = cardinal;
+
 TIndexFilter = packed record
   name:string;
   value:string;
-  wildcard_text:string;
-  wildcard_found:boolean;
+  wildcard_text_start:string;
+  wildcard_text_end:string;
+  wildcard_flags:TWildcardFlags;
   inverse:boolean;
 end;
 
-TFilterMode = (FILTER_MODE_EXACT, FILTER_MODE_BEGINWITH);
+TFilterMode = (FILTER_MODE_EXACT, FILTER_MODE_BEGINWITH, FILTER_MODE_ENDWITH, FILTER_MODE_MIDPOS);
 TIndexFilters = array of TIndexFilter;
-
 
 TCommandsArgumentsParserArgType = (
   TCommandsArgumentsParserArgAnyString,
@@ -75,7 +77,7 @@ end;
 
 procedure InitFilters(var f:TIndexFilters);
 procedure PushFilter(var f:TIndexFilters; name:string; defval:string='');
-function GetFiltersWildcardText(var f:TIndexFilters; var res:string):boolean;
+function GetFiltersWildcardText(var f:TIndexFilters; var start_w:string; var end_w:string):TWildcardFlags;
 function IsMatchFilter(str:string; var filter:TIndexFilter; mode:TFilterMode):boolean;
 procedure ClearFilters(var f:TIndexFilters);
 function ExtractIndexFilter(var inoutstr:string; var filters:TIndexFilters; var filters_count:integer):boolean;
@@ -85,6 +87,8 @@ const
    COMMANDS_ARGUMENTS_SEPARATOR:char=',';
    COMMANDS_ARGUMENT_INVERSE:char='!';
 
+   START_WILDCARD_FOUND:TWildcardFlags = 1;
+   END_WILDCARD_FOUND:TWildcardFlags = 2;
 
 implementation
 uses sysutils, strutils;
@@ -252,19 +256,21 @@ begin
   setlength(f, l+1);
   f[l].name:=name;
   f[l].value:=defval;
-  f[l].wildcard_text:='';
-  f[l].wildcard_found:=false;
+  f[l].wildcard_text_end:='';
+  f[l].wildcard_text_start:='';
+  f[l].wildcard_flags:=0;
 end;
 
-function GetFiltersWildcardText(var f: TIndexFilters; var res: string): boolean;
+function GetFiltersWildcardText(var f: TIndexFilters; var start_w: string; var end_w: string): TWildcardFlags;
 var
   i:integer;
 begin
-  result:=false;
+  result:=0;
   for i:=0 to length(f)-1 do begin
-    if f[i].wildcard_found then begin
-      res:=f[i].wildcard_text;
-      result:=true;
+    if f[i].wildcard_flags <>0 then begin
+      start_w:=f[i].wildcard_text_start;
+      end_w:=f[i].wildcard_text_end;
+      result:=f[i].wildcard_flags;
       break
     end;
   end;
@@ -273,14 +279,21 @@ end;
 function IsMatchFilter(str: string; var filter: TIndexFilter; mode: TFilterMode): boolean;
 var
   val:string;
+  p:integer;
 begin
   result:=false;
-  filter.wildcard_found:=false;
+  filter.wildcard_flags:=0;
 
   val:=filter.value;
-  if (length(val)>0) and (val[length(val)]='*') then begin
+  if (length(val)>2) and (val[length(val)]='*') and (val[1]='*') then begin
+    val:=MidStr(val, 2, length(val)-2);
+    mode:=FILTER_MODE_MIDPOS;
+  end else if (length(val)>0) and (val[length(val)]='*') then begin
     val:=leftstr(val, length(val)-1);
     mode:=FILTER_MODE_BEGINWITH;
+  end else if (length(val)>0) and (val[1]='*') then begin
+    val:=rightstr(val, length(val)-1);
+    mode:=FILTER_MODE_ENDWITH;
   end;
 
   case mode of
@@ -289,8 +302,34 @@ begin
       if (length(val)=0) then begin
         result:=true;
       end else if (leftstr(str, length(val)) = val) then begin
-        filter.wildcard_text:=trim(rightstr(str, length(str)-length(val)));
-        filter.wildcard_found:=true;
+        filter.wildcard_text_start:='';
+        filter.wildcard_text_end:=trim(rightstr(str, length(str)-length(val)));
+        filter.wildcard_flags:=START_WILDCARD_FOUND;
+        result:=true;
+      end else begin
+        result:=false;
+      end;
+    end;
+    FILTER_MODE_ENDWITH: begin
+      if (length(val)=0) then begin
+        result:=true;
+      end else if (rightstr(str, length(val)) = val) then begin
+        filter.wildcard_text_start:=trim(leftstr(str, length(str)-length(val)));
+        filter.wildcard_text_end:='';
+        filter.wildcard_flags:=END_WILDCARD_FOUND;
+        result:=true;
+      end else begin
+        result:=false;
+      end;
+    end;
+    FILTER_MODE_MIDPOS: begin
+      p:=pos(val, str);
+      if (length(val)=0) then begin
+        result:=true;
+      end else if p>0 then begin
+        filter.wildcard_text_start:=trim(leftstr(str, p-1));
+        filter.wildcard_text_end:=trim(rightstr(str, length(str)-length(val)-p+1));
+        filter.wildcard_flags:=START_WILDCARD_FOUND or END_WILDCARD_FOUND;
         result:=true;
       end else begin
         result:=false;

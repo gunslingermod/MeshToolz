@@ -99,12 +99,13 @@ end;
 
 TCommandIndexArg = class(TCommandArg)
   _value:integer;
-  _has_wildcard:boolean;
-  _wildcard_text:string;
+  _wildcard_flags:TWildcardFlags;
+  _wildcard_text_start:string;
+  _wildcard_text_end:string;
 public
   constructor Create(value:integer; userdata:pointer);
-  procedure SetWildcardText(s:string);
-  function GetWildcardText(var s:string):boolean;
+  procedure SetWildcardText(flags:TWildcardFlags; text_start, text_end:string);
+  function GetWildcardText(var text_start:string; var text_end:string):TWildcardFlags;
   function Get():integer;
 end;
 
@@ -525,21 +526,26 @@ constructor TCommandIndexArg.Create(value: integer; userdata: pointer);
 begin
   inherited Create(userdata);
    _value:=value;
-   _has_wildcard:=false;
-   _wildcard_text:='';
+   _wildcard_flags:=0;
+   _wildcard_text_start:='';
+   _wildcard_text_end:='';
 end;
 
-procedure TCommandIndexArg.SetWildcardText(s: string);
+procedure TCommandIndexArg.SetWildcardText(flags: TWildcardFlags; text_start, text_end: string);
 begin
-  _has_wildcard:=true;
-  _wildcard_text:=s;
+  _wildcard_flags:=flags;
+  _wildcard_text_start:=text_start;
+  _wildcard_text_end:=text_end;
 end;
 
-function TCommandIndexArg.GetWildcardText(var s: string): boolean;
+function TCommandIndexArg.GetWildcardText(var text_start: string; var text_end: string): TWildcardFlags;
 begin
-  result:=_has_wildcard;
-  if result then begin
-    s:=_wildcard_text;
+  result:=_wildcard_flags;
+  if result and START_WILDCARD_FOUND <>0 then begin
+    text_start:=_wildcard_text_start;
+  end;
+  if result and END_WILDCARD_FOUND <>0 then begin
+    text_end:=_wildcard_text_end;
   end;
 end;
 
@@ -620,7 +626,8 @@ var
   indexarg:TCommandIndexArg;
   filters:TIndexFilters;
   filter_passed:boolean;
-  wildcard_text:string;
+  wildcard_text_end, wildcard_text_start:string;
+  wildcard_flags:TWildcardFlags;
 begin
   result:=TCommandResult.Create();
 
@@ -646,8 +653,9 @@ begin
               cnt:=cnt+1;
               indexarg:=TCommandIndexArg.Create(i, userdata);
 
-              if GetFiltersWildcardText(filters, wildcard_text) then begin
-                indexarg.SetWildcardText(wildcard_text);
+              wildcard_flags:=GetFiltersWildcardText(filters, wildcard_text_start, wildcard_text_end);
+              if wildcard_flags<>0 then begin
+                indexarg.SetWildcardText(wildcard_flags, wildcard_text_start, wildcard_text_end);
               end;
 
               tmpstr:=args;
@@ -732,4 +740,5 @@ begin
 end;
 
 end.
+
 

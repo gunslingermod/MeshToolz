@@ -696,10 +696,17 @@ end;
 
 function TModelSlot.ReplaceWildcards(s: string; arg: TCommandIndexArg): string;
 var
-  wildcard_text:string;
+  wildcard_text_start, wildcard_text_end:string;
+  wildcard_flags:TWildcardFlags;
 begin
-  if arg.GetWildcardText(wildcard_text) then begin
-    result:=StringReplace(s, '*', wildcard_text, [rfReplaceAll]);
+  wildcard_flags:=arg.GetWildcardText(wildcard_text_start, wildcard_text_end);
+  if ((wildcard_flags and START_WILDCARD_FOUND)<>0) and ((wildcard_flags and END_WILDCARD_FOUND)<>0) then begin
+    result:=StringReplace(s, '*', wildcard_text_start, []);
+    result:=StringReplace(result, '*', wildcard_text_end, [])
+  end else if (wildcard_flags and START_WILDCARD_FOUND)<>0 then begin
+    result:=StringReplace(s, '*', wildcard_text_end, [rfReplaceAll]);
+  end else if (wildcard_flags and END_WILDCARD_FOUND)<>0 then begin
+    result:=StringReplace(s, '*', wildcard_text_start, [rfReplaceAll]);
   end else begin
     result:=s;
   end;
