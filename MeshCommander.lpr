@@ -88,7 +88,7 @@ begin
       end;
     end;
   end else if leftstr(cmd_preprocessed, length(CMD_UNSET_VAR)) = CMD_UNSET_VAR then begin
-    cmd_preprocessed:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_SET_VAR)));
+    cmd_preprocessed:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_UNSET_VAR)));
     if not g_vars.ResetVar(cmd_preprocessed) then begin
       result:='!variable unset failed';
     end;
