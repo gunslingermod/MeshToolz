@@ -46,7 +46,12 @@ begin
   result:=not in_var;
 end;
 
-function ExecuteCmd(cmd:string):string;
+type TCommandExecutionResult = record
+  descr:string;
+  next:string;
+end;
+
+function ExecuteCmd(cmd:string):TCommandExecutionResult;
 var
   s:TModelSlot;
   tmpstr, varname, varval:string;
@@ -54,55 +59,63 @@ var
   cmdres:TCommandResult;
   sep:integer;
 const
-  CMD_SET_VAR = 'set ';
-  CMD_SET_CONST = 'const ';
-  CMD_UNSET_VAR = 'unset ';
+  CMD_SET_VAR:string = 'set ';
+  CMD_SET_CONST:string = 'const ';
+  CMD_UNSET_VAR:string = 'unset ';
+  CMD_ECHO:string = 'echo ';
+  CMD_GOTO:string = 'goto ';
 begin
-  result:='';
+  result.descr:='';
+  result.next:='';
+
   tmpstr:='';
   cmd_preprocessed:='';
   if not preprocess_cmd(cmd, cmd_preprocessed) then begin
-    result:='!command preprocessing failed';
+    result.descr:='!command preprocessing failed';
+  end else if leftstr(cmd_preprocessed, length(CMD_ECHO)) = CMD_ECHO then begin
+    result.descr:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_ECHO)));
+  end else if leftstr(cmd_preprocessed, length(CMD_GOTO)) = CMD_GOTO then begin
+    result.next:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_GOTO)));
   end else if leftstr(cmd_preprocessed, length(CMD_SET_VAR)) = CMD_SET_VAR then begin
     cmd_preprocessed:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_SET_VAR)));
     sep:=pos('=', cmd_preprocessed);
     if sep <= 0 then begin
-      result:='!can''t extract variable value';
+      result.descr:='!can''t extract variable value';
     end else begin
       varname:=trim(leftstr(cmd_preprocessed, sep-1));
       varval:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-sep));
       if not g_vars.SetStringVar(varname, varval) then begin
-        result:='!can''t set value "'+varval+'" for variable "'+varname+'"';
+        result.descr:='!can''t set value "'+varval+'" for variable "'+varname+'"';
       end;
     end;
   end else if leftstr(cmd_preprocessed, length(CMD_SET_CONST)) = CMD_SET_CONST then begin
     cmd_preprocessed:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_SET_CONST)));
     sep:=pos('=', cmd_preprocessed);
     if sep <= 0 then begin
-      result:='!can''t extract constant value';
+      result.descr:='!can''t extract constant value';
     end else begin
       varname:=trim(leftstr(cmd_preprocessed, sep-1));
       varval:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-sep));
       if not g_vars.SetStringConst(varname, varval) then begin
-        result:='!can''t set value "'+varval+'" for constant "'+varname+'"';
+        result.descr:='!can''t set value "'+varval+'" for constant "'+varname+'"';
       end;
     end;
   end else if leftstr(cmd_preprocessed, length(CMD_UNSET_VAR)) = CMD_UNSET_VAR then begin
     cmd_preprocessed:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_UNSET_VAR)));
     if not g_vars.ResetVar(cmd_preprocessed) then begin
-      result:='!variable unset failed';
+      result.descr:='!variable unset failed';
     end;
   end else begin
     s:=g_models_slots.TryGetSlotRefByString(cmd_preprocessed, tmpstr);
     if s=nil then begin
-      result:='!slot not recognized';
+      result.descr:='!slot not recognized';
     end else begin
       cmdres:=s.ExecuteCmd(tmpstr);
-      result:=cmdres.GetDescription();
+      result.descr:=cmdres.GetDescription();
       if not cmdres.IsSuccess() then begin
-        result:='!'+result;
+        result.descr:='!'+result.descr;
       end else if cmdres.IsWarning() then begin
-        result:='#'+result;
+        result.descr:='#'+result.descr;
       end;
     end;
   end;
@@ -119,8 +132,9 @@ end;
 procedure ProcessScriptFile(filename:string);
 var
   f:textfile;
-  cmd, res:string;
-  lineid:integer;
+  cmd, lbl:string;
+  lineid, i:integer;
+  res:TCommandExecutionResult;
 begin
   assignfile(f, filename);
   reset(f);
@@ -130,20 +144,52 @@ begin
       readln(f, cmd);
       lineid:=lineid+1;
 
-      res:=TrimLeft(cmd);
+      cmd:=TrimLeft(cmd);
       if length(cmd)=0 then continue;
-      if (length(cmd)>=2) and (cmd[1]='/') and (cmd[2]='/') then continue;
+      if (length(cmd)>=2) and (((cmd[1]='/') and (cmd[2]='/')) or (cmd[1]=':')) then continue;
 
       res:=ExecuteCmd(cmd);
-
-      if length(res)>0 then begin
-        if res[1] = '!' then begin
-          writeln('ERROR (line '+inttostr(lineid)+') : ', PAnsiChar(@res[2]));
-          break;
-        end else if res[1] = '#'  then begin
-          writeln('WARNING (line '+inttostr(lineid)+') : ', PAnsiChar(@res[2]));
+      if length(res.next)>0 then begin
+        closefile(f);
+        reset(f);
+        i:=strtointdef(res.next, -1);
+        if i > 0 then begin
+          while(i > 1) do begin
+            readln(f);
+            i:=i-1;
+            if eof(f) then begin
+              res.descr:='!There in no line #'+res.next+' in the script file';
+              break;
+            end;
+          end;
+          lineid:=i;
         end else begin
-          writeln(res);
+          i:=0;
+          while true do begin
+            i:=i+1;
+            readln(f, lbl);
+            lbl:=trim(lbl);
+            if (length(lbl)>0) and (lbl[1]=':') and (lbl=':'+res.next) then begin
+              lineid:=i;
+              break;
+            end;
+
+            if eof(f) then begin
+              res.descr:='!There in no label "'+res.next+'" in the script file';
+              break;
+            end;
+          end;
+        end;
+      end;
+
+      if length(res.descr)>0 then begin
+        if res.descr[1] = '!' then begin
+          writeln('ERROR (line '+inttostr(lineid)+') : ', PAnsiChar(@res.descr[2]));
+          break;
+        end else if res.descr[1] = '#'  then begin
+          writeln('WARNING (line '+inttostr(lineid)+') : ', PAnsiChar(@res.descr[2]));
+        end else begin
+          writeln(res.descr);
         end;
       end;
     end;
@@ -153,7 +199,8 @@ begin
 end;
 
 var
-  cmd, res:string;
+  cmd:string;
+  res:TCommandExecutionResult;
 begin
   g_vars:=TCommanderVarStorage.Create();
   g_models_slots:=TSlotsContainer.Create();
@@ -182,13 +229,13 @@ begin
     repeat
       if length(trim(cmd)) > 0 then begin
         res:=ExecuteCmd(cmd);
-        if length(res)>0 then begin
-          if res[1] = '!' then begin
-            writeln('ERROR: ', PAnsiChar(@res[2]));
-          end else if res[1] = '#'  then begin
-            writeln('WARNING: ', PAnsiChar(@res[2]));
+        if length(res.descr)>0 then begin
+          if res.descr[1] = '!' then begin
+            writeln('ERROR: ', PAnsiChar(@res.descr[2]));
+          end else if res.descr[1] = '#'  then begin
+            writeln('WARNING: ', PAnsiChar(@res.descr[2]));
           end else begin
-            writeln(res);
+            writeln(res.descr);
           end;
         end;
       end;
