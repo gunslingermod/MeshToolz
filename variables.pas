@@ -115,7 +115,7 @@ var
 begin
   result:=false;
   idx:=_FindVarByName(name);
-  if idx >= 0 then begin
+  if (idx >= 0) and (_vars[idx].vartype = CommanderVarTypeString) then begin
     value:=_vars[idx].value;
     result:=true;
   end;
