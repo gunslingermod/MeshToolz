@@ -706,7 +706,7 @@ begin
   end else if (wildcard_flags and START_WILDCARD_FOUND)<>0 then begin
     result:=StringReplace(s, '*', wildcard_text_end, [rfReplaceAll]);
   end else if (wildcard_flags and END_WILDCARD_FOUND)<>0 then begin
-    result:=StringReplace(s, '*', wildcard_text_start, [rfReplaceAll]);
+    result:=StringReplace(s, '*', wildcard_text_end, [rfReplaceAll]);
   end else begin
     result:=s;
   end;

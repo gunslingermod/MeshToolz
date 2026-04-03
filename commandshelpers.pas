@@ -304,7 +304,7 @@ begin
       end else if (leftstr(str, length(val)) = val) then begin
         filter.wildcard_text_start:='';
         filter.wildcard_text_end:=trim(rightstr(str, length(str)-length(val)));
-        filter.wildcard_flags:=START_WILDCARD_FOUND;
+        filter.wildcard_flags:=END_WILDCARD_FOUND;
         result:=true;
       end else begin
         result:=false;
@@ -316,7 +316,7 @@ begin
       end else if (rightstr(str, length(val)) = val) then begin
         filter.wildcard_text_start:=trim(leftstr(str, length(str)-length(val)));
         filter.wildcard_text_end:='';
-        filter.wildcard_flags:=END_WILDCARD_FOUND;
+        filter.wildcard_flags:=START_WILDCARD_FOUND;
         result:=true;
       end else begin
         result:=false;
