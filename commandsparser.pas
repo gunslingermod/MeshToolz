@@ -198,6 +198,7 @@ TModelSlot = class
 
   function _CmdAnimBoneMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneRotate(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
+  function _CmdAnimBoneInterMove(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneSetOrientation(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneSetPosition(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
   function _CmdAnimBoneAim(var args:string; cmd:TCommandSetup; result_description:TCommandResult; userdata:TObject):boolean;
@@ -3115,7 +3116,7 @@ begin
               if result then result_description.SetWarningFlag(true);
               result_description.SetDescription('no frames affected');
             end else if cnt <> endframe-startframe+1 then begin
-              result_description.SetDescription('modified only '+inttostr(cnt)+' frames from '+inttostr(endframe - startframe + 1));
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames of expected '+inttostr(endframe - startframe + 1));
               result_description.SetWarningFlag(true);
               result:=true;
             end else begin
@@ -3204,6 +3205,111 @@ begin
               result_description.SetDescription('no frames affected');
             end else if cnt <> endframe-startframe+1 then begin
               result_description.SetDescription('modified only '+inttostr(cnt)+' frames');
+              result_description.SetWarningFlag(true);
+              result:=true;
+            end else begin
+              result:=true;
+            end;
+
+          end;
+
+        end else begin
+          result_description.SetDescription(argsparser.GetLastErr());
+          if length(result_description.GetDescription())=0 then begin
+            result_description.SetDescription('can''t get parsed arguments');
+          end;
+        end;
+      finally
+        FreeAndNil(argsparser);
+      end;
+    end;
+  end;
+end;
+
+function TModelSlot._CmdAnimBoneInterMove(var args: string; cmd: TCommandSetup; result_description: TCommandResult; userdata: TObject): boolean;
+var
+  bone_idx, anim_idx:integer;
+  upper_ud:TObject;
+  argsparser:TCommandsArgumentsParser;
+  ampframe, startframe, endframe, i:integer;
+  startfactor, endfactor:single;
+  v:FVector3;
+  is_absolute_coords:boolean;
+  fixed_children:boolean;
+  def:TOgfMotionDefData;
+  cnt, targetcnt:integer;
+begin
+  result:=false;
+  if userdata is TCommandIndexArg then begin
+    bone_idx:=(userdata as TCommandIndexArg).Get();
+    upper_ud:=TObject((userdata as TCommandIndexArg).GetUserdata());
+    if upper_ud = nil then exit;
+    if (upper_ud <> nil) and (upper_ud is TCommandIndexArg) then begin
+      anim_idx:=(upper_ud.Create as TCommandIndexArg).Get();
+      def:=_data.Animations().GetAnimationParams(anim_idx);
+      if length(def.name)=0 then exit;
+
+      argsparser:=TCommandsArgumentsParser.Create();
+      try
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'X coordinate of amplitude');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Y coordinate of amplitude');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, false, 'Z coordinate of amplitude');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'max amplitude frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'start frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgInteger, false, 'end frame index');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'start time factor');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgSingle, true, 'end time factor');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'absolute position flag');
+        argsparser.RegisterArgument(TCommandsArgumentsParserArgBool, true, 'fixed children flag');
+
+        if argsparser.Parse(args) and
+           argsparser.GetAsSingle(0, v.x) and
+           argsparser.GetAsSingle(1, v.y) and
+           argsparser.GetAsSingle(2, v.z) and
+
+           argsparser.GetAsInt(3, ampframe, -1) and
+           argsparser.GetAsInt(4, startframe, ampframe) and
+           argsparser.GetAsInt(5, endframe, ampframe) and
+
+           argsparser.GetAsSingle(6, startfactor, 1) and
+           argsparser.GetAsSingle(7, endfactor, 1) and
+
+           argsparser.GetAsBool(8, is_absolute_coords, false) and
+           argsparser.GetAsBool(9, fixed_children, false)
+        then begin
+          if not CheckAndCorrectFrameId(ampframe, def.name) then begin
+            result_description.SetDescription('invalid amplitude frame index');
+          end else if not CheckAndCorrectFrameId(startframe, def.name) then begin
+            result_description.SetDescription('invalid first frame index');
+          end else if not CheckAndCorrectFrameId(endframe, def.name) then begin
+            result_description.SetDescription('invalid last frame index');
+          end else if not (((startframe <= ampframe) and (ampframe <= endframe)) or ((endframe <= ampframe) and (ampframe <= startframe))) then begin
+            result_description.SetDescription('max amplitude frame index must be between start frame index and end frame index');
+          end else if (_iksolver <> nil) and (not _iksolver.IsTransformAllowedForBone(bone_idx)) then begin
+            result_description.SetDescription('current IK solver prohibits direct operations on bone #'+inttostr(bone_idx));
+          end else begin
+            if startframe>endframe then begin
+              cnt:=startframe;
+              startframe:=endframe;
+              endframe:=cnt;
+            end;
+
+            cnt:=_data.Skeleton().InterpolatingMoveBone(bone_idx, def.name, v, ampframe, startframe, endframe, startfactor, endfactor, is_absolute_coords, fixed_children, _iksolver);
+            targetcnt:=1;
+            if (startframe < ampframe) then begin
+              targetcnt:=targetcnt+ampframe-startframe-1;
+            end;
+            if (ampframe < endframe) then begin
+              targetcnt:=targetcnt+endframe-ampframe-1;
+            end;
+
+
+            if cnt = 0 then begin
+              result:=cnt<>targetcnt;
+              if result then result_description.SetWarningFlag(true);
+              result_description.SetDescription('no frames affected');
+            end else if cnt <> targetcnt then begin
+              result_description.SetDescription('modified only '+inttostr(cnt)+' frames of expected '+inttostr(targetcnt));
               result_description.SetWarningFlag(true);
               result:=true;
             end else begin
@@ -4842,6 +4948,7 @@ begin
   _commands_animations.DoRegisterPropertyWithSubcommand(TPropertyWithSubcommandsSetup.Create('bone', @_IsAnimationsLoadedPrecondition, _commands_animbones, 'access array of bones keys'));
   _commands_animbones.DoRegister(TCommandSetup.Create('move', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneMove, 'move bone to change its key position, arguments: X, Y, Z coordinates, start frame index, end frame index, absolute coordinates flag; fixed children flag'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('rotate', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneRotate, 'rotate bone, arguments: X, Y, Z rotation components, start frame index, end frame index, is global (1) or local (0, default) axis used'), CommandItemTypeCall);
+  _commands_animbones.DoRegister(TCommandSetup.Create('intermove', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneInterMove, 'move the bone interpolating using zero offset in start frame, max amplitude in amp frame and again zero in end offset, expects amplitude vector, amp frame id, start frame id, end frame id, start time factor, enf time factor, absolute coordinates flag, fixed children flag'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('setposition', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSetPosition, 'set bone position, arguments: X, Y, Z rotation components, start frame index, end frame index, is global (1) or local (0) coordinates'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('setorientation', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneSetOrientation, 'set bone orientation, arguments: X, Y, Z rotation components, start frame index, end frame index'), CommandItemTypeCall);
   _commands_animbones.DoRegister(TCommandSetup.Create('aim', @_IsModelHasSkeletonPrecondition, @_CmdAnimBoneAim, 'aim bone to the specified target, arguments: X, Y, Z global coordinates of target, start frame index, end frame index'), CommandItemTypeCall);

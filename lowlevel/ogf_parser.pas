@@ -750,6 +750,7 @@ type
     function SetBonePosition(bone_idx:TBoneID; position:FVector3; anim_name:string; key_idx:integer; is_global:boolean; iksolver:TOgfIKSolverBase):boolean;
     function InterpolateBone(bone_idx:TBoneID; anim_name:string; first_key_idx:integer; last_key_idx: integer; calc_pos:boolean; calc_rot:boolean; factor:single; iksolver:TOgfIKSolverBase):integer;
     function ApplyDiff(bone_idx:TBoneID; anim_name:string; targetframe:integer; sourceframe:integer; startframe:integer; endframe:integer; correct_position:boolean; correct_rotation:boolean; iksolver:TOgfIKSolverBase):boolean;
+    function InterpolatingMoveBone(idx:TBoneID; anim_name:string; amplitude:FVector3; amp_key_idx:integer; start_key_idx:integer; end_key_idx:integer; start_factor:single; end_factor:single; is_absolute:boolean; fixed_children:boolean; iksolver:TOgfIKSolverBase):integer;
 
     function SyncAnimsBones(sync_flags:TOgfAnimationBonesSyncFlags):boolean;
     function AddBone(name:string; parent_id:TBoneId; pos:FVector3; dir:FVector3; is_in_global_space:boolean; force_bind_pose:boolean):TBoneId;
@@ -6301,6 +6302,52 @@ begin
       result:=true;
     end;
   end;
+end;
+
+function TOgfSkeleton.InterpolatingMoveBone(idx: TBoneID; anim_name: string;amplitude: FVector3; amp_key_idx: integer; start_key_idx: integer;end_key_idx: integer; start_factor: single; end_factor: single;is_absolute: boolean; fixed_children: boolean; iksolver: TOgfIKSolverBase): integer;
+var
+  tmpint, i:integer;
+  k1, k2, k_out:TMotionKey;
+  tm:single;
+begin
+  result:=0;
+  if start_key_idx > end_key_idx then begin
+    tmpint:=start_key_idx;
+    start_key_idx:=end_key_idx;
+    end_key_idx:=tmpint;
+  end;
+
+  if (amp_key_idx < start_key_idx) or (amp_key_idx > end_key_idx) then begin
+    exit;
+  end;
+
+  set_zero(k1.T);
+  k2.T:=amplitude;
+
+  for i:=start_key_idx+1 to amp_key_idx-1 do begin
+    tm:= (i-start_key_idx)/(amp_key_idx-start_key_idx);
+    tm:=power(tm, start_factor);
+
+    TOgfMotionBoneTrack.KeysSlerp(k_out, k1, k2, tm, true, false);
+    if MoveBone(idx, k_out.T, anim_name, i, is_absolute, fixed_children, iksolver) then begin
+      result:=result+1;
+    end;
+  end;
+
+  if MoveBone(idx, amplitude, anim_name, amp_key_idx, is_absolute, fixed_children, iksolver) then begin
+    result:=result+1;
+  end;
+
+  for i:=amp_key_idx+1 to end_key_idx-1 do begin
+    tm:= 1-(i-amp_key_idx)/(end_key_idx-amp_key_idx);
+    tm:=power(tm, end_factor);
+
+    TOgfMotionBoneTrack.KeysSlerp(k_out, k1, k2, tm, true, false);
+    if MoveBone(idx, k_out.T, anim_name, i, is_absolute, fixed_children, iksolver) then begin
+      result:=result+1;
+    end;
+  end;
+
 end;
 
 function TOgfSkeleton.SyncAnimsBones(sync_flags: TOgfAnimationBonesSyncFlags): boolean;
