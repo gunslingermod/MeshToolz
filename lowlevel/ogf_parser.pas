@@ -3608,11 +3608,23 @@ begin
         trans:=Qt8ToT(pqt, @_sizeT, @_initT);
       end;
 
-      if    (trans.x<min_limit.x) or (trans.x>max_limit.x)
-         or (trans.y<min_limit.y) or (trans.y>max_limit.y)
-         or (trans.z<min_limit.z) or (trans.z>max_limit.z)
-      then begin
-        exit;
+      // Correct possible rounding errors
+      if (trans.x<min_limit.x) then begin
+        trans.x:=min_limit.x;
+      end else if (trans.x>max_limit.x) then begin
+        trans.x:=max_limit.x;
+      end;
+
+      if (trans.y<min_limit.y) then begin
+        trans.y:=min_limit.y;
+      end else if (trans.y>max_limit.y) then begin
+        trans.y:=max_limit.y;
+      end;
+
+      if (trans.z<min_limit.z) then begin
+        trans.z:=min_limit.z;
+      end else if (trans.z>max_limit.z) then begin
+        trans.z:=max_limit.z;
       end;
 
       trans:=v_sub(trans, new_initt);
@@ -5033,7 +5045,7 @@ var
 begin
   result:=false;
   if not Loaded() then exit;
-  if _animations=nil then exit;;
+  if _animations=nil then exit;
   anim_idx := _animations.GetAnimationIdByName(anim_name);
   if anim_idx < 0 then exit;
 
@@ -5908,7 +5920,10 @@ begin
         // TODO: correct OBB, center of mass and shape?
 
       end else begin
-        if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(idx, new_matrix, global_matrix) then exit;
+        if not _ConvertTransformFromParentSpaceOfWrkBoneIntoGlobal(idx, new_matrix, global_matrix) then begin
+          result:=false;
+          exit;
+        end;
         ikres:=_SolveIKAndSetKey(idx, global_matrix, anim_name, key_idx, iksolver);
         if ikres = IKSolveNotNeeded then begin
           result:=_SetTransformKeyForAnimBone(anim_name, b.bone.GetName(), key_idx, new_matrix);
