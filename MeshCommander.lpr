@@ -46,24 +46,34 @@ begin
   result:=not in_var;
 end;
 
-type TCommandExecutionResult = record
+type
+TCommandExecutionResult = record
   descr:string;
   next:string;
 end;
 
-function ExecuteCmd(cmd:string):TCommandExecutionResult;
+TCallStackRec = record
+  line:integer;
+end;
+
+var
+  callstack:array of TCallStackRec;
+
+function ExecuteCmd(cmd:string; line:integer):TCommandExecutionResult;
 var
   s:TModelSlot;
   tmpstr, varname, varval:string;
   cmd_preprocessed:string;
   cmdres:TCommandResult;
-  sep:integer;
+  sep, i:integer;
 const
   CMD_SET_VAR:string = 'set ';
   CMD_SET_CONST:string = 'const ';
   CMD_UNSET_VAR:string = 'unset ';
   CMD_ECHO:string = 'echo ';
   CMD_GOTO:string = 'goto ';
+  CMD_CALL:string = 'call ';
+  CMD_RET:string = 'ret';
 begin
   result.descr:='';
   result.next:='';
@@ -75,7 +85,33 @@ begin
   end else if leftstr(cmd_preprocessed, length(CMD_ECHO)) = CMD_ECHO then begin
     result.descr:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_ECHO)));
   end else if leftstr(cmd_preprocessed, length(CMD_GOTO)) = CMD_GOTO then begin
-    result.next:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_GOTO)));
+    if line >0 then begin
+      result.next:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_GOTO)));
+    end else begin
+      result.descr:='!unsupported in interactive mode';
+    end;
+  end else if leftstr(cmd_preprocessed, length(CMD_CALL)) = CMD_CALL then begin
+    if line >0 then begin
+      i:=length(callstack);
+      setlength(callstack, i+1);
+      callstack[i].line:=line+1;
+      result.next:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_CALL)));
+    end else begin
+      result.descr:='!unsupported in interactive mode';
+    end;
+  end else if leftstr(cmd_preprocessed, length(CMD_RET)) = CMD_RET then begin
+    if line >0 then begin
+      i:=length(callstack);
+      if i > 0 then begin
+        i:=i-1;
+        result.next:=inttostr(callstack[i].line);
+        setlength(callstack, i);
+      end else begin
+        result.descr:='!call stack underflow';
+      end;
+    end else begin
+      result.descr:='!unsupported in interactive mode';
+    end;
   end else if leftstr(cmd_preprocessed, length(CMD_SET_VAR)) = CMD_SET_VAR then begin
     cmd_preprocessed:=trim(rightstr(cmd_preprocessed, length(cmd_preprocessed)-length(CMD_SET_VAR)));
     sep:=pos('=', cmd_preprocessed);
@@ -133,7 +169,7 @@ procedure ProcessScriptFile(filename:string);
 var
   f:textfile;
   cmd, lbl:string;
-  lineid, i:integer;
+  lineid, i, j:integer;
   res:TCommandExecutionResult;
 begin
   assignfile(f, filename);
@@ -148,12 +184,13 @@ begin
       if length(cmd)=0 then continue;
       if (length(cmd)>=2) and (((cmd[1]='/') and (cmd[2]='/')) or (cmd[1]=':')) then continue;
 
-      res:=ExecuteCmd(cmd);
+      res:=ExecuteCmd(cmd, lineid);
       if length(res.next)>0 then begin
         closefile(f);
         reset(f);
         i:=strtointdef(res.next, -1);
         if i > 0 then begin
+          j:=i;
           while(i > 1) do begin
             readln(f);
             i:=i-1;
@@ -162,7 +199,7 @@ begin
               break;
             end;
           end;
-          lineid:=i;
+          lineid:=j-1;
         end else begin
           i:=0;
           while true do begin
@@ -228,7 +265,7 @@ begin
 
     repeat
       if length(trim(cmd)) > 0 then begin
-        res:=ExecuteCmd(cmd);
+        res:=ExecuteCmd(cmd, -1);
         if length(res.descr)>0 then begin
           if res.descr[1] = '!' then begin
             writeln('ERROR: ', PAnsiChar(@res.descr[2]));
